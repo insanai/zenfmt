@@ -27,6 +27,8 @@ const style_ns = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const fo_ns = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const table_ns = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const xlink_ns = "http://www.w3.org/1999/xlink";
+const draw_ns = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const svg_ns = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 
 const TextProps = struct {
     strong: bool = false,
@@ -53,7 +55,7 @@ const Styles = struct {
     ordered_lists: std.StringHashMapUnmanaged(bool) = .empty,
 };
 
-fn read(ctx: *core.ReadContext) core.ReadError!void {
+pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
     var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
@@ -241,6 +243,10 @@ const FrameKind = enum {
     table,
     table_row,
     table_cell,
+    section,
+    draw_frame,
+    image_desc,
+    image_title,
 };
 
 const Frame = struct {
@@ -266,6 +272,13 @@ const PendingNote = struct {
     body: []const u8,
 };
 
+const PendingImage = struct {
+    href: []const u8 = "",
+    frame_name: []const u8 = "",
+    desc: std.ArrayList(u8) = .empty,
+    title: std.ArrayList(u8) = .empty,
+};
+
 const Machine = struct {
     ctx: *core.ReadContext,
     arena: std.mem.Allocator,
@@ -286,6 +299,7 @@ const Machine = struct {
     style_count: u8 = 0,
 
     notes: std.ArrayList(PendingNote) = .empty,
+    image: ?PendingImage = null,
 
     fn deinit(m: *Machine) void {
         m.notes.deinit(m.arena);
@@ -324,6 +338,16 @@ const Machine = struct {
     }
 
     fn onText(m: *Machine, bytes: []const u8) core.ReadError!void {
+        if (m.depth > 0) {
+            const kind = m.frames[m.depth - 1].kind;
+            if (kind == .image_desc or kind == .image_title) {
+                if (m.image) |*image| {
+                    const buffer = if (kind == .image_desc) &image.desc else &image.title;
+                    try buffer.appendSlice(m.arena, bytes);
+                }
+                return;
+            }
+        }
         if (!m.in_paragraph) return;
         try m.ensureStyles();
         try m.ctx.out.text(bytes);
@@ -391,6 +415,50 @@ const Machine = struct {
             if (element.self_closing) return;
             return m.onNoteStart();
         }
+        if (name.is(text_ns, "section")) {
+            if (element.self_closing) return;
+            if (m.in_paragraph) return m.push(.{ .kind = .transparent });
+            try m.ctx.out.attrs(.{ .classes = &.{"section"} });
+            const token = try m.ctx.out.beginBlock(.container);
+            return m.push(.{ .kind = .section, .block_token = token });
+        }
+        if (name.is(draw_ns, "frame")) {
+            if (element.self_closing) return;
+            // A frame inside a frame (an image inside a text box) keeps
+            // the outer capture; the inner one flows as regular content.
+            if (m.image != null) return m.push(.{ .kind = .transparent });
+            var frame_name: []const u8 = "";
+            for (element.attributes) |attribute| {
+                if (attribute.name.is(draw_ns, "name")) {
+                    frame_name = try m.arena.dupe(u8, attribute.value);
+                }
+            }
+            m.image = .{ .frame_name = frame_name };
+            return m.push(.{ .kind = .draw_frame });
+        }
+        if (name.is(draw_ns, "image")) {
+            if (m.image) |*image| {
+                for (element.attributes) |attribute| {
+                    if (attribute.name.is(xlink_ns, "href")) {
+                        image.href = try m.arena.dupe(u8, attribute.value);
+                    }
+                }
+            }
+            // The subtree may hold base64 binary data; never let it leak
+            // into the document text.
+            if (!element.self_closing) {
+                m.parser.skipElement() catch return error.Malformed;
+            }
+            return;
+        }
+        if (name.is(svg_ns, "desc") or name.is(svg_ns, "title")) {
+            if (element.self_closing) return;
+            if (m.image != null) {
+                const kind: FrameKind = if (name.is(svg_ns, "desc")) .image_desc else .image_title;
+                return m.push(.{ .kind = kind });
+            }
+            return m.push(.{ .kind = .transparent });
+        }
         if (name.is(table_ns, "table")) {
             if (element.self_closing) return;
             return m.onTableStart();
@@ -442,7 +510,11 @@ const Machine = struct {
         if (m.depth == 0) return;
         const frame = &m.frames[m.depth - 1];
         switch (frame.kind) {
-            .transparent, .skipped_paragraph_child => {},
+            .transparent, .skipped_paragraph_child, .image_desc, .image_title => {},
+            .section => {
+                if (frame.block_token) |token| m.ctx.out.endBlock(token);
+            },
+            .draw_frame => try m.emitImage(),
             .paragraph => {
                 try m.closeStyles();
                 m.props = .{};
@@ -580,6 +652,35 @@ const Machine = struct {
         try m.push(.{ .kind = .table_cell, .block_token = token });
     }
 
+    /// The end of a `draw:frame`: everything the frame carried is known,
+    /// so the image reference can be emitted where the frame sat.
+    fn emitImage(m: *Machine) core.ReadError!void {
+        const image = m.image orelse return;
+        m.image = null;
+        const alt = if (image.desc.items.len > 0)
+            image.desc.items
+        else if (image.title.items.len > 0)
+            image.title.items
+        else
+            image.frame_name;
+        if (image.href.len == 0 and alt.len == 0) {
+            try m.ctx.reports.add(frameDroppedReport());
+            return;
+        }
+        if (m.in_paragraph) {
+            try m.ensureStyles();
+            const token = try m.ctx.out.beginImage(image.href, "");
+            if (alt.len > 0) try m.ctx.out.text(alt);
+            m.ctx.out.endInline(token);
+            return;
+        }
+        const paragraph = try m.ctx.out.beginParagraph();
+        const token = try m.ctx.out.beginImage(image.href, "");
+        if (alt.len > 0) try m.ctx.out.text(alt);
+        m.ctx.out.endInline(token);
+        m.ctx.out.endBlock(paragraph);
+    }
+
     /// A footnote sits inline in `content.xml`; its body is captured as a
     /// byte range and re-parsed after the document body, where note bodies
     /// belong.
@@ -626,8 +727,13 @@ const Machine = struct {
                     m.arena,
                     "<office:wrap xmlns:office=\"{s}\" xmlns:text=\"{s}\" " ++
                         "xmlns:style=\"{s}\" xmlns:fo=\"{s}\" " ++
-                        "xmlns:table=\"{s}\" xmlns:xlink=\"{s}\">{s}</office:wrap>",
-                    .{ office_ns, text_ns, style_ns, fo_ns, table_ns, xlink_ns, pending.body },
+                        "xmlns:table=\"{s}\" xmlns:xlink=\"{s}\" " ++
+                        "xmlns:draw=\"{s}\" xmlns:svg=\"{s}\">{s}</office:wrap>",
+                    .{
+                        office_ns,    text_ns,  style_ns, fo_ns,
+                        table_ns,     xlink_ns, draw_ns,  svg_ns,
+                        pending.body,
+                    },
                 );
                 var parser = xml.Parser.init(m.arena, wrapped, m.ctx.limits.max_xml_depth);
                 defer parser.deinit();
@@ -752,106 +858,20 @@ fn annotationReport() core.Report {
     };
 }
 
-// ---------------------------------------------------------------- tests
-
-const testing = std.testing;
-const zip = ooxml.zip;
-
-fn convertOdt(arena: std.mem.Allocator, content: []const u8) !core.ast.Document {
-    const archive_bytes = try zip.buildStoredArchive(arena, &.{
-        .{ .name = "mimetype", .data = "application/vnd.oasis.opendocument.text" },
-        .{ .name = "content.xml", .data = content },
-    });
-    const store = try arena.create(core.ast.Store);
-    store.* = .{};
-    var b = core.builder.Builder.init(arena, store, .{});
-    const reports = try arena.create(core.Reports);
-    reports.* = core.Reports.init(arena, .{});
-    var ctx: core.ReadContext = .{
-        .gpa = arena,
-        .out = .{ .builder = &b },
-        .input = .{ .bytes = archive_bytes },
-        .input_name = "test.odt",
-        .reports = reports,
-        .manifest_in = null,
-        .limits = .{},
+fn frameDroppedReport() core.Report {
+    return .{
+        .severity = .warning,
+        .code = "odt.frame-dropped",
+        .title = "A DRAWING FRAME WAS DROPPED",
+        .problem = "This document contains a drawing frame with neither " ++
+            "an image source nor a description, such as a decorative " ++
+            "shape.",
+        .consequence = "The frame is absent from the output.",
+        .loss = .dropped,
+        .directions = &.{.{
+            .title = "Keep the source",
+            .explanation = "Keep the source ODT if the drawing matters; " ++
+                "it exists only there.",
+        }},
     };
-    try read(&ctx);
-    const doc = try b.finish();
-    try core.ast.validate(&doc, .{});
-    return doc;
-}
-
-const content_prefix =
-    \\<office:document-content
-    \\  xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
-    \\  xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
-    \\  xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
-    \\  xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
-    \\  xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
-    \\  xmlns:xlink="http://www.w3.org/1999/xlink">
-;
-
-test "headings, spans, links, and lists" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const doc = try convertOdt(arena, content_prefix ++
-        \\<office:automatic-styles>
-        \\<style:style style:name="T1" style:family="text">
-        \\<style:text-properties fo:font-weight="bold"/></style:style>
-        \\</office:automatic-styles>
-        \\<office:body><office:text>
-        \\<text:h text:outline-level="2">Title</text:h>
-        \\<text:p>Plain <text:span text:style-name="T1">bold</text:span>
-        \\ and <text:a xlink:href="https://ziglang.org/">a link</text:a>.</text:p>
-        \\<text:list><text:list-item><text:p>one</text:p></text:list-item>
-        \\<text:list-item><text:p>two</text:p></text:list-item></text:list>
-        \\</office:text></office:body></office:document-content>
-    );
-    const tags = doc.store.blocks.items(.tag);
-    var headings: u32 = 0;
-    var lists: u32 = 0;
-    var items: u32 = 0;
-    for (tags) |tag| switch (tag) {
-        .heading => headings += 1,
-        .list => lists += 1,
-        .list_item => items += 1,
-        else => {},
-    };
-    try testing.expectEqual(@as(u32, 1), headings);
-    try testing.expectEqual(@as(u32, 1), lists);
-    try testing.expectEqual(@as(u32, 2), items);
-
-    var strongs: u32 = 0;
-    var links: u32 = 0;
-    for (doc.store.inlines.items(.tag)) |tag| switch (tag) {
-        .strong => strongs += 1,
-        .link => links += 1,
-        else => {},
-    };
-    try testing.expectEqual(@as(u32, 1), strongs);
-    try testing.expectEqual(@as(u32, 1), links);
-}
-
-test "footnotes are captured and re-emitted after the body" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const doc = try convertOdt(arena, content_prefix ++
-        \\<office:body><office:text>
-        \\<text:p>Text<text:note text:note-class="footnote"><text:note-citation>1</text:note-citation>
-        \\<text:note-body><text:p>The note.</text:p></text:note-body></text:note> after.</text:p>
-        \\</office:text></office:body></office:document-content>
-    );
-    var notes: u32 = 0;
-    for (doc.store.inlines.items(.tag)) |tag| {
-        if (tag == .note) notes += 1;
-    }
-    try testing.expectEqual(@as(u32, 1), notes);
-    // The note body landed outside the document body.
-    try testing.expect(doc.store.block_ranges.items.len == 1);
-    try testing.expect(doc.store.block_ranges.items[0].len > 0);
 }

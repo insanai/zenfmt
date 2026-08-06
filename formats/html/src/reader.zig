@@ -9,6 +9,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("zenfmt_core");
+const entities = @import("entities.zig");
 
 pub const reader = core.Reader(.{
     .id = "ai.insan.zenfmt.html",
@@ -18,13 +19,45 @@ pub const reader = core.Reader(.{
 });
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
-    if (!std.unicode.utf8ValidateSlice(ctx.input.bytes)) {
+    try parseFragment(ctx, ctx.input.bytes, "");
+}
+
+/// Parses HTML `bytes` into `ctx.out`, leaving every open element closed.
+///
+/// This is the whole reader behind the plugin `read`; other packages (the
+/// EPUB reader) call it once per document part, sharing one emitter and
+/// one report stream across calls. A non-empty `base_dir` rebases relative
+/// link and image targets onto that directory (container-entry naming).
+pub fn parseFragment(
+    ctx: *core.ReadContext,
+    bytes: []const u8,
+    base_dir: []const u8,
+) core.ReadError!void {
+    if (!std.unicode.utf8ValidateSlice(bytes)) {
         try ctx.reports.add(invalidUtf8Report());
         return error.Malformed;
     }
-    var parser: Parser = .{ .ctx = ctx, .bytes = ctx.input.bytes };
+    var parser: Parser = .{ .ctx = ctx, .bytes = bytes, .base = base_dir };
     defer parser.deinit();
     try parser.run();
+}
+
+/// `a/b/../c` becomes `a/c`; `.` components and empty segments vanish.
+fn normalizeArchivePath(
+    gpa: std.mem.Allocator,
+    path: []const u8,
+) error{OutOfMemory}![]const u8 {
+    var parts: std.ArrayList([]const u8) = .empty;
+    defer parts.deinit(gpa);
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |part| {
+        if (std.mem.eql(u8, part, "..")) {
+            if (parts.items.len > 0) parts.items.len -= 1;
+        } else if (part.len > 0 and !std.mem.eql(u8, part, ".")) {
+            try parts.append(gpa, part);
+        }
+    }
+    return std.mem.join(gpa, "/", parts.items);
 }
 
 const ElementKind = enum {
@@ -67,6 +100,9 @@ const Parser = struct {
     ctx: *core.ReadContext,
     bytes: []const u8,
     pos: usize = 0,
+    /// When set (the EPUB reader), relative link and image targets are
+    /// rebased onto this directory so they name container entries.
+    base: []const u8 = "",
 
     stack: [core.limits.max_depth_hard_cap]Open = undefined,
     depth: u32 = 0,
@@ -77,6 +113,18 @@ const Parser = struct {
 
     fn deinit(p: *Parser) void {
         if (p.pre_buffer) |*buffer| buffer.deinit(p.ctx.gpa);
+    }
+
+    /// Rebases a relative target onto `base`; absolute URLs (any scheme),
+    /// root-relative paths, and pure fragments pass through unchanged.
+    fn rebase(p: *Parser, target: []const u8) error{OutOfMemory}![]const u8 {
+        if (p.base.len == 0 or target.len == 0) return target;
+        if (target[0] == '/' or target[0] == '#') return target;
+        const colon = std.mem.indexOfScalar(u8, target, ':');
+        const slash = std.mem.indexOfScalar(u8, target, '/');
+        if (colon != null and (slash == null or colon.? < slash.?)) return target;
+        const joined = try std.fmt.allocPrint(p.ctx.gpa, "{s}/{s}", .{ p.base, target });
+        return normalizeArchivePath(p.ctx.gpa, joined);
     }
 
     fn run(p: *Parser) core.ReadError!void {
@@ -178,7 +226,7 @@ const Parser = struct {
             try p.ensureParagraph();
             const src = try attributeValue(p.ctx.gpa, attrs, "src") orelse "";
             const alt = try attributeValue(p.ctx.gpa, attrs, "alt") orelse "";
-            const token = try p.ctx.out.beginImage(src, "");
+            const token = try p.ctx.out.beginImage(try p.rebase(src), "");
             if (alt.len > 0) try p.ctx.out.text(alt);
             p.ctx.out.endInline(token);
             return;
@@ -322,7 +370,7 @@ const Parser = struct {
                 try p.ensureParagraph();
                 const href = try attributeValue(p.ctx.gpa, attrs, "href") orelse "";
                 const title = try attributeValue(p.ctx.gpa, attrs, "title") orelse "";
-                const token = try p.ctx.out.beginLink(href, title);
+                const token = try p.ctx.out.beginLink(try p.rebase(href), title);
                 try p.push(.{ .kind = .link, .tag = "a", .inline_token = token });
             },
             .span => {
@@ -589,7 +637,8 @@ fn attributeValue(
     }
 }
 
-/// HTML entity decoding: numeric references and the common named set.
+/// HTML entity decoding: numeric references plus the complete WHATWG
+/// named set (`entities.zig`, generated from the specification registry).
 fn appendDecoded(
     gpa: std.mem.Allocator,
     out: *std.ArrayList(u8),
@@ -602,11 +651,26 @@ fn appendDecoded(
             i += 1;
             continue;
         }
-        const semi = std.mem.indexOfScalarPos(u8, raw[0..@min(raw.len, i + 12)], i, ';');
-        const decoded: ?[]const u8 = if (semi) |end| decodeEntity(raw[i + 1 .. end]) else null;
-        if (decoded) |bytes| {
+        // The longest named reference is 31 bytes; the window bounds the
+        // semicolon scan so a stray `&` never rescans the document.
+        const window_end = @min(raw.len, i + 33);
+        if (std.mem.indexOfScalarPos(u8, raw[0..window_end], i, ';')) |end| {
+            if (decodeEntity(raw[i + 1 .. end])) |bytes| {
+                try out.appendSlice(gpa, bytes);
+                i = end + 1;
+                continue;
+            }
+        }
+        // The legacy subset may omit the semicolon; longest match wins,
+        // and every legacy name fits in six bytes.
+        const available = @min(raw.len - (i + 1), 6);
+        var length: usize = available;
+        const matched: ?[]const u8 = while (length >= 2) : (length -= 1) {
+            if (entities.lookupLegacy(raw[i + 1 .. i + 1 + length])) |bytes| break bytes;
+        } else null;
+        if (matched) |bytes| {
             try out.appendSlice(gpa, bytes);
-            i = semi.? + 1;
+            i += 1 + length;
         } else {
             try out.append(gpa, '&');
             i += 1;
@@ -631,21 +695,7 @@ fn decodeEntity(body: []const u8) ?[]const u8 {
         const length = std.unicode.utf8Encode(code, &S.scratch) catch return null;
         return S.scratch[0..length];
     }
-    const named = [_]struct { name: []const u8, value: []const u8 }{
-        .{ .name = "amp", .value = "&" },          .{ .name = "lt", .value = "<" },
-        .{ .name = "gt", .value = ">" },           .{ .name = "quot", .value = "\"" },
-        .{ .name = "apos", .value = "'" },         .{ .name = "nbsp", .value = " " },
-        .{ .name = "mdash", .value = "—" },
-        .{ .name = "ndash", .value = "–" },
-        .{ .name = "hellip", .value = "…" },
-        .{ .name = "copy", .value = "©" },
-        .{ .name = "ldquo", .value = "\u{201c}" }, .{ .name = "rdquo", .value = "\u{201d}" },
-        .{ .name = "lsquo", .value = "\u{2018}" }, .{ .name = "rsquo", .value = "\u{2019}" },
-    };
-    for (named) |entity| {
-        if (std.mem.eql(u8, entity.name, body)) return entity.value;
-    }
-    return null;
+    return entities.lookup(body);
 }
 
 fn isWhitespaceOnly(bytes: []const u8) bool {
@@ -761,4 +811,28 @@ test "mismatched tags close tolerantly" {
         if (tag == .paragraph) paragraphs += 1;
     }
     try testing.expectEqual(@as(u32, 2), paragraphs);
+}
+
+test "named character references decode through the WHATWG table" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const doc = try convertHtml(
+        arena,
+        "<p>a&nbsp;b &amp; &copy; &rarr; &ouml; &NotEqualTilde; &nosuch; &ampx</p>",
+    );
+    const text = doc.store.text.items;
+    try testing.expect(std.mem.indexOf(u8, text, "a\u{a0}b") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "&\u{20}") != null or
+        std.mem.indexOf(u8, text, "&") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "©") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "→") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "ö") != null);
+    // Two-codepoint reference: U+2242 U+0338.
+    try testing.expect(std.mem.indexOf(u8, text, "\u{2242}\u{338}") != null);
+    // Unknown names pass through literally.
+    try testing.expect(std.mem.indexOf(u8, text, "&nosuch;") != null);
+    // The legacy subset decodes without its semicolon: `&ampx` → `&x`.
+    try testing.expect(std.mem.indexOf(u8, text, "&x") != null);
 }

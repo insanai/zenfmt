@@ -6,6 +6,9 @@
 //! properties. Every deliberate omission emits a report; an unrecognized
 //! construct is an `UNHANDLED CONSTRUCT` warning, visible in the field
 //! rather than silent.
+//!
+//! The package front end lives in `package.zig` and the table handlers in
+//! `tables.zig`; both operate on this file's `Machine`.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -25,121 +28,16 @@ const parseHyperlinkInstruction = util.parseHyperlinkInstruction;
 pub const reader = core.Reader(.{
     .id = "ai.insan.zenfmt.docx",
     .format = "docx",
-    .extensions = &.{"docx"},
+    .extensions = &.{ "docx", "docm" },
     .input = .seekable,
     .data_version = 1,
-    .read = read,
+    .read = @import("package.zig").read,
 });
 
-const w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const tables = @import("tables.zig");
+
+pub const w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const r_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-
-fn read(ctx: *core.ReadContext) core.ReadError!void {
-    const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
-        try ctx.reports.add(archiveReport(err, ctx.input_name));
-        return switch (err) {
-            error.OutOfMemory => error.OutOfMemory,
-            error.LimitExceeded => error.LimitExceeded,
-            else => error.Malformed,
-        };
-    };
-
-    // The main part comes from the package relationships, not a guess.
-    const document_part = blk: {
-        if (try extractOptional(&archive, arena, "_rels/.rels", ctx)) |rels_bytes| {
-            const rels = ooxml.parseRelationships(arena, rels_bytes, ctx.limits) catch null;
-            if (rels) |value| {
-                if (value.byType(ooxml.office_document_type)) |office| {
-                    break :blk try ooxml.resolveTarget(arena, "", office.target);
-                }
-            }
-        }
-        break :blk "word/document.xml";
-    };
-    const document_entry = archive.find(document_part) orelse {
-        try ctx.reports.add(missingPartReport(ctx.input_name, document_part));
-        return error.Malformed;
-    };
-    const document_bytes = try extractRequired(&archive, arena, document_entry, ctx);
-
-    const styles = blk: {
-        const bytes = (try extractOptional(&archive, arena, "word/styles.xml", ctx)) orelse
-            break :blk styles_mod.Styles.empty;
-        break :blk styles_mod.parse(arena, bytes, ctx.limits) catch styles_mod.Styles.empty;
-    };
-    const numbering = blk: {
-        const bytes = (try extractOptional(&archive, arena, "word/numbering.xml", ctx)) orelse
-            break :blk numbering_mod.Numbering.empty;
-        break :blk numbering_mod.parse(arena, bytes, ctx.limits) catch numbering_mod.Numbering.empty;
-    };
-    const rels = blk: {
-        const bytes = (try extractOptional(&archive, arena, "word/_rels/document.xml.rels", ctx)) orelse
-            break :blk ooxml.Relationships.empty;
-        break :blk ooxml.parseRelationships(arena, bytes, ctx.limits) catch ooxml.Relationships.empty;
-    };
-
-    var machine: Machine = .{
-        .ctx = ctx,
-        .arena = arena,
-        .styles = &styles,
-        .numbering = &numbering,
-        .rels = &rels,
-    };
-    defer machine.deinit();
-
-    {
-        var parser = xml.Parser.init(arena, document_bytes, ctx.limits.max_xml_depth);
-        defer parser.deinit();
-        machine.parser = &parser;
-        try machine.run(0);
-        try machine.closeLists(0);
-    }
-
-    if (machine.note_order.items.len > 0) {
-        if (try extractOptional(&archive, arena, "word/footnotes.xml", ctx)) |footnote_bytes| {
-            try machine.readFootnotes(footnote_bytes);
-        }
-    }
-    // Every declared note gets a body, even when footnotes.xml is absent.
-    for (machine.note_order.items) |entry| {
-        if (!entry.emitted) {
-            ctx.out.beginNoteBody(entry.note);
-            ctx.out.endNoteBody(entry.note);
-        }
-    }
-
-    try machine.finishReports();
-    try machine.emitPluginData();
-}
-
-/// A missing part is normal; a part that trips a limit is a refusal even
-/// when the part itself is optional — a bomb in styles.xml is still a bomb.
-fn extractOptional(
-    archive: *ooxml.zip.Archive,
-    arena: std.mem.Allocator,
-    name: []const u8,
-    ctx: *core.ReadContext,
-) core.ReadError!?[]const u8 {
-    const entry = archive.find(name) orelse return null;
-    return try extractRequired(archive, arena, entry, ctx);
-}
-
-fn extractRequired(
-    archive: *ooxml.zip.Archive,
-    arena: std.mem.Allocator,
-    entry: *const ooxml.zip.Entry,
-    ctx: *core.ReadContext,
-) core.ReadError![]const u8 {
-    return archive.extract(arena, entry, ctx.limits) catch |err| {
-        try ctx.reports.add(archiveReport(err, entry.name));
-        return switch (err) {
-            error.OutOfMemory => error.OutOfMemory,
-            error.LimitExceeded => error.LimitExceeded,
-            else => error.Malformed,
-        };
-    };
-}
 
 // -------------------------------------------------------------- machine
 
@@ -158,7 +56,7 @@ pub const RunProps = struct {
     }
 };
 
-const FrameKind = enum {
+pub const FrameKind = enum {
     transparent,
     paragraph,
     run,
@@ -173,7 +71,7 @@ const FrameKind = enum {
     sdt_content_inline,
 };
 
-const Frame = struct {
+pub const Frame = struct {
     kind: FrameKind,
     block_token: ?core.builder.BlockToken = null,
     inline_token: ?core.builder.InlineToken = null,
@@ -183,7 +81,7 @@ const Frame = struct {
     table_index: u32 = 0,
 };
 
-const TableState = struct {
+pub const TableState = struct {
     columns: u32,
     head_token: ?core.builder.BlockToken = null,
     body_token: ?core.builder.BlockToken = null,
@@ -210,7 +108,7 @@ const NoteEntry = struct {
     emitted: bool = false,
 };
 
-const Machine = struct {
+pub const Machine = struct {
     ctx: *core.ReadContext,
     arena: std.mem.Allocator,
     styles: *const styles_mod.Styles,
@@ -250,13 +148,13 @@ const Machine = struct {
     count_objects: u32 = 0,
     count_heading_clamped: u32 = 0,
 
-    fn deinit(m: *Machine) void {
+    pub fn deinit(m: *Machine) void {
         m.instr_buffer.deinit(m.arena);
         m.note_order.deinit(m.arena);
         m.style_ids_seen.deinit(m.arena);
     }
 
-    fn next(m: *Machine) core.ReadError!xml.Event {
+    pub fn next(m: *Machine) core.ReadError!xml.Event {
         if (m.pending) |event| {
             m.pending = null;
             return event;
@@ -279,7 +177,7 @@ const Machine = struct {
     }
 
     /// Processes events until the parser returns to `stop_depth`.
-    fn run(m: *Machine, stop_depth: u32) core.ReadError!void {
+    pub fn run(m: *Machine, stop_depth: u32) core.ReadError!void {
         while (true) {
             const event = try m.next();
             switch (event) {
@@ -295,12 +193,12 @@ const Machine = struct {
         }
     }
 
-    fn top(m: *Machine) ?*Frame {
+    pub fn top(m: *Machine) ?*Frame {
         if (m.depth == 0) return null;
         return &m.frames[m.depth - 1];
     }
 
-    fn push(m: *Machine, frame: Frame) core.ReadError!void {
+    pub fn push(m: *Machine, frame: Frame) core.ReadError!void {
         if (m.depth >= m.frames.len) return error.DepthLimitExceeded;
         m.frames[m.depth] = frame;
         m.depth += 1;
@@ -347,9 +245,9 @@ const Machine = struct {
             return m.push(.{ .kind = .text_run });
         }
         if (std.mem.eql(u8, local, "hyperlink")) return m.onHyperlinkStart(element);
-        if (std.mem.eql(u8, local, "tbl")) return m.onTableStart(element);
-        if (std.mem.eql(u8, local, "tr")) return m.onRowStart(element);
-        if (std.mem.eql(u8, local, "tc")) return m.onCellStart(element);
+        if (std.mem.eql(u8, local, "tbl")) return tables.onTableStart(m, element);
+        if (std.mem.eql(u8, local, "tr")) return tables.onRowStart(m, element);
+        if (std.mem.eql(u8, local, "tc")) return tables.onCellStart(m, element);
         if (std.mem.eql(u8, local, "sdt")) {
             if (element.self_closing) return;
             return m.push(.{ .kind = .sdt });
@@ -726,179 +624,6 @@ const Machine = struct {
         }
     }
 
-    // ------------------------------------------------------------ tables
-
-    fn onTableStart(m: *Machine, element: xml.ElementStart) core.ReadError!void {
-        if (element.self_closing) return;
-        try m.closeLists(m.contextListBase());
-
-        // `tblPr` and `tblGrid` precede the rows; count the columns before
-        // opening the table.
-        var columns: u32 = 0;
-        while (true) {
-            const event = try m.next();
-            switch (event) {
-                .done => return,
-                .element_start => |child| {
-                    if (child.name.is(w_ns, "tblPr")) {
-                        if (!child.self_closing) try m.skipCurrent();
-                    } else if (child.name.is(w_ns, "tblGrid")) {
-                        if (!child.self_closing) {
-                            const grid_depth = m.parser.depth;
-                            while (m.parser.depth >= grid_depth) {
-                                const grid_event = try m.next();
-                                switch (grid_event) {
-                                    .done => return,
-                                    .element_start => |grid_child| {
-                                        if (grid_child.name.is(w_ns, "gridCol")) columns += 1;
-                                        if (!grid_child.self_closing) try m.skipCurrent();
-                                    },
-                                    else => {},
-                                }
-                            }
-                        }
-                    } else {
-                        m.pending = event;
-                        break;
-                    }
-                },
-                .element_end => {
-                    // The table ended before any row: an empty table.
-                    m.pending = event;
-                    break;
-                },
-                .text => {},
-            }
-        }
-
-        var alignments: std.ArrayList(core.payload.Alignment) = .empty;
-        defer alignments.deinit(m.arena);
-        try alignments.appendNTimes(m.arena, .default, @max(columns, 1));
-        const token = try m.ctx.out.beginTable(alignments.items);
-
-        assert(m.table_depth < m.tables.len);
-        m.tables[m.table_depth] = .{ .columns = columns };
-        try m.push(.{
-            .kind = .table,
-            .block_token = token,
-            .table_index = m.table_depth,
-        });
-        m.table_depth += 1;
-    }
-
-    fn onRowStart(m: *Machine, element: xml.ElementStart) core.ReadError!void {
-        if (element.self_closing) return;
-        const frame = m.top() orelse return m.push(.{ .kind = .transparent });
-        if (frame.kind != .table) return m.push(.{ .kind = .transparent });
-        const table = &m.tables[frame.table_index];
-
-        // A leading header row goes under `table_head`; anything after the
-        // body opens stays in the body.
-        var is_header = false;
-        const first = try m.next();
-        if (first == .element_start and first.element_start.name.is(w_ns, "trPr")) {
-            if (!first.element_start.self_closing) {
-                const pr_depth = m.parser.depth;
-                while (m.parser.depth >= pr_depth) {
-                    const pr_event = try m.next();
-                    switch (pr_event) {
-                        .done => return,
-                        .element_start => |child| {
-                            if (child.name.is(w_ns, "tblHeader")) {
-                                is_header = toggleValue(child.attributes);
-                            }
-                        },
-                        else => {},
-                    }
-                }
-            }
-        } else {
-            m.pending = first;
-        }
-
-        if (is_header and table.body_token == null) {
-            if (table.head_token == null) {
-                table.head_token = try m.ctx.out.beginBlock(.table_head);
-            }
-        } else {
-            if (table.head_token) |token| {
-                m.ctx.out.endBlock(token);
-                table.head_token = null;
-            }
-            if (table.body_token == null) {
-                table.body_token = try m.ctx.out.beginTableBody(.{
-                    .row_head_columns = 0,
-                    .head_rows = 0,
-                });
-            }
-        }
-        const token = try m.ctx.out.beginBlock(.table_row);
-        try m.push(.{ .kind = .table_row, .block_token = token });
-    }
-
-    fn onCellStart(m: *Machine, element: xml.ElementStart) core.ReadError!void {
-        if (element.self_closing) return;
-        const frame = m.top() orelse return m.push(.{ .kind = .transparent });
-        if (frame.kind != .table_row) return m.push(.{ .kind = .transparent });
-
-        var col_span: u32 = 1;
-        var merged_continuation = false;
-        const first = try m.next();
-        if (first == .element_start and first.element_start.name.is(w_ns, "tcPr")) {
-            if (!first.element_start.self_closing) {
-                const pr_depth = m.parser.depth;
-                while (m.parser.depth >= pr_depth) {
-                    const pr_event = try m.next();
-                    switch (pr_event) {
-                        .done => return,
-                        .element_start => |child| {
-                            if (child.name.is(w_ns, "gridSpan")) {
-                                if (stringAttribute(child.attributes, "val")) |value| {
-                                    col_span = std.fmt.parseInt(u32, value, 10) catch 1;
-                                }
-                            } else if (child.name.is(w_ns, "vMerge")) {
-                                const value = stringAttribute(child.attributes, "val") orelse "continue";
-                                merged_continuation = !std.mem.eql(u8, value, "restart");
-                            }
-                        },
-                        else => {},
-                    }
-                }
-            }
-        } else {
-            m.pending = first;
-        }
-
-        const table = blk: {
-            var i = m.depth;
-            while (i > 0) {
-                i -= 1;
-                if (m.frames[i].kind == .table) break :blk &m.tables[m.frames[i].table_index];
-            }
-            unreachable;
-        };
-        if ((col_span > 1 or merged_continuation) and !table.spans_noted) {
-            table.spans_noted = true;
-            try m.ctx.reports.add(mergedCellNote());
-        }
-        if (merged_continuation) {
-            // Fold the continuation into its originating cell: skip it.
-            try m.skipCurrent();
-            return;
-        }
-
-        const token = try m.ctx.out.beginTableCell(.{
-            .alignment = .default,
-            .row_span = 1,
-            .col_span = col_span,
-        });
-        try m.push(.{
-            .kind = .table_cell,
-            .block_token = token,
-            .list_base = m.list_depth,
-        });
-    }
-
     // ---------------------------------------------------------- content controls
 
     fn onSdtContentStart(m: *Machine, element: xml.ElementStart) core.ReadError!void {
@@ -962,7 +687,7 @@ const Machine = struct {
 
     // ------------------------------------------------------------- lists
 
-    fn contextListBase(m: *Machine) u32 {
+    pub fn contextListBase(m: *Machine) u32 {
         var i = m.depth;
         while (i > 0) {
             i -= 1;
@@ -1033,7 +758,7 @@ const Machine = struct {
         m.list_depth -= 1;
     }
 
-    fn closeLists(m: *Machine, base: u32) core.ReadError!void {
+    pub fn closeLists(m: *Machine, base: u32) core.ReadError!void {
         while (m.list_depth > base) try m.closeOneList();
     }
 
@@ -1051,7 +776,7 @@ const Machine = struct {
         return note;
     }
 
-    fn readFootnotes(m: *Machine, bytes: []const u8) core.ReadError!void {
+    pub fn readFootnotes(m: *Machine, bytes: []const u8) core.ReadError!void {
         var parser = xml.Parser.init(m.arena, bytes, m.ctx.limits.max_xml_depth);
         defer parser.deinit();
         m.parser = &parser;
@@ -1089,7 +814,7 @@ const Machine = struct {
 
     // ------------------------------------------------------------- misc
 
-    fn skipCurrent(m: *Machine) core.ReadError!void {
+    pub fn skipCurrent(m: *Machine) core.ReadError!void {
         m.parser.skipElement() catch return error.Malformed;
     }
 
@@ -1119,7 +844,7 @@ const Machine = struct {
         return found;
     }
 
-    fn finishReports(m: *Machine) core.ReadError!void {
+    pub fn finishReports(m: *Machine) core.ReadError!void {
         const reports = m.ctx.reports;
         if (m.count_comments > 0) try addCounted(reports, droppedReport(
             "docx.comments-dropped",
@@ -1177,7 +902,7 @@ const Machine = struct {
         ), m.count_heading_clamped);
     }
 
-    fn emitPluginData(m: *Machine) core.ReadError!void {
+    pub fn emitPluginData(m: *Machine) core.ReadError!void {
         if (m.style_ids_seen.count() == 0) return;
         var ids: std.ArrayList([]const u8) = .empty;
         defer ids.deinit(m.arena);

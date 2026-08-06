@@ -14,7 +14,7 @@ const ooxml = @import("zenfmt_ooxml");
 pub const reader = core.Reader(.{
     .id = "ai.insan.zenfmt.xlsx",
     .format = "xlsx",
-    .extensions = &.{"xlsx"},
+    .extensions = &.{ "xlsx", "xlsm" },
     .input = .seekable,
     .read = read,
 });
@@ -271,6 +271,20 @@ fn readSheet(
                     row_token = try ctx.out.beginBlock(.table_row);
                     emitted_in_row = 0;
                     cell_column = 0;
+                    // A self-closing `<row/>` gets no end event; close it
+                    // as an empty row here or its token leaks.
+                    if (element.self_closing) {
+                        while (emitted_in_row < columns) : (emitted_in_row += 1) {
+                            try emitCellText(ctx, "");
+                        }
+                        if (row_token) |token| ctx.out.endBlock(token);
+                        row_token = null;
+                        if (row_index == 0) {
+                            if (head_token) |token| ctx.out.endBlock(token);
+                            head_token = null;
+                        }
+                        row_index += 1;
+                    }
                 } else if (element.name.is(main_ns, "c")) {
                     cell_kind = .general;
                     cell_type = .number;
@@ -303,6 +317,12 @@ fn readSheet(
                             try emitCellText(ctx, "");
                             emitted_in_row += 1;
                         }
+                    }
+                    // A self-closing `<c/>` is a real (empty) cell with no
+                    // end event; emit it now.
+                    if (element.self_closing and row_token != null and emitted_in_row < 1024) {
+                        try emitCellText(ctx, "");
+                        emitted_in_row += 1;
                     }
                 } else if (element.name.is(main_ns, "v")) {
                     in_value = !element.self_closing;
@@ -486,6 +506,69 @@ fn formulaNote() core.Report {
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
+
+test "self-closing rows and cells keep the table balanced" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const workbook =
+        \\<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        \\  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        \\<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>
+        \\</workbook>
+    ;
+    const rels =
+        \\<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        \\<Relationship Id="rId1"
+        \\  Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+        \\  Target="worksheets/sheet1.xml"/>
+        \\</Relationships>
+    ;
+    // Row 1 is entirely self-closing cells; row 2 is a self-closing row —
+    // the shapes real producers write for styled-but-empty regions.
+    const sheet =
+        \\<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        \\<sheetData>
+        \\<row r="1"><c r="A1" s="1"/><c r="B1"><v>7</v></c></row>
+        \\<row r="2"/>
+        \\<row r="3"><c r="A3"><v>9</v></c></row>
+        \\</sheetData>
+        \\</worksheet>
+    ;
+    const bytes = try ooxml.zip.buildStoredArchive(arena, &.{
+        .{ .name = "xl/workbook.xml", .data = workbook },
+        .{ .name = "xl/_rels/workbook.xml.rels", .data = rels },
+        .{ .name = "xl/worksheets/sheet1.xml", .data = sheet },
+    });
+
+    const store = try arena.create(core.ast.Store);
+    store.* = .{};
+    var b = core.builder.Builder.init(arena, store, .{});
+    const reports = try arena.create(core.Reports);
+    reports.* = core.Reports.init(arena, .{});
+    var ctx: core.ReadContext = .{
+        .gpa = arena,
+        .out = .{ .builder = &b },
+        .input = .{ .bytes = bytes },
+        .input_name = "grid.xlsx",
+        .reports = reports,
+        .manifest_in = null,
+        .limits = .{},
+    };
+    try read(&ctx);
+    const doc = try b.finish();
+    try core.ast.validate(&doc, .{});
+
+    var rows: u32 = 0;
+    var cells: u32 = 0;
+    for (doc.store.blocks.items(.tag)) |tag| {
+        if (tag == .table_row) rows += 1;
+        if (tag == .table_cell) cells += 1;
+    }
+    try testing.expectEqual(@as(u32, 3), rows);
+    try testing.expectEqual(@as(u32, 6), cells);
+}
 
 test "column references and serial dates" {
     try testing.expectEqual(@as(u32, 0), columnOf("A1"));

@@ -4,6 +4,8 @@ pub const reader = @import("reader.zig").reader;
 
 test {
     _ = @import("reader.zig");
+    _ = @import("package.zig");
+    _ = @import("tables.zig");
     _ = @import("reports.zig");
     _ = @import("util.zig");
     _ = @import("styles.zig");
