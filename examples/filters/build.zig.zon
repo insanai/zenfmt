@@ -1,0 +1,10 @@
+.{
+    .name = .zenfmt_filters_example,
+    .version = "0.0.0",
+    .fingerprint = 0x2b082c374547ac8c, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .zenfmt = .{ .path = "../.." },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "src" },
+}
