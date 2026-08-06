@@ -1,12 +1,11 @@
 // The zenfmt book.
 //
-// Not written yet, and not wired into `zig build`. The theme, the cover, and
-// the figure helpers are in place so the first chapter starts from a designed
-// page. Uncomment each include as its chapter lands, and add the `book` step
-// to build.zig at the same time.
+// Build it with `zig build book`, or by hand:
+//   typst compile --root . docs/book.typ docs/build/zenfmt-book.pdf
 //
-// Build it by hand meanwhile:
-//   typst compile --root docs docs/book.typ docs/build/zenfmt.pdf
+// The root is the repository, not docs/: the benchmark chapter renders its
+// dashboard from /benchmarks/results/latest.json, which `zig build
+// benchmark` writes.
 
 #import "book/theme.typ": *
 #import "book/figures.typ": *
@@ -20,14 +19,12 @@
 )
 
 #include "book/00_front.typ"
-
-// Planned chapters. Each maps to the part of ZDS 0002 that specified it.
-//
-// #include "book/01_tour.typ"          // converting a document, end to end
-// #include "book/02_ir.typ"            // the document representation
-// #include "book/03_plugins.typ"       // writing a reader and a writer
-// #include "book/04_office.typ"        // the OOXML container formats
-// #include "book/05_markdown.typ"      // the Markdown writer's output rules
-// #include "book/06_limits.typ"        // untrusted input and resource limits
-// #include "book/07_library.typ"       // the API contract
-// #include "book/08_reference.typ"     // CLI and format reference
+#include "book/01_tour.typ"
+#include "book/02_ir.typ"
+#include "book/03_plugins.typ"
+#include "book/04_office.typ"
+#include "book/05_markdown.typ"
+#include "book/06_limits.typ"
+#include "book/07_library.typ"
+#include "book/08_reference.typ"
+#include "book/09_benchmark.typ"

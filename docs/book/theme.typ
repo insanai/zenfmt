@@ -1,9 +1,6 @@
-// Book theme for the zenfmt manual.
-//
-// The chapters are not written yet. This file carries the reusable machinery —
-// the page frame, the cover, the callouts, the exercise and figure helpers —
-// so that the first chapter starts from a designed page rather than a blank
-// one. Everything here is parameterized; nothing names a specific book.
+// Book theme for the zenfmt manual: the page frame, the cover, the
+// callouts, and the exercise and figure helpers. Everything here is
+// parameterized; nothing names a specific book.
 
 #import "@preview/cetz:0.5.2" as cetz
 
@@ -61,7 +58,27 @@
   set heading(numbering: "1.1")
   set raw(tab-size: 4)
   show raw: set text(size: 8.3pt)
-  set table(stroke: 0.45pt + rule, inset: 6pt)
+  show raw.where(block: false): it => box(
+    fill: rgb("eef1f6"),
+    inset: (x: 2.5pt, y: 0pt),
+    outset: (y: 2.5pt),
+    radius: 2pt,
+    it,
+  )
+  show raw.where(block: true): it => block(
+    width: 100%,
+    fill: rgb("f7f9fc"),
+    stroke: (left: 2pt + rule),
+    inset: 9pt,
+    radius: 3pt,
+    it,
+  )
+  set table(
+    stroke: 0.45pt + rule,
+    inset: 6pt,
+    fill: (x, y) => if y == 0 { rgb("eef1f6") } else if calc.even(y) { rgb("fafbfd") },
+  )
+  show figure.caption: set text(size: 9pt, fill: gray)
   show link: set text(fill: blue)
   show heading.where(level: 1): heading => {
     pagebreak(weak: true)
@@ -188,6 +205,14 @@
     fill: colors.at(1),
     stroke: (left: 2pt + colors.at(0)),
   )[
+    #box(
+      width: 6.5pt,
+      height: 6.5pt,
+      fill: colors.at(0),
+      radius: 1.5pt,
+      baseline: 0.2pt,
+    )
+    #h(1pt)
     #text(weight: "bold", fill: colors.at(0))[#title]
     #h(5pt)
     #body
@@ -204,8 +229,12 @@
   outset: (y: 4pt),
   stroke: (left: 1.2pt + blue),
 )[
-  #emph(body)
-  #linebreak()
+  #grid(
+    columns: (auto, 1fr),
+    column-gutter: 7pt,
+    text(size: 24pt, fill: rule, font: "New Computer Modern", baseline: 6pt)["],
+    emph(body),
+  )
   #align(right, text(size: 9pt, fill: gray)[#text("- ")#attribution])
 ]
 
