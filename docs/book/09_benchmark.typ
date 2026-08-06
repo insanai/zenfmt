@@ -7,7 +7,10 @@
 // numbers, bars, and headline ratios below all move together.
 #let bench = json("/benchmarks/results/latest.json")
 #let tool_names = ("zenfmt", "pandoc", "anydoc")
-#let tool_fill = (blue, gray, amber)
+// Categorical palette validated for color-vision deficiency and contrast
+// against the paper surface; bar order and direct labels carry identity
+// as the secondary encoding.
+#let tool_fill = (blue, rgb("b03a72"), amber)
 
 #let head_to_head(files, other) = {
   let n = 0
@@ -35,6 +38,7 @@
 #let converted(files, index) = files.filter(f => f.tools.at(index).ok).len()
 
 #let stat_tile(number, label, detail, fill: blue_light, stroke: blue) = block(
+  breakable: false,
   fill: fill,
   stroke: 0.8pt + stroke,
   radius: 4pt,
@@ -48,7 +52,7 @@
 
 /// Grouped horizontal bars on a log-10 axis: one row per corpus file,
 /// one bar per tool. `metric` picks the field; `lmax` is the top decade.
-#let log_bars(files, metric, unit, lmax) = cetz.canvas(length: 1cm, {
+#let log_bars(files, metric, unit, lmax, marker: none, marker_label: none) = cetz.canvas(length: 1cm, {
   import cetz.draw: *
   let row_h = 0.72
   let bar_h = 0.155
@@ -63,6 +67,15 @@
     let x = xpos(tick)
     line((x, 0.25), (x, -height - 0.05), stroke: 0.35pt + rule)
     content((x, 0.5), text(size: 7pt, fill: gray)[#tick #unit])
+  }
+  if marker != none {
+    let x = xpos(marker)
+    line((x, 0.25), (x, -height - 0.05), stroke: (paint: ink, thickness: 0.6pt, dash: "dashed"))
+    content(
+      (x + 0.08, -height - 0.32),
+      anchor: "west",
+      text(size: 6.8pt, fill: ink, style: "italic", marker_label),
+    )
   }
   for (i, f) in files.enumerate() {
     let y = -(i + 0.5) * row_h
@@ -109,6 +122,64 @@
       .flatten(),
   )
 }
+
+/// Single-series ratio bars: how many times faster zenfmt converts each
+/// shared file than `other`. Log-10 axis with a parity rule at 1x.
+#let speedup_bars(files, other) = cetz.canvas(length: 1cm, {
+  import cetz.draw: *
+  let rows = files
+    .filter(f => f.tools.at(0).ok and f.tools.at(other).ok)
+    .map(f => (
+      name: f.name,
+      ratio: f.tools.at(other).wall_ms / f.tools.at(0).wall_ms,
+    ))
+    .sorted(key: r => -r.ratio)
+  let row_h = 0.42
+  let bar_h = 0.2
+  let x0 = 2.9
+  let xw = 11.4
+  let lmin = -0.5
+  let lmax = 1.6
+  let xpos(v) = x0 + (calc.log(v, base: 10) - lmin) / (lmax - lmin) * xw
+  let height = rows.len() * row_h
+
+  for tick in (0.5, 1, 10) {
+    let x = xpos(tick)
+    line((x, 0.25), (x, -height - 0.05), stroke: 0.35pt + rule)
+    content((x, 0.5), text(size: 7pt, fill: gray)[#tick;x])
+  }
+  line(
+    (xpos(1), 0.25),
+    (xpos(1), -height - 0.05),
+    stroke: (paint: ink, thickness: 0.6pt, dash: "dashed"),
+  )
+  content(
+    (xpos(1) + 0.08, -height - 0.32),
+    anchor: "west",
+    text(size: 6.8pt, fill: ink, style: "italic")[1x: parity],
+  )
+  for (i, r) in rows.enumerate() {
+    let y = -(i + 0.5) * row_h
+    content((x0 - 0.18, y), anchor: "east", text(size: 8pt, raw(r.name)))
+    // Bars grow from the parity line: rightward when zenfmt wins the
+    // file, leftward in the other tool's color when it does not.
+    let x_end = xpos(r.ratio)
+    let win = r.ratio >= 1.0
+    rect(
+      (xpos(1), y - bar_h / 2),
+      (x_end, y + bar_h / 2),
+      fill: if win { blue } else { amber },
+      stroke: none,
+    )
+    let label_x = if win { x_end + 0.12 } else { x_end - 0.12 }
+    content(
+      (label_x, y),
+      anchor: if win { "west" } else { "east" },
+      text(size: 6.8pt, fill: gray)[#calc.round(r.ratio, digits: 1)x],
+    )
+  }
+  line((x0, 0.25), (x0, -height - 0.05), stroke: 0.7pt + ink)
+})
 
 = The Measure of the Tool
 
@@ -159,6 +230,39 @@ Fairness is a design decision, not an accident:
   and the W3C. It spans #bench.files.len() files and every format family
   zenfmt reads.
 
+Every file is real. Nothing in the corpus was authored for this
+benchmark.
+
+#figure(
+  placement: auto,
+  kind: table,
+  {
+    set text(size: 8pt)
+    table(
+      columns: (auto, auto, 1fr),
+      align: (left, left, left),
+      table.header([*file*], [*family*], [*origin*]),
+      [`report.docx`], [DOCX], [filesamples.com document sample],
+      [`memo.doc`], [Word 97 binary], [filesamples.com, authored in Word 9.0],
+      [`letter.odt`], [OpenDocument text], [filesamples.com],
+      [`notes.rtf`], [RTF], [filesamples.com],
+      [`sheet.xlsx`], [XLSX], [filesamples.com],
+      [`table.xls`], [Excel 97 binary], [filesamples.com],
+      [`grid.xlsb`], [Excel binary workbook], [Apache POI test corpus],
+      [`sheet.ods`], [OpenDocument spreadsheet], [filesamples.com],
+      [`slides.pptx`], [PPTX], [Apache POI corpus, a real ApacheCon deck],
+      [`deck.ppt`], [PowerPoint 97 binary], [Apache POI corpus, a 2.5 MB thesis defense],
+      [`slides.odp`], [OpenDocument presentation], [the ApacheCon deck, converted by LibreOffice],
+      [`book.epub`], [EPUB], [Project Gutenberg, Pride and Prejudice],
+      [`page.html`], [HTML], [Project Gutenberg, the same novel as one page],
+      [`data.csv`], [CSV], [FSU sample data, 25,000 rows],
+      [`article.pdf`], [PDF], [pdfobject.com sample article],
+      [`spec.pdf`], [PDF], [W3C accessibility test file],
+    )
+  },
+  caption: [The corpus: 16 real documents from public sources.],
+)
+
 #checkpoint([reproduction], [
   `sh benchmarks/fetch_corpus.sh` downloads the corpus, which is not
   committed. `npm install --prefix benchmarks/.anydoc @firecrawl/anydoc`
@@ -172,7 +276,7 @@ Fairness is a design decision, not an accident:
 
 == The headline
 
-#grid(
+#block(breakable: false, grid(
   columns: (1fr, 1fr, 1fr),
   gutter: 4mm,
   {
@@ -201,7 +305,7 @@ Fairness is a design decision, not an accident:
       [geometric mean over the #h.files files both convert; #calc.round(h.rss, digits: 1)x less peak memory],
     )
   },
-)
+))
 
 The geometric mean is the honest average for ratios. A 100x win on one
 file cannot buy back ten 2x losses. A tool that halves one ratio while
@@ -262,13 +366,23 @@ zenfmt detects this variant by exact-consumption parsing.
 ])
 
 #figure(
+  placement: auto,
+  kind: image,
   {
     legend
-    log_bars(bench.files, "wall_ms", "ms", 3.6)
+    log_bars(
+      bench.files,
+      "wall_ms",
+      "ms",
+      3.6,
+      marker: 60,
+      marker_label: [60 ms: the competitors' runtime startup floor],
+    )
   },
   caption: [
     Median wall latency per conversion, log-10 axis. Absent bars carry
-    their reason in italics.
+    their reason in italics. The dashed rule marks the startup floor the
+    interpreted runtimes pay before any document work begins.
   ],
 )
 
@@ -292,6 +406,8 @@ having.
 == Memory
 
 #figure(
+  placement: auto,
+  kind: image,
   {
     legend
     log_bars(bench.files, "max_rss_mb", "MB", 3.0)
@@ -309,6 +425,27 @@ and 426 MB for the HTML page. anydoc pays a flat 47 MB for its runtime
 before documents enter the picture. On the shared files the
 geometric-mean gap is an order of magnitude. It widens exactly on the
 inputs where memory matters.
+
+== The shape of the win
+
+One more picture makes the distribution visible. Take each file both
+zenfmt and anydoc convert. Divide anydoc's median wall time by zenfmt's.
+Sort. The result is not one lucky file carrying an average. Thirteen of
+the 14 shared files land on the winning side of parity. The one that
+does not is `data.csv`, the price of column alignment, in its own color
+on the losing side. The spread tells you the rest: small files are
+dominated by the competitor's startup, and large files are dominated by
+parsing.
+
+#figure(
+  placement: auto,
+  kind: image,
+  speedup_bars(bench.files, 2),
+  caption: [
+    Wall-time speedup of zenfmt over anydoc per shared corpus file,
+    sorted, log-10 axis. The dashed rule is parity.
+  ],
+)
 
 == Reading it honestly
 

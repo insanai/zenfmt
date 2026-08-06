@@ -40,7 +40,7 @@ Blocks nest. Inlines nest. Nodes carry identifiers, classes, and
 key-value attributes. The full roster, from `core/src/ast.zig`:
 
 #table(
-  columns: (auto, 1fr),
+  columns: (3fr, 2fr),
   table.header([*Block tags*], [*Role*]),
   [`plain`, `paragraph`, `line_block`, `heading`, `code_block`,
     `raw_block`, `quote`, `list`, `definition_list`, `thematic_break`,
@@ -55,7 +55,7 @@ key-value attributes. The full roster, from `core/src/ast.zig`:
 )
 
 #table(
-  columns: (auto, 1fr),
+  columns: (3fr, 2fr),
   table.header([*Inline tags*], [*Role*]),
   [`text`, `space`, `soft_break`, `hard_break`],
   [The prose layer. Text nodes never contain whitespace. Whitespace is

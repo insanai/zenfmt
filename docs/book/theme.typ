@@ -176,7 +176,7 @@
 
 #let part_page(number, title, summary) = {
   set page(header: none)
-  pagebreak(to: "odd")
+  pagebreak(weak: true)
   align(center + horizon)[
     #text(size: 11pt, tracking: 1.6pt, fill: blue)[PART #number]
     #v(5mm)
