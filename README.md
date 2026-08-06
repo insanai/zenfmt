@@ -5,15 +5,27 @@ another, with one representation in the middle.
 
 **Status: implemented, in review.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ); the library, CLI,
-and format plugins through delivery phase 6 are in the tree with a green test
-suite.
+and format plugins through delivery phase 7 — the full-coverage pass — are in
+the tree with a green test suite.
 
 ## What it is
 
-zenfmt reads the office document formats — DOCX, ODT, RTF, XLSX, PPTX — along
-with plain text, Markdown, CSV, HTML, AsciiDoc, and reStructuredText, and
-writes Markdown. One writer, deliberately: the AST is easiest to judge when
-many readers feed a single consumer.
+zenfmt reads nineteen input formats and writes Markdown. One writer,
+deliberately: the AST is easiest to judge when many readers feed a single
+consumer.
+
+| family | formats |
+|---|---|
+| Word processing | `docx`/`docm`, legacy `doc`, `odt`, `rtf` |
+| Spreadsheets | `xlsx`/`xlsm`, `xlsb`, legacy `xls`, `ods`, `csv`/`tsv` |
+| Presentations | `pptx`/`pptm`/`ppsx`/`ppsm`, legacy `ppt`/`pps`/`pot`, `odp` |
+| Publishing | `epub`, `pdf` (native Zig text extraction), `html` |
+| Markup | `markdown`, `asciidoc`, `rst`, plain `text` |
+
+Inputs are detected by content signature — ZIP central-directory part names,
+OpenDocument and EPUB `mimetype` entries, CFB directory streams, `%PDF`,
+`{\rtf` — with the extension only as the first hint. Encrypted documents are
+refused with a report, never silently skipped.
 
 ```sh
 zig build                          # the zenfmt CLI into zig-out/bin/
@@ -55,12 +67,15 @@ Four properties drive the design, and each is argued in ZDS 0002:
 ```
 build.zig            build graph: modules, CLI, tests, and the zds-* steps
 core/                `zenfmt_core`: the format-blind engine, AST, and filters
-support/             shared machinery: pull XML parser, OOXML container
-formats/             one library per format: docx, odt, rtf, xlsx, pptx,
-                     markdown, csv, html, asciidoc, rst, text
+support/             shared machinery: pull XML parser, OOXML container,
+                     CFB (legacy Office) container
+formats/             one library per format: docx, doc, odt, rtf, xlsx, xls,
+                     xlsb, ods, csv, pptx, ppt, odp, epub, pdf, html,
+                     markdown, asciidoc, rst, text
 src/                 the umbrella `zenfmt` library and its default bundle
 cli/                 the command-line tool; imports only the umbrella
 examples/filters/    a user project with its own filters compiled in
+benchmarks/          the conversion benchmark and its corpus fetcher
 tests/               cross-format, round-trip, fuzz, and adversarial suites
 tools/zds.zig        the ZDS numbering workflow (ZDS 0001)
 docs/                design records, and the skeleton of the book
@@ -84,7 +99,8 @@ zig build zds                    # every record to docs/build/
 zig build zds -Dzds=2            # one record, by number or slug
 zig build zds-index              # the registry-driven index PDF
 zig build zds-site               # the experimental HTML bundle
-zig build docs                   # all three
+zig build book                   # the zenfmt book (needs benchmark results)
+zig build docs                   # records, index, site, and the book
 zig build zds-list               # records, drafts, and consistency warnings
 zig build zds-new -- <slug>      # start a record from the template
 zig build zds-promote -- <slug>  # assign it the next number
@@ -96,6 +112,20 @@ path. Everything else needs only Zig 0.16.
 ```sh
 zig build test        # the test suite
 zig build fmt-check   # formatting
+```
+
+## Benchmark
+
+`zig build benchmark` converts a downloaded corpus of real-world documents
+with zenfmt, [pandoc](https://pandoc.org/), and firecrawl's
+[anydoc](https://github.com/firecrawl/anydoc), measuring wall-clock latency,
+CPU time, and peak RSS per conversion (median of five runs, child-process
+rusage). Results land in `benchmarks/results/results.md`.
+
+```sh
+sh benchmarks/fetch_corpus.sh                          # once: the corpus
+npm install --prefix benchmarks/.anydoc @firecrawl/anydoc   # once: anydoc
+zig build benchmark -Doptimize=ReleaseSafe             # the comparison
 ```
 
 ## License

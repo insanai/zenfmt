@@ -14,9 +14,42 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run the test suite");
 
-    addLibraries(b, target, optimize, test_step);
+    const cli = addLibraries(b, target, optimize, test_step);
+    addBenchmark(b, target, cli);
     addZds(b, target, optimize, test_step);
     addFormatting(b);
+}
+
+// ------------------------------------------------------------- benchmark
+
+/// `zig build benchmark` (paxos-zig pattern): converts the downloaded corpus
+/// with zenfmt, pandoc, and anydoc, measuring latency, CPU, and peak RSS.
+/// Run `benchmarks/fetch_corpus.sh` once to populate `benchmarks/corpus`.
+fn addBenchmark(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    cli: *std.Build.Step.Compile,
+) void {
+    const harness = b.addExecutable(.{
+        .name = "zenfmt-benchmark",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/benchmark.zig"),
+            .target = target,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const run_harness = b.addRunArtifact(harness);
+    run_harness.has_side_effects = true;
+    run_harness.setCwd(b.path("."));
+    run_harness.addArg("--zenfmt");
+    run_harness.addArtifactArg(cli);
+    if (b.args) |args| run_harness.addArgs(args);
+    const benchmark_step = b.step(
+        "benchmark",
+        "Run the conversion benchmark against pandoc and anydoc " ++
+            "(use -Doptimize=ReleaseSafe for publishable numbers)",
+    );
+    benchmark_step.dependOn(&run_harness.step);
 }
 
 // ------------------------------------------------------------- libraries
@@ -30,7 +63,7 @@ fn addLibraries(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     test_step: *std.Build.Step,
-) void {
+) *std.Build.Step.Compile {
     const core = b.addModule("zenfmt_core", .{
         .root_source_file = b.path("core/src/root.zig"),
         .target = target,
@@ -146,6 +179,95 @@ fn addLibraries(
         },
     });
 
+    const cfb = b.addModule("zenfmt_cfb", .{
+        .root_source_file = b.path("support/cfb/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const ods = b.addModule("zenfmt_ods", .{
+        .root_source_file = b.path("formats/ods/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+        },
+    });
+
+    const odp = b.addModule("zenfmt_odp", .{
+        .root_source_file = b.path("formats/odp/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+        },
+    });
+
+    const epub = b.addModule("zenfmt_epub", .{
+        .root_source_file = b.path("formats/epub/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+            .{ .name = "zenfmt_html", .module = html },
+        },
+    });
+
+    const pdf = b.addModule("zenfmt_pdf", .{
+        .root_source_file = b.path("formats/pdf/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const doc = b.addModule("zenfmt_doc", .{
+        .root_source_file = b.path("formats/doc/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_cfb", .module = cfb },
+        },
+    });
+
+    const xls = b.addModule("zenfmt_xls", .{
+        .root_source_file = b.path("formats/xls/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_cfb", .module = cfb },
+        },
+    });
+
+    const ppt = b.addModule("zenfmt_ppt", .{
+        .root_source_file = b.path("formats/ppt/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_cfb", .module = cfb },
+        },
+    });
+
+    const xlsb = b.addModule("zenfmt_xlsb", .{
+        .root_source_file = b.path("formats/xlsb/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+        },
+    });
+
     const umbrella = b.addModule("zenfmt", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -163,6 +285,14 @@ fn addLibraries(
             .{ .name = "zenfmt_html", .module = html },
             .{ .name = "zenfmt_asciidoc", .module = asciidoc },
             .{ .name = "zenfmt_rst", .module = rst },
+            .{ .name = "zenfmt_ods", .module = ods },
+            .{ .name = "zenfmt_odp", .module = odp },
+            .{ .name = "zenfmt_epub", .module = epub },
+            .{ .name = "zenfmt_pdf", .module = pdf },
+            .{ .name = "zenfmt_doc", .module = doc },
+            .{ .name = "zenfmt_xls", .module = xls },
+            .{ .name = "zenfmt_ppt", .module = ppt },
+            .{ .name = "zenfmt_xlsb", .module = xlsb },
         },
     });
 
@@ -183,9 +313,9 @@ fn addLibraries(
     run_step.dependOn(&run_cli.step);
 
     const unit_test_modules = [_]*std.Build.Module{
-        core,     xml,  ooxml, text, markdown, csv,      docx,
-        rtf,      xlsx, odt,   pptx, html,     asciidoc, rst,
-        umbrella,
+        core, xml,  ooxml, cfb,  text, markdown, csv,  docx,
+        rtf,  xlsx, odt,   pptx, html, asciidoc, rst,  ods,
+        odp,  epub, pdf,   doc,  xls,  ppt,      xlsb, umbrella,
     };
     for (unit_test_modules) |module| {
         const unit_tests = b.addTest(.{ .root_module = module });
@@ -199,6 +329,8 @@ fn addLibraries(
         "tests/fuzz.zig",
         "tests/filters.zig",
         "tests/docx.zig",
+        "tests/detect.zig",
+        "tests/media.zig",
     };
     for (end_to_end_sources) |source| {
         const end_to_end = b.addTest(.{
@@ -209,11 +341,14 @@ fn addLibraries(
                 .imports = &.{
                     .{ .name = "zenfmt", .module = umbrella },
                     .{ .name = "zenfmt_ooxml", .module = ooxml },
+                    .{ .name = "zenfmt_core", .module = core },
+                    .{ .name = "zenfmt_markdown", .module = markdown },
                 },
             }),
         });
         test_step.dependOn(&b.addRunArtifact(end_to_end).step);
     }
+    return cli;
 }
 
 // -------------------------------------------------------------- records
@@ -281,10 +416,22 @@ fn addZds(
     compile_site.step.dependOn(&make_site_dir.step);
     site_step.dependOn(&compile_site.step);
 
-    const docs_step = b.step("docs", "Build every ZDS artifact: records, index, and site");
+    // The book compiles with the repository as the Typst root: the
+    // benchmark chapter reads benchmarks/results/latest.json.
+    const book_step = b.step("book", "Build the zenfmt book PDF");
+    const compile_book = b.addSystemCommand(&.{
+        "typst",         "compile",
+        "--root",        ".",
+        "docs/book.typ", "docs/build/zenfmt-book.pdf",
+    });
+    compile_book.step.dependOn(&make_dir.step);
+    book_step.dependOn(&compile_book.step);
+
+    const docs_step = b.step("docs", "Build every ZDS artifact plus the book");
     docs_step.dependOn(zds_step);
     docs_step.dependOn(index_step);
     docs_step.dependOn(site_step);
+    docs_step.dependOn(book_step);
 
     addZdsTool(b, target, optimize, test_step);
 }
@@ -394,7 +541,8 @@ fn addZdsTool(
 // ------------------------------------------------------------ formatting
 
 const fmt_paths = [_][]const u8{
-    "build.zig", "tools", "core", "support", "formats", "src", "cli", "tests", "examples",
+    "build.zig", "tools", "core",  "support",  "formats",
+    "src",       "cli",   "tests", "examples", "benchmarks/benchmark.zig",
 };
 
 fn addFormatting(b: *std.Build) void {
