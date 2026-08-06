@@ -16,6 +16,14 @@ const pptx = @import("zenfmt_pptx");
 const html = @import("zenfmt_html");
 const asciidoc = @import("zenfmt_asciidoc");
 const rst = @import("zenfmt_rst");
+const ods = @import("zenfmt_ods");
+const odp = @import("zenfmt_odp");
+const epub = @import("zenfmt_epub");
+const pdf = @import("zenfmt_pdf");
+const doc = @import("zenfmt_doc");
+const xls = @import("zenfmt_xls");
+const ppt = @import("zenfmt_ppt");
+const xlsb = @import("zenfmt_xlsb");
 
 pub const Default = core.Bundle(.{
     .readers = .{
@@ -30,13 +38,21 @@ pub const Default = core.Bundle(.{
         html.reader,
         asciidoc.reader,
         rst.reader,
+        ods.reader,
+        odp.reader,
+        epub.reader,
+        pdf.reader,
+        doc.reader,
+        xls.reader,
+        ppt.reader,
+        xlsb.reader,
     },
     .writers = .{markdown.writer},
 });
 
 test "the default bundle exposes its formats" {
     const std = @import("std");
-    try std.testing.expectEqual(@as(usize, 11), Default.readers.len);
+    try std.testing.expectEqual(@as(usize, 19), Default.readers.len);
     try std.testing.expectEqual(@as(usize, 1), Default.writers.len);
     try std.testing.expectEqualStrings("markdown", Default.default_output_format);
     try std.testing.expectEqualStrings("md", Default.primaryExtension("markdown").?);
