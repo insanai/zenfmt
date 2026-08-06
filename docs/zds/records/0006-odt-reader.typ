@@ -68,6 +68,14 @@ through named styles resolved along `style:parent-style-name` chains.
   [`table:table` family], [`table`; `table:table-header-rows` rows in
     `table_head`; `table:number-columns-spanned` becomes `col_span`;
     covered cells are skipped.],
+  [`text:section`], [`container` with class `section`.],
+  [`draw:frame` with `draw:image`],
+  [`image`: the source from `xlink:href` (typically `Pictures/…` inside
+    the package), the description from `svg:desc`, then `svg:title`,
+    then the frame's `draw:name`. Inline frames sit in their paragraph;
+    anchored frames outside one get a wrapping paragraph. Embedded
+    `office:binary-data` is never spilled into text. A frame inside a
+    frame (an image within a text box) flows as regular content.],
 )
 
 = Deliberate omissions
@@ -79,10 +87,11 @@ through named styles resolved along `style:parent-style-name` chains.
   [Skipped silently], [Font declarations, settings, scripts, master
     styles, tracked-change tables, form controls: file plumbing with no
     content of their own.],
-  [Not yet mapped], [Images and frames (`draw:` namespace), change
-    marks in running text, and bookmarks: their containing text
-    survives; the constructs do not. Recorded here as decisions, each a
-    candidate amendment.],
+  [`odt.frame-dropped`], [A `draw:frame` with neither an image source
+    nor any description — decorative shapes, mostly.],
+  [Not yet mapped], [Change marks in running text and bookmarks: their
+    containing text survives; the markers do not. Recorded here as
+    decisions, each a candidate amendment.],
 )
 
 = Round-trip expectations

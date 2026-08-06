@@ -100,3 +100,68 @@
 #document("pdf/zds-0007-pptx-reader.pdf")[
   #include "records/0007-pptx-reader.typ"
 ]
+
+#document(
+  "zds/0008-ods-reader.html",
+  title: [ZDS 0008: The ODS Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the ODS reader],
+)[
+  #include "records/0008-ods-reader.typ"
+]
+
+#document("pdf/zds-0008-ods-reader.pdf")[
+  #include "records/0008-ods-reader.typ"
+]
+
+#document(
+  "zds/0009-odp-reader.html",
+  title: [ZDS 0009: The ODP Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the ODP reader],
+)[
+  #include "records/0009-odp-reader.typ"
+]
+
+#document("pdf/zds-0009-odp-reader.pdf")[
+  #include "records/0009-odp-reader.typ"
+]
+
+#document(
+  "zds/0010-epub-reader.html",
+  title: [ZDS 0010: The EPUB Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the EPUB reader],
+)[
+  #include "records/0010-epub-reader.typ"
+]
+
+#document("pdf/zds-0010-epub-reader.pdf")[
+  #include "records/0010-epub-reader.typ"
+]
+
+#document(
+  "zds/0011-pdf-reader.html",
+  title: [ZDS 0011: The PDF Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the native PDF reader],
+)[
+  #include "records/0011-pdf-reader.typ"
+]
+
+#document("pdf/zds-0011-pdf-reader.pdf")[
+  #include "records/0011-pdf-reader.typ"
+]
+
+#document(
+  "zds/0012-legacy-office-readers.html",
+  title: [ZDS 0012: The Legacy Binary Office Readers],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the DOC, XLS, PPT, and XLSB readers],
+)[
+  #include "records/0012-legacy-office-readers.typ"
+]
+
+#document("pdf/zds-0012-legacy-office-readers.pdf")[
+  #include "records/0012-legacy-office-readers.typ"
+]

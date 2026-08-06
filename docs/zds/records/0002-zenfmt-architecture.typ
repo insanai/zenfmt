@@ -2719,6 +2719,19 @@ or does non-UTF-8 plain text require an explicit `--input-encoding`?
   [The formats that exercise `container` and `span` as the extension mechanism,
     confirming that the node set is closed and does not need to grow per
     format.],
+
+  [7],
+  [The full-coverage pass: high-fidelity upgrades for RTF, PPTX, and ODT
+    (tables, lists, hyperlinks, footnotes, images); ODS, ODP, EPUB, and a
+    native-Zig PDF reader; the `cfb` support library with legacy `doc`,
+    `xls`, `ppt`, and `xlsb` readers; the complete WHATWG named-entity
+    table; and the `zig build benchmark` harness comparing zenfmt against
+    pandoc and anydoc over a downloaded real-world corpus.],
+  [Every input format anydoc converts, zenfmt converts — each detected by
+    content signature, each refusing encrypted inputs, and each carrying a
+    format record. The benchmark measures wall latency, CPU time, and peak
+    RSS per tool per corpus file and writes
+    `benchmarks/results/results.md`.],
 )
 
 Two phases are placed deliberately. Phase 2 tests the architecture rather than

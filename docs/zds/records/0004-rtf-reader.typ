@@ -58,7 +58,27 @@ unknown control word is skipped with a note, never a failure.
   [`\emdash`, `\endash`, quotes, `\bullet`], [Their Unicode characters.],
   [`{\*\...}` and known destinations],
   [Skipped wholesale: `fonttbl`, `colortbl`, `stylesheet`, `info`,
-    headers and footers, `pict`, `object`, list tables, revision tables.],
+    headers and footers, list tables, revision tables.],
+  [`\trowd` / `\cellx` / `\cell` / `\row`],
+  [`table` with one column per `\cellx` of the first row definition;
+    `\trhdr` rows open `table_head`, the rest `table_body`. Cells open
+    lazily when their content arrives and close at `\cell`. A paragraph
+    without `\intbl` closes the table.],
+  [`\ls` + `\ilvl`, `{\*\pn}`],
+  [`list`/`list_item` synthesized by the same inference machine as the
+    DOCX reader: open on rising level, close on falling level or a
+    changed kind. `\pnlvlblt` is a bullet, `\pndec`/`\pnlvlbody`
+    ordered; a bare `\ls` decides by its `\listtext` marker — a digit
+    means ordered. Marker fallback text never reaches the output.],
+  [`\outlinelevelN`], [`heading` at level N+1 (clamped to six), the
+    producing word processor's own outline signal.],
+  [`{\field{\*\fldinst HYPERLINK ...}{\fldrslt ...}}`],
+  [`link` around the field result, with the quoted or bare URL from the
+    instruction. Non-hyperlink fields keep their cached result as plain
+    text.],
+  [`{\footnote ...}`],
+  [`note` reference at the site; the group's raw RTF is replayed after
+    the body as the note's block content.],
 )
 
 = Deliberate omissions
@@ -70,13 +90,17 @@ unknown control word is skipped with a note, never a failure.
   [Every control word outside the mapping: layout (`\qc`, `\li`, `\sa`),
     fonts and colors (`\f`, `\fs`, `\cf`), sections, and anything a
     producer invented. Skipped, text kept, said once.],
+  [`rtf.images-dropped`],
+  [`\pict` groups. RTF embeds image bytes hex-encoded with no file name;
+    zenfmt does not extract image bytes in this release.],
+  [`rtf.objects-dropped`],
+  [`\object` OLE embeddings — spreadsheets, drawings, equations only
+    their producing applications can render.],
+  [`rtf.nested-table-flattened`],
+  [Tables inside table cells (`\itap` above one, `\nestcell`). Markdown
+    cells hold only inline content; the nested table's text folds into
+    its parent cell.],
 )
-
-Not yet mapped rather than refused: RTF tables (`\trowd`/`\cell`), lists
-(`\pn`), fields, footnotes, and hyperlinks. Their visible text survives as
-paragraph content; their structure does not. Each is a candidate amendment
-to this record, not a silent gap: the omission is recorded here precisely
-so it reads as a decision.
 
 = Round-trip expectations
 
