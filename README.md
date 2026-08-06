@@ -3,18 +3,28 @@
 A document converter in Zig: read a document in one format, write it in
 another, with one representation in the middle.
 
-**Status: design.** The architecture is specified in
-[ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and is open for
-discussion. The repository currently ships the design records and the tooling
-that maintains them. The library and CLI land after the record is reviewed.
+**Status: implemented, in review.** The architecture is specified in
+[ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ); the library, CLI,
+and format plugins through delivery phase 6 are in the tree with a green test
+suite.
 
-## What it will be
+## What it is
 
-The first release reads the office document formats — DOCX, ODT, RTF, XLSX,
-PPTX — along with plain text, Markdown, and CSV, and writes Markdown. The
-lightweight markup formats (AsciiDoc, reStructuredText, Org, and the rest)
-follow as plugins against an unchanged core. One writer, deliberately: the AST
-is easiest to judge when many readers feed a single consumer.
+zenfmt reads the office document formats — DOCX, ODT, RTF, XLSX, PPTX — along
+with plain text, Markdown, CSV, HTML, AsciiDoc, and reStructuredText, and
+writes Markdown. One writer, deliberately: the AST is easiest to judge when
+many readers feed a single consumer.
+
+```sh
+zig build                          # the zenfmt CLI into zig-out/bin/
+zenfmt report.docx                 # report.md + report.md.zenfmt.json
+zenfmt report.docx --stdout        # document bytes only on stdout
+zenfmt --list-formats              # every reader and writer in this binary
+```
+
+Every path output gets an adjacent `*.zenfmt.json` manifest: canonical JSON
+carrying provenance digests, document metadata, the diagnostic reports, and
+versioned plugin preservation data.
 
 Four properties drive the design, and each is argued in ZDS 0002:
 
@@ -43,20 +53,30 @@ Four properties drive the design, and each is argued in ZDS 0002:
 ## Repository layout
 
 ```
-build.zig            build graph: the zds-* steps today, the library and CLI next
-build.zig.zon        the `zenfmt` package
+build.zig            build graph: modules, CLI, tests, and the zds-* steps
+core/                `zenfmt_core`: the format-blind engine, AST, and filters
+support/             shared machinery: pull XML parser, OOXML container
+formats/             one library per format: docx, odt, rtf, xlsx, pptx,
+                     markdown, csv, html, asciidoc, rst, text
+src/                 the umbrella `zenfmt` library and its default bundle
+cli/                 the command-line tool; imports only the umbrella
+examples/filters/    a user project with its own filters compiled in
+tests/               cross-format, round-trip, fuzz, and adversarial suites
 tools/zds.zig        the ZDS numbering workflow (ZDS 0001)
 docs/                design records, and the skeleton of the book
 ```
 
-The library will be the root package rooted at `src/root.zig`, with the CLI as
-its own package under `cli/` depending on it by path — so the CLI can only do
-what a user's own program can do.
+Applications embed the same engine the CLI uses: `zenfmt.convert(gpa, io,
+.{ .input = …, .output = … })`, or a smaller `zenfmt_core.Bundle` with only
+the formats they need. Filters are declared in your own project, in the
+manner of `build.zig` — see `examples/filters/`.
 
 ## Design records
 
 Zen Discussions (ZDS) are the RFC/RFD-style design records for this repository.
-The process defines itself as record 0001; the architecture is 0002. See
+The process defines itself as record 0001; the architecture is 0002; each
+format plugin carries its own record (0003 onward) with its mapping table,
+deliberate omissions, and round-trip expectations. See
 [`docs/zds/README.md`](docs/zds/README.md) for the workflow.
 
 ```sh

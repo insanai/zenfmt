@@ -4,13 +4,17 @@
     .fingerprint = 0x5a31e05440876fc1, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},
-    // Consumers will use the `zenfmt` module rooted at src/root.zig once it
-    // lands (ZDS 0002, phase 1), so the package ships sources and metadata
-    // only. The CLI, tools, docs, and tests stay repository-only.
+    // Consumers use the umbrella `zenfmt` module rooted at src/root.zig, or
+    // compose a smaller bundle from `zenfmt_core` and the format libraries.
+    // The docs, tools, and cross-module tests stay repository-only.
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "README.md",
         "LICENSE",
+        "core",
+        "formats",
+        "src",
+        "cli",
     },
 }

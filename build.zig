@@ -1,8 +1,10 @@
 //! Build graph for the zenfmt monorepo.
 //!
-//! The repository currently ships the documentation tree and the tooling that
-//! maintains it. The library and the CLI attach at the marked extension point
-//! below once ZDS 0002 leaves discussion; see the delivery plan in that record.
+//! The workspace layout follows ZDS 0002: `core/` is the format-blind
+//! `zenfmt_core` library, `formats/` holds one library per format, `src/` is
+//! the umbrella `zenfmt` library assembling the default bundle, and `cli/` is
+//! the command-line tool importing only the umbrella. Support libraries under
+//! `support/` and further format libraries attach in later delivery phases.
 
 const std = @import("std");
 
@@ -12,14 +14,206 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run the test suite");
 
-    // ---------------------------------------------------------------
-    // Extension point (ZDS 0002, phase 1): the `zenfmt` library module
-    // rooted at src/root.zig, its unit tests, and the CLI package under
-    // cli/ attach here. Nothing below this comment depends on them.
-    // ---------------------------------------------------------------
-
+    addLibraries(b, target, optimize, test_step);
     addZds(b, target, optimize, test_step);
     addFormatting(b);
+}
+
+// ------------------------------------------------------------- libraries
+
+/// The Zig module graph from ZDS 0002. Import edges are enforced here by
+/// construction: core imports nothing, format libraries import core (plus
+/// support libraries when those exist), the umbrella imports core and the
+/// default formats, and the CLI imports only the umbrella.
+fn addLibraries(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    test_step: *std.Build.Step,
+) void {
+    const core = b.addModule("zenfmt_core", .{
+        .root_source_file = b.path("core/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const xml = b.addModule("zenfmt_xml", .{
+        .root_source_file = b.path("support/xml/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const ooxml = b.addModule("zenfmt_ooxml", .{
+        .root_source_file = b.path("support/ooxml/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+        },
+    });
+
+    const text = b.addModule("zenfmt_text", .{
+        .root_source_file = b.path("formats/text/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const markdown = b.addModule("zenfmt_markdown", .{
+        .root_source_file = b.path("formats/markdown/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const csv = b.addModule("zenfmt_csv", .{
+        .root_source_file = b.path("formats/csv/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const docx = b.addModule("zenfmt_docx", .{
+        .root_source_file = b.path("formats/docx/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+        },
+    });
+
+    const rtf = b.addModule("zenfmt_rtf", .{
+        .root_source_file = b.path("formats/rtf/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const xlsx = b.addModule("zenfmt_xlsx", .{
+        .root_source_file = b.path("formats/xlsx/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+        },
+    });
+
+    const odt = b.addModule("zenfmt_odt", .{
+        .root_source_file = b.path("formats/odt/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+        },
+    });
+
+    const html = b.addModule("zenfmt_html", .{
+        .root_source_file = b.path("formats/html/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const asciidoc = b.addModule("zenfmt_asciidoc", .{
+        .root_source_file = b.path("formats/asciidoc/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const rst = b.addModule("zenfmt_rst", .{
+        .root_source_file = b.path("formats/rst/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "zenfmt_core", .module = core }},
+    });
+
+    const pptx = b.addModule("zenfmt_pptx", .{
+        .root_source_file = b.path("formats/pptx/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_xml", .module = xml },
+            .{ .name = "zenfmt_ooxml", .module = ooxml },
+        },
+    });
+
+    const umbrella = b.addModule("zenfmt", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt_core", .module = core },
+            .{ .name = "zenfmt_text", .module = text },
+            .{ .name = "zenfmt_markdown", .module = markdown },
+            .{ .name = "zenfmt_csv", .module = csv },
+            .{ .name = "zenfmt_docx", .module = docx },
+            .{ .name = "zenfmt_rtf", .module = rtf },
+            .{ .name = "zenfmt_xlsx", .module = xlsx },
+            .{ .name = "zenfmt_odt", .module = odt },
+            .{ .name = "zenfmt_pptx", .module = pptx },
+            .{ .name = "zenfmt_html", .module = html },
+            .{ .name = "zenfmt_asciidoc", .module = asciidoc },
+            .{ .name = "zenfmt_rst", .module = rst },
+        },
+    });
+
+    const cli = b.addExecutable(.{
+        .name = "zenfmt",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("cli/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zenfmt", .module = umbrella }},
+        }),
+    });
+    b.installArtifact(cli);
+
+    const run_cli = b.addRunArtifact(cli);
+    if (b.args) |args| run_cli.addArgs(args);
+    const run_step = b.step("run", "Build and run the zenfmt CLI: zig build run -- ...");
+    run_step.dependOn(&run_cli.step);
+
+    const unit_test_modules = [_]*std.Build.Module{
+        core,     xml,  ooxml, text, markdown, csv,      docx,
+        rtf,      xlsx, odt,   pptx, html,     asciidoc, rst,
+        umbrella,
+    };
+    for (unit_test_modules) |module| {
+        const unit_tests = b.addTest(.{ .root_module = module });
+        test_step.dependOn(&b.addRunArtifact(unit_tests).step);
+    }
+
+    const end_to_end_sources = [_][]const u8{
+        "tests/conversion.zig",
+        "tests/manifest.zig",
+        "tests/roundtrip.zig",
+        "tests/fuzz.zig",
+        "tests/filters.zig",
+        "tests/docx.zig",
+    };
+    for (end_to_end_sources) |source| {
+        const end_to_end = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(source),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "zenfmt", .module = umbrella },
+                    .{ .name = "zenfmt_ooxml", .module = ooxml },
+                },
+            }),
+        });
+        test_step.dependOn(&b.addRunArtifact(end_to_end).step);
+    }
 }
 
 // -------------------------------------------------------------- records
@@ -199,15 +393,19 @@ fn addZdsTool(
 
 // ------------------------------------------------------------ formatting
 
+const fmt_paths = [_][]const u8{
+    "build.zig", "tools", "core", "support", "formats", "src", "cli", "tests", "examples",
+};
+
 fn addFormatting(b: *std.Build) void {
     const check = b.addFmt(.{
-        .paths = &.{ "build.zig", "tools" },
+        .paths = &fmt_paths,
         .check = true,
     });
     const check_step = b.step("fmt-check", "Check Zig source formatting");
     check_step.dependOn(&check.step);
 
-    const apply = b.addFmt(.{ .paths = &.{ "build.zig", "tools" } });
+    const apply = b.addFmt(.{ .paths = &fmt_paths });
     const apply_step = b.step("fmt", "Format the Zig sources in place");
     apply_step.dependOn(&apply.step);
 }
