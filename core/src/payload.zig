@@ -123,9 +123,9 @@ pub const CitationRange = struct {
 };
 
 pub const Media = struct {
-    /// Path, URL, or archive entry name.
+    /// Path, URL, or archive entry name; indexes the text pool.
     source: ByteRange,
-    /// Extracted content; empty in the first release.
+    /// Extracted content; indexes `Store.media_bytes`, not the text pool.
     bytes: ByteRange,
     mime: ByteRange,
 };

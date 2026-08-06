@@ -43,6 +43,10 @@ pub const Limits = struct {
     /// Distinct locations an aggregated report retains before it counts the
     /// remainder instead of listing it.
     max_report_samples: u32 = 4,
+    /// Maximum media files a reader may extract from one document.
+    max_media_files: u32 = 256,
+    /// Maximum total bytes of extracted media across one document.
+    max_media_bytes: u64 = 128 * 1024 * 1024,
 
     /// One row of the `--limit` table: the field name is the public name.
     pub const Field = std.meta.FieldEnum(Limits);

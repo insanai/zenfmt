@@ -63,6 +63,8 @@ pub const Builder = struct {
     open_leaf: ?Leaf = null,
     open_inlines: [limits_mod.max_depth_hard_cap]u32 = undefined,
     open_inline_depth: u32 = 0,
+    /// Running total of extracted media bytes, capped by the limits.
+    media_bytes_total: u64 = 0,
 
     /// Coalescing state for `text`: what the last emitted node at the
     /// current inline nesting level was.
@@ -571,6 +573,44 @@ pub const Emitter = struct {
 
     pub fn endInline(e: Emitter, token: InlineToken) void {
         e.builder.closeInline(token);
+    }
+
+    pub const MediaError = Error || error{LimitExceeded};
+
+    /// Registers extracted bytes for a media source named in `beginImage`.
+    /// On path output the engine writes the bytes into a `<stem>_media`
+    /// directory beside the artifact and rewrites every image whose URL
+    /// equals `source` to the written file; stream output leaves sources
+    /// untouched. A duplicate source keeps its first registration.
+    pub fn media(
+        e: Emitter,
+        source: []const u8,
+        bytes: []const u8,
+        mime: []const u8,
+    ) MediaError!void {
+        assert(source.len > 0);
+        assert(bytes.len > 0);
+        const b = e.builder;
+        for (b.store.media.items) |existing| {
+            if (std.mem.eql(u8, b.store.textSlice(existing.source), source)) return;
+        }
+        if (b.store.media.items.len >= b.limits.max_media_files) return error.LimitExceeded;
+        if (b.media_bytes_total + bytes.len > b.limits.max_media_bytes) {
+            return error.LimitExceeded;
+        }
+        b.media_bytes_total += bytes.len;
+        const source_range = try b.appendText(source);
+        const bytes_range: ast.ByteRange = .{
+            .start = @intCast(b.store.media_bytes.items.len),
+            .len = @intCast(bytes.len),
+        };
+        try b.store.media_bytes.appendSlice(b.gpa, bytes);
+        const mime_range = try b.appendText(mime);
+        try b.store.media.append(b.gpa, .{
+            .source = source_range,
+            .bytes = bytes_range,
+            .mime = mime_range,
+        });
     }
 
     // Inline leaves.

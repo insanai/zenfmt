@@ -278,6 +278,9 @@ pub const Store = struct {
     /// Payload table for `inlines` metadata values.
     inline_ranges: std.ArrayList(InlineRange) = .empty,
     media: std.ArrayList(payload.Media) = .empty,
+    /// Extracted media bytes; binary, so kept out of the UTF-8 text pool.
+    /// `payload.Media.bytes` ranges index this pool.
+    media_bytes: std.ArrayList(u8) = .empty,
     meta_values: std.ArrayList(metadata.MetaValue) = .empty,
     meta_entries: std.ArrayList(metadata.MetaEntry) = .empty,
     meta_maps: std.ArrayList(metadata.MetaEntryRange) = .empty,

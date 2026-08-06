@@ -289,6 +289,14 @@ pub fn Bundle(comptime spec: anytype) type {
         ) RunError![]const u8 {
             const Blake3 = std.crypto.hash.Blake3;
 
+            // Media extraction happens only for path output: the plan names
+            // the files and rewrites matching image URLs before the writer
+            // runs, so the artifact references what will be committed.
+            const media_plan: []const MediaPlanFile = switch (options.output) {
+                .path => |path| try planMedia(arena, path, doc),
+                .writer => &.{},
+            };
+
             var atomic: ?Io.File.Atomic = null;
             defer if (atomic) |*af| af.deinit(io);
             var file_buffer: [8 * 1024]u8 = undefined;
@@ -365,9 +373,19 @@ pub fn Bundle(comptime spec: anytype) type {
                     reader_descriptor.id,
                     own_plugin_data,
                 ),
+                .media = blk: {
+                    const entries = try arena.alloc(manifest.MediaFile, media_plan.len);
+                    for (media_plan, entries) |planned, *entry| {
+                        entry.* = .{
+                            .path = planned.rel_path,
+                            .digest_hex = planned.digest_hex,
+                        };
+                    }
+                    break :blk entries;
+                },
             });
 
-            // Commit: artifact first, then its manifest.
+            // Commit: artifact first, then its media, then its manifest.
             if (options.output == .path) {
                 const path = options.output.path;
                 const manifest_path = try std.fmt.allocPrint(arena, "{s}.zenfmt.json", .{path});
@@ -387,6 +405,29 @@ pub fn Bundle(comptime spec: anytype) type {
                     try reports.add(try commitFailure(arena, path, input, options, err));
                     return error.Failed;
                 };
+                // Media files belong to the artifact just committed; they
+                // replace unconditionally under its `<stem>_media` directory.
+                if (media_plan.len > 0) {
+                    const dir_path = std.fs.path.dirname(media_plan[0].disk_path) orelse ".";
+                    Io.Dir.cwd().createDirPath(io, dir_path) catch |err| {
+                        try reports.add(try pathFailure(arena, "create the media directory", dir_path, err));
+                        return error.Failed;
+                    };
+                    for (media_plan) |planned| {
+                        Io.Dir.cwd().writeFile(io, .{
+                            .sub_path = planned.disk_path,
+                            .data = planned.bytes,
+                        }) catch |err| {
+                            try reports.add(try pathFailure(
+                                arena,
+                                "write a media file",
+                                planned.disk_path,
+                                err,
+                            ));
+                            return error.Failed;
+                        };
+                    }
+                }
                 materialize(&manifest_atomic, io, options.overwrite) catch |err| {
                     try reports.add(try commitFailure(arena, manifest_path, input, options, err));
                     return error.Failed;
@@ -434,14 +475,18 @@ pub fn Bundle(comptime spec: anytype) type {
             switch (sniff(input.bytes)) {
                 .docx => return "docx",
                 .xlsx => return "xlsx",
+                .xlsb => return "xlsb",
                 .pptx => return "pptx",
                 .odt => return "odt",
+                .ods => return "ods",
+                .odp => return "odp",
+                .epub => return "epub",
                 .zip => return "docx",
                 .rtf => return "rtf",
-                .pdf => {
-                    try reports.add(pdfReport(input.name));
-                    return error.Failed;
-                },
+                .pdf => return "pdf",
+                .doc => return "doc",
+                .xls => return "xls",
+                .ppt => return "ppt",
                 .none => {},
             }
             try reportUndetectable(arena, reports, input, readerFormats());
@@ -471,6 +516,9 @@ fn validateBundle(
     comptime readers: []const plugin.ReaderDescriptor,
     comptime writers: []const plugin.WriterDescriptor,
 ) void {
+    // The duplicate checks are quadratic in descriptors and extensions; the
+    // default comptime quota does not survive a twenty-format bundle.
+    @setEvalBranchQuota(1_000_000);
     if (writers.len == 0) {
         @compileError("a bundle needs at least one writer: the first " ++
             "writer's format is the bundle's default output format.");
@@ -657,6 +705,104 @@ fn flushOutput(
     if (options.output == .path) try file_writer.interface.flush();
 }
 
+// ---------------------------------------------------------------- media
+
+const MediaPlanFile = struct {
+    /// The URL written into the artifact, relative to its directory.
+    rel_path: []const u8,
+    /// Where the bytes land on disk.
+    disk_path: []const u8,
+    bytes: []const u8,
+    digest_hex: manifest.DigestHex,
+};
+
+/// Names one file per registered media entry, rewrites every image whose
+/// URL equals the entry's source to the planned relative path, and returns
+/// the write plan. Runs before the writer so the artifact references the
+/// files the commit step will create.
+fn planMedia(
+    arena: std.mem.Allocator,
+    output_path: []const u8,
+    doc: Document,
+) error{OutOfMemory}![]const MediaPlanFile {
+    // `Document` exposes the store as const so plugins cannot mutate it;
+    // the engine allocated every store a document can reference, and this
+    // rewrite is the engine's own commit step.
+    const store: *ast.Store = @constCast(doc.store);
+    if (store.media.items.len == 0) return &.{};
+
+    const base = std.fs.path.basename(output_path);
+    const stem = if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| base[0..dot] else base;
+    const parent = std.fs.path.dirname(output_path);
+
+    var plan: std.ArrayList(MediaPlanFile) = .empty;
+    const media_count = store.media.items.len;
+    var index: u32 = 0;
+    while (index < media_count) : (index += 1) {
+        const entry = store.media.items[index];
+        if (entry.bytes.len == 0) continue;
+        const source = store.textSlice(entry.source);
+        const bytes = store.media_bytes.items[entry.bytes.start..][0..entry.bytes.len];
+        const extension = mediaExtension(store.textSlice(entry.mime));
+        const rel_path = try std.fmt.allocPrint(
+            arena,
+            "{s}_media/image-{d}.{s}",
+            .{ stem, plan.items.len + 1, extension },
+        );
+        const disk_path = if (parent) |value|
+            try std.fmt.allocPrint(arena, "{s}/{s}", .{ value, rel_path })
+        else
+            rel_path;
+
+        // Rewrite in place: image targets are side-table rows the engine
+        // owns, and the new URL text appends to the shared pool.
+        const url_range: ast.ByteRange = .{
+            .start = @intCast(store.text.items.len),
+            .len = @intCast(rel_path.len),
+        };
+        try store.text.appendSlice(arena, rel_path);
+        const tags = store.inlines.items(.tag);
+        const payloads = store.inlines.items(.payload);
+        for (tags, payloads) |tag, payload_index| {
+            if (tag != .image) continue;
+            const target = &store.targets.items[payload_index];
+            if (std.mem.eql(u8, store.textSlice(target.url), source)) {
+                target.url = url_range;
+            }
+        }
+
+        try plan.append(arena, .{
+            .rel_path = rel_path,
+            .disk_path = disk_path,
+            .bytes = bytes,
+            .digest_hex = manifest.digestHex(bytes),
+        });
+    }
+    return plan.items;
+}
+
+/// File extension for a media MIME type; unknown types keep raw bytes
+/// under a neutral extension rather than guessing.
+fn mediaExtension(mime: []const u8) []const u8 {
+    const table = [_]struct { mime: []const u8, extension: []const u8 }{
+        .{ .mime = "image/jpeg", .extension = "jpg" },
+        .{ .mime = "image/png", .extension = "png" },
+        .{ .mime = "image/gif", .extension = "gif" },
+        .{ .mime = "image/jp2", .extension = "jp2" },
+        .{ .mime = "image/jpx", .extension = "jpf" },
+        .{ .mime = "image/tiff", .extension = "tif" },
+        .{ .mime = "image/bmp", .extension = "bmp" },
+        .{ .mime = "image/svg+xml", .extension = "svg" },
+        .{ .mime = "image/webp", .extension = "webp" },
+        .{ .mime = "image/emf", .extension = "emf" },
+        .{ .mime = "image/wmf", .extension = "wmf" },
+    };
+    for (table) |row| {
+        if (std.ascii.eqlIgnoreCase(row.mime, mime)) return row.extension;
+    }
+    return "bin";
+}
+
 fn materialize(atomic: *Io.File.Atomic, io: Io, overwrite: bool) !void {
     if (overwrite) {
         try atomic.replace(io);
@@ -665,24 +811,70 @@ fn materialize(atomic: *Io.File.Atomic, io: Io, overwrite: bool) !void {
     }
 }
 
-const Sniffed = enum { none, zip, docx, xlsx, pptx, odt, rtf, pdf };
+const Sniffed = enum {
+    none,
+    zip,
+    docx,
+    xlsx,
+    xlsb,
+    pptx,
+    odt,
+    ods,
+    odp,
+    epub,
+    rtf,
+    pdf,
+    doc,
+    xls,
+    ppt,
+};
 
 /// Content signatures. A ZIP container's specific format comes from its
 /// characteristic part names, which appear verbatim in the archive's
-/// central directory — no extraction needed to detect.
+/// central directory — no extraction needed to detect. A CFB container's
+/// comes from its directory entry names, stored as UTF-16LE.
 fn sniff(bytes: []const u8) Sniffed {
     if (std.mem.startsWith(u8, bytes, "PK\x03\x04")) {
         if (std.mem.indexOf(u8, bytes, "word/document.xml") != null) return .docx;
+        if (std.mem.indexOf(u8, bytes, "xl/workbook.bin") != null) return .xlsb;
         if (std.mem.indexOf(u8, bytes, "xl/workbook.xml") != null) return .xlsx;
         if (std.mem.indexOf(u8, bytes, "ppt/presentation.xml") != null) return .pptx;
+        if (std.mem.indexOf(u8, bytes, "application/epub+zip") != null) return .epub;
         if (std.mem.indexOf(u8, bytes, "application/vnd.oasis.opendocument.text") != null) {
             return .odt;
         }
+        if (std.mem.indexOf(u8, bytes, "application/vnd.oasis.opendocument.spreadsheet") != null) {
+            return .ods;
+        }
+        if (std.mem.indexOf(u8, bytes, "application/vnd.oasis.opendocument.presentation") != null) {
+            return .odp;
+        }
         return .zip;
+    }
+    if (std.mem.startsWith(u8, bytes, "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")) {
+        if (std.mem.indexOf(u8, bytes, comptime utf16le("WordDocument")) != null) return .doc;
+        if (std.mem.indexOf(u8, bytes, comptime utf16le("PowerPoint Document")) != null) {
+            return .ppt;
+        }
+        if (std.mem.indexOf(u8, bytes, comptime utf16le("Workbook")) != null) return .xls;
+        if (std.mem.indexOf(u8, bytes, comptime utf16le("Book")) != null) return .xls;
+        return .doc;
     }
     if (std.mem.startsWith(u8, bytes, "{\\rtf")) return .rtf;
     if (std.mem.startsWith(u8, bytes, "%PDF")) return .pdf;
     return .none;
+}
+
+/// The UTF-16LE spelling of an ASCII stream name, as it appears in a CFB
+/// directory sector.
+fn utf16le(comptime ascii: []const u8) []const u8 {
+    var expanded: [ascii.len * 2]u8 = undefined;
+    for (ascii, 0..) |byte, i| {
+        expanded[i * 2] = byte;
+        expanded[i * 2 + 1] = 0;
+    }
+    const frozen = expanded;
+    return &frozen;
 }
 
 fn extensionOf(name: []const u8) ?[]const u8 {
@@ -727,7 +919,6 @@ const engine_reports = @import("engine_reports.zig");
 const FormatRole = engine_reports.FormatRole;
 const reportUnknownFormat = engine_reports.reportUnknownFormat;
 const reportUndetectable = engine_reports.reportUndetectable;
-const pdfReport = engine_reports.pdfReport;
 const inputTooLarge = engine_reports.inputTooLarge;
 const staleManifest = engine_reports.staleManifest;
 const invalidTreeReport = engine_reports.invalidTreeReport;
@@ -765,4 +956,25 @@ test "sniffing recognizes the container signatures" {
     try std.testing.expectEqual(Sniffed.rtf, sniff("{\\rtf1..."));
     try std.testing.expectEqual(Sniffed.pdf, sniff("%PDF-1.7"));
     try std.testing.expectEqual(Sniffed.none, sniff("hello"));
+    try std.testing.expectEqual(Sniffed.xlsb, sniff("PK\x03\x04..xl/workbook.bin.."));
+    try std.testing.expectEqual(Sniffed.epub, sniff("PK\x03\x04..application/epub+zip.."));
+    try std.testing.expectEqual(
+        Sniffed.ods,
+        sniff("PK\x03\x04..application/vnd.oasis.opendocument.spreadsheet.."),
+    );
+    try std.testing.expectEqual(
+        Sniffed.odp,
+        sniff("PK\x03\x04..application/vnd.oasis.opendocument.presentation.."),
+    );
+
+    const cfb_magic = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1";
+    try std.testing.expectEqual(
+        Sniffed.doc,
+        sniff(cfb_magic ++ "..W\x00o\x00r\x00d\x00D\x00o\x00c\x00u\x00m\x00e\x00n\x00t\x00.."),
+    );
+    try std.testing.expectEqual(
+        Sniffed.xls,
+        sniff(cfb_magic ++ "..W\x00o\x00r\x00k\x00b\x00o\x00o\x00k\x00.."),
+    );
+    try std.testing.expectEqual(Sniffed.doc, sniff(cfb_magic ++ "..opaque.."));
 }

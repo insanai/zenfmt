@@ -53,6 +53,14 @@ pub const PluginEntry = struct {
     data: []const u8,
 };
 
+/// One extracted media file committed beside the artifact.
+pub const MediaFile = struct {
+    /// Path relative to the artifact's directory, as written into the
+    /// artifact's image URLs.
+    path: []const u8,
+    digest_hex: DigestHex,
+};
+
 pub const ArtifactManifest = struct {
     source: ArtifactRef,
     artifact: ArtifactRef,
@@ -60,6 +68,9 @@ pub const ArtifactManifest = struct {
     document_metadata: []const u8,
     reports: []const report.Report,
     plugins: []const PluginEntry,
+    /// Extracted media files; empty when nothing was extracted, and the
+    /// `media` key is then omitted so earlier manifests stay byte-stable.
+    media: []const MediaFile = &.{},
 };
 
 // ------------------------------------------------------------- encoding
@@ -83,6 +94,24 @@ pub fn encode(gpa: std.mem.Allocator, m: ArtifactManifest) error{OutOfMemory}![]
     try w.endObject();
     try w.field("document_metadata");
     try w.raw(m.document_metadata);
+    if (m.media.len > 0) {
+        try w.field("media");
+        try w.beginArray();
+        for (m.media) |entry| {
+            try w.beginObject();
+            try w.field("digest");
+            try w.beginObject();
+            try w.field("algorithm");
+            try w.string(digest_algorithm);
+            try w.field("value");
+            try w.string(&entry.digest_hex);
+            try w.endObject();
+            try w.field("path");
+            try w.string(entry.path);
+            try w.endObject();
+        }
+        try w.endArray();
+    }
     try w.field("plugins");
     try w.beginObject();
     // Namespace keys must arrive sorted; the engine sorts entries by id.

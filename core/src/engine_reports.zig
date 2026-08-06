@@ -116,25 +116,6 @@ pub fn directionsSlice(
     return slice;
 }
 
-pub fn pdfReport(name: []const u8) Report {
-    _ = name;
-    return .{
-        .severity = .err,
-        .code = "core.pdf-input-rejected",
-        .title = "PDF IS NOT A SUPPORTED INPUT",
-        .problem = "This file is a PDF. PDF is a page-layout format, not " ++
-            "a structured document format, and reading it back into " ++
-            "structured text is a different problem than zenfmt solves.",
-        .consequence = "No output file was created.",
-        .exit_class = .usage,
-        .directions = &.{.{
-            .title = "Convert from the document source",
-            .explanation = "Convert from the document the PDF was produced " ++
-                "from — a DOCX or ODT original — rather than from the PDF.",
-        }},
-    };
-}
-
 pub fn inputTooLarge(name: []const u8, limit_values: Limits) Report {
     _ = name;
     _ = limit_values;
