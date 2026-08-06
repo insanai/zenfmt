@@ -1,0 +1,195 @@
+//! End-to-end conversion tests over the umbrella `zenfmt` module: the
+//! phase 1 exit criterion, exercised the way an embedding application and
+//! the CLI both use the library.
+
+const std = @import("std");
+const testing = std.testing;
+const zenfmt = @import("zenfmt");
+
+const test_dir = ".zig-cache/zenfmt-e2e";
+
+test "bytes to stream: text becomes markdown with a manifest value" {
+    var buffer: [4096]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+
+    var conversion = zenfmt.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{
+            .name = "note.txt",
+            .data = "line one\nline two\n\nsecond *paragraph*\n",
+        } },
+        .output = .{ .writer = &out },
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(zenfmt.Status.success, conversion.status);
+    try testing.expectEqualStrings(
+        "line one\nline two\n\nsecond \\*paragraph\\*\n",
+        out.buffered(),
+    );
+
+    // The returned manifest binds the exact output bytes.
+    const manifest_json = conversion.manifest_json.?;
+    const digest = zenfmt.manifest.digestHex(out.buffered());
+    try testing.expect(std.mem.indexOf(u8, manifest_json, &digest) != null);
+    try testing.expect(std.mem.indexOf(u8, manifest_json, "\"format\":\"markdown\"") != null);
+    try testing.expect(std.mem.indexOf(u8, manifest_json, "\"format\":\"text\"") != null);
+}
+
+test "an unknown explicit format fails with a usage-class report" {
+    var buffer: [256]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+
+    var conversion = zenfmt.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{ .name = "note.txt", .data = "hello\n" } },
+        .output = .{ .writer = &out },
+        .from = "docs",
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(zenfmt.Status.failed, conversion.status);
+    try testing.expectEqual(zenfmt.report.ExitClass.usage, conversion.exit_class);
+    try testing.expectEqual(@as(usize, 1), conversion.reports.len);
+    try testing.expectEqualStrings("core.unknown-input-format", conversion.reports[0].code);
+    // Nothing was written to the stream.
+    try testing.expectEqual(@as(usize, 0), out.buffered().len);
+    // A failed conversion never returns a manifest.
+    try testing.expectEqual(@as(?[]const u8, null), conversion.manifest_json);
+}
+
+test "path to path: artifact and adjacent manifest are committed together" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const cwd = std.Io.Dir.cwd();
+
+    cwd.deleteTree(io, test_dir) catch {};
+    try cwd.createDirPath(io, test_dir);
+    defer cwd.deleteTree(io, test_dir) catch {};
+
+    const input_path = test_dir ++ "/report.txt";
+    const output_path = test_dir ++ "/report.md";
+    try cwd.writeFile(io, .{ .sub_path = input_path, .data = "alpha\n\nbeta\n" });
+
+    var conversion = zenfmt.convert(gpa, io, .{
+        .input = .{ .path = input_path },
+        .output = .{ .path = output_path },
+    });
+    defer conversion.deinit(gpa);
+    try testing.expectEqual(zenfmt.Status.success, conversion.status);
+
+    const artifact = try cwd.readFileAlloc(io, output_path, gpa, .limited(4096));
+    defer gpa.free(artifact);
+    try testing.expectEqualStrings("alpha\n\nbeta\n", artifact);
+
+    const manifest_bytes = try cwd.readFileAlloc(
+        io,
+        output_path ++ ".zenfmt.json",
+        gpa,
+        .limited(1 << 20),
+    );
+    defer gpa.free(manifest_bytes);
+
+    // The committed manifest verifies against the committed artifact.
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const loaded = try zenfmt.manifest.load(arena_state.allocator(), manifest_bytes, .{});
+    try testing.expectEqualStrings("markdown", loaded.artifact_format);
+    const digest = zenfmt.manifest.digestHex(artifact);
+    try testing.expectEqualStrings(&digest, &loaded.artifact_digest_hex);
+}
+
+test "an existing destination is refused without overwrite and replaced with it" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const cwd = std.Io.Dir.cwd();
+
+    cwd.deleteTree(io, test_dir) catch {};
+    try cwd.createDirPath(io, test_dir);
+    defer cwd.deleteTree(io, test_dir) catch {};
+
+    const input_path = test_dir ++ "/again.txt";
+    const output_path = test_dir ++ "/again.md";
+    try cwd.writeFile(io, .{ .sub_path = input_path, .data = "one\n" });
+    try cwd.writeFile(io, .{ .sub_path = output_path, .data = "existing" });
+
+    var refused = zenfmt.convert(gpa, io, .{
+        .input = .{ .path = input_path },
+        .output = .{ .path = output_path },
+    });
+    defer refused.deinit(gpa);
+    try testing.expectEqual(zenfmt.Status.failed, refused.status);
+    try testing.expectEqualStrings("core.destination-exists", refused.reports[0].code);
+
+    // The existing file is untouched.
+    const untouched = try cwd.readFileAlloc(io, output_path, gpa, .limited(4096));
+    defer gpa.free(untouched);
+    try testing.expectEqualStrings("existing", untouched);
+
+    var replaced = zenfmt.convert(gpa, io, .{
+        .input = .{ .path = input_path },
+        .output = .{ .path = output_path },
+        .overwrite = true,
+    });
+    defer replaced.deinit(gpa);
+    try testing.expectEqual(zenfmt.Status.success, replaced.status);
+}
+
+test "a stale adjacent manifest warns and is ignored" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const cwd = std.Io.Dir.cwd();
+
+    cwd.deleteTree(io, test_dir) catch {};
+    try cwd.createDirPath(io, test_dir);
+    defer cwd.deleteTree(io, test_dir) catch {};
+
+    const input_path = test_dir ++ "/edited.txt";
+    try cwd.writeFile(io, .{ .sub_path = input_path, .data = "current content\n" });
+    try cwd.writeFile(io, .{
+        .sub_path = input_path ++ ".zenfmt.json",
+        .data = "{ not even json",
+    });
+
+    var buffer: [512]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = zenfmt.convert(gpa, io, .{
+        .input = .{ .path = input_path },
+        .output = .{ .writer = &out },
+    });
+    defer conversion.deinit(gpa);
+
+    try testing.expectEqual(zenfmt.Status.success, conversion.status);
+    var found = false;
+    for (conversion.reports) |item| {
+        if (std.mem.eql(u8, item.code, "core.stale-or-invalid-manifest")) found = true;
+    }
+    try testing.expect(found);
+}
+
+test "allocation failure at every site still returns the reserved report" {
+    var buffer: [4096]u8 = undefined;
+
+    var fail_index: usize = 0;
+    while (fail_index < 200) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(testing.allocator, .{
+            .fail_index = fail_index,
+        });
+        var out = std.Io.Writer.fixed(&buffer);
+        var conversion = zenfmt.convert(failing.allocator(), testing.io, .{
+            .input = .{ .bytes = .{
+                .name = "note.txt",
+                .data = "some words here\n\nand more\n",
+            } },
+            .output = .{ .writer = &out },
+        });
+        const status = conversion.status;
+        if (status == .failed) {
+            try testing.expectEqual(@as(usize, 1), conversion.reports.len);
+            try testing.expectEqualStrings("core.out-of-memory", conversion.reports[0].code);
+        }
+        conversion.deinit(failing.allocator());
+        if (status == .success and !failing.has_induced_failure) break;
+    }
+    // The loop must reach a fail index beyond every allocation the
+    // conversion performs, proving OOM was induced at every site.
+    try testing.expect(fail_index < 200);
+}
