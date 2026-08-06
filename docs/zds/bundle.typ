@@ -27,11 +27,76 @@
   "zds/0002-zenfmt-architecture.html",
   title: [ZDS 0002: zenfmt: Architecture and Implementation],
   author: ("Zen Contributors",),
-  description: [A pandoc-compatible document AST stored flat, Zig filters in the manner of build.zig, a comptime plugin registry, the reader and writer contracts, OOXML ingestion, the Markdown writer, Elm-style diagnostics, and the delivery plan.],
+  description: [A Zig-native document AST stored flat behind tagged-union views, Zig filters in the manner of build.zig, comptime plugin bundles, adjacent artifact manifests, OOXML ingestion, the Markdown writer, Elm-style diagnostics, and the delivery plan.],
 )[
   #include "records/0002-zenfmt-architecture.typ"
 ]
 
 #document("pdf/zds-0002-zenfmt-architecture.pdf")[
   #include "records/0002-zenfmt-architecture.typ"
+]
+
+#document(
+  "zds/0003-docx-reader.html",
+  title: [ZDS 0003: The DOCX Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the DOCX reader],
+)[
+  #include "records/0003-docx-reader.typ"
+]
+
+#document("pdf/zds-0003-docx-reader.pdf")[
+  #include "records/0003-docx-reader.typ"
+]
+
+#document(
+  "zds/0004-rtf-reader.html",
+  title: [ZDS 0004: The RTF Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the RTF reader],
+)[
+  #include "records/0004-rtf-reader.typ"
+]
+
+#document("pdf/zds-0004-rtf-reader.pdf")[
+  #include "records/0004-rtf-reader.typ"
+]
+
+#document(
+  "zds/0005-xlsx-reader.html",
+  title: [ZDS 0005: The XLSX Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the XLSX reader],
+)[
+  #include "records/0005-xlsx-reader.typ"
+]
+
+#document("pdf/zds-0005-xlsx-reader.pdf")[
+  #include "records/0005-xlsx-reader.typ"
+]
+
+#document(
+  "zds/0006-odt-reader.html",
+  title: [ZDS 0006: The ODT Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the ODT reader],
+)[
+  #include "records/0006-odt-reader.typ"
+]
+
+#document("pdf/zds-0006-odt-reader.pdf")[
+  #include "records/0006-odt-reader.typ"
+]
+
+#document(
+  "zds/0007-pptx-reader.html",
+  title: [ZDS 0007: The PPTX Reader],
+  author: ("Zen Contributors",),
+  description: [Mapping, omissions, and round-trip expectations for the PPTX reader],
+)[
+  #include "records/0007-pptx-reader.typ"
+]
+
+#document("pdf/zds-0007-pptx-reader.pdf")[
+  #include "records/0007-pptx-reader.typ"
 ]

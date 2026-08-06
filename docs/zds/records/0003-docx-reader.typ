@@ -1,0 +1,140 @@
+#let zds-number = "0003"
+#let zds-title = "The DOCX Reader"
+#let zds-state = "discussion"
+#let zds-created = "2026-08-06"
+#let zds-discussion = "Mapping, omissions, and round-trip expectations for the DOCX reader"
+#let zds-labels = ("formats", "docx", "reader",)
+#let zds-authors = ("Zen Contributors <team@insan.ai>",)
+#let zds-category = "Format Record"
+#let zds-status = "Open for Discussion"
+#let zds-last-updated = "2026-08-06"
+
+#import "../../shared/zds.typ": zds-document
+
+#show: doc => zds-document(
+  zds-number,
+  zds-title,
+  doc,
+  authors: zds-authors,
+  state: zds-state,
+  created: zds-created,
+  discussion: zds-discussion,
+  labels: zds-labels,
+  category: zds-category,
+  status: zds-status,
+  last-updated: zds-last-updated,
+)
+
+#let tbl(..args) = table(
+  stroke: 0.5pt + rgb("d7dee8"),
+  inset: 6pt,
+  ..args,
+)
+
+= Abstract
+
+The format record for `zenfmt_docx` (`ai.insan.zenfmt.docx`), the
+WordprocessingML reader delivered in phase 4 of ZDS 0002. That record carries
+the architectural mapping table; this one is the plugin's own ledger — the
+obligations ZDS 0001 places on every format record: the mapping as
+implemented, the deliberate omissions with their reasons, and what a round
+trip may and may not expect.
+
+= Scope
+
+The reader consumes `.docx` packages through the shared `zenfmt_ooxml` ZIP
+layer and `zenfmt_xml` pull parser, under every limit in ZDS 0002's archive
+table. The main part is resolved through the package relationships, never
+guessed. `styles.xml`, `numbering.xml`, `word/_rels/document.xml.rels`, and
+`word/footnotes.xml` are read when present; a document missing any optional
+part still converts.
+
+= Mapping
+
+As implemented; the rationale is in ZDS 0002, _Reading the Office Formats_.
+
+#tbl(
+  columns: (auto, 1fr),
+  table.header([*Source*], [*Tree result*]),
+  [`w:p`], [`paragraph`; `plain` inside synthesized list items.],
+  [`w:p` with heading `w:pStyle`],
+  [`heading`. Built-in `Heading1`..`Heading9` and any style whose
+    `w:basedOn` chain reaches one; levels above six clamp with
+    `docx.heading-level-clamped`.],
+  [`w:p` with `w:numPr`],
+  [`list_item` in a synthesized list: the inference machine from ZDS 0002,
+    with ordered-versus-bullet and start from `numbering.xml`, bullets when
+    the pointer dangles.],
+  [`w:r` with `w:rPr` flags],
+  [Nested `strong`, `emphasis`, `strikethrough`, `superscript`,
+    `subscript`, `small_caps`, `underline` in the canonical order; the
+    common prefix of consecutive runs is shared. Toggles with
+    `w:val="0"`/`"false"`/`"none"` clear.],
+  [`w:rFonts` naming a monospace family], [`code`, degraded: a font became a role.],
+  [`w:t`, `w:delText`], [Text; only `w:t` content is significant, never
+    inter-element whitespace.],
+  [`w:br`], [`hard_break`; `w:type="page"` counts toward
+    `docx.page-breaks-dropped`.],
+  [`w:tab`], [A space.],
+  [`w:hyperlink`], [`link`, target through the relationships or `#anchor`.],
+  [`HYPERLINK` fields], [`link` around the cached result runs; other
+    fields keep their cached result and drop the instruction.],
+  [`w:tbl` / `w:tr` / `w:tc`],
+  [`table` with columns from `w:tblGrid`; leading `w:tblHeader` rows in
+    `table_head`; `w:gridSpan` becomes `col_span`; `w:vMerge`
+    continuations fold into the origin with
+    `docx.merged-cells-degraded`.],
+  [`w:drawing`, `w:pict`],
+  [`image` with the relationship target as source and `descr` as alt
+    text; sourceless, descriptionless shapes emit nothing.],
+  [`w:footnoteReference`], [`note`; the body parses from
+    `word/footnotes.xml` after the document body.],
+  [`w:sdt`], [`container` (block) or `span` (inline) with the control's
+    tag as its class.],
+  [`w:ins`], [Content kept: insertions accepted.],
+)
+
+= Deliberate omissions
+
+Recognized and dropped, each with the named report; the counts aggregate.
+
+#tbl(
+  columns: (auto, 1fr),
+  table.header([*Report code*], [*What is recognized and dropped*]),
+  [`docx.comments-dropped`], [Comments and comment ranges.],
+  [`docx.tracked-deletions-dropped`], [`w:del` and `w:moveFrom` content.],
+  [`docx.page-breaks-dropped`], [Explicit page breaks.],
+  [`docx.bookmarks-dropped`], [Bookmarks and cross-reference anchors.],
+  [`docx.section-properties-dropped`], [Page size, margins, columns.],
+  [`docx.text-boxes-dropped`], [Text boxes and shapes with text.],
+  [`docx.embedded-objects-dropped`], [OLE objects: charts, spreadsheets.],
+  [`docx.unhandled-construct`],
+  [Any other WordprocessingML element: children processed, construct
+    reported — the runtime twin of this table.],
+)
+
+Deferred rather than dropped: OMML mathematics (the `math` node exists; the
+mapping does not yet) and image byte extraction (`Media.bytes` stays empty).
+
+= Round-trip expectations
+
+DOCX to Markdown is a one-way projection in the first release. What survives
+a later DOCX → Markdown → DOCX trip is bounded by Markdown's vocabulary plus
+the preservation namespace: the reader records the distinct non-heading
+paragraph style ids it saw under `ai.insan.zenfmt.docx` (version 1,
+`paragraph_style_ids`) in the artifact manifest, digest-bound to the output.
+A future DOCX writer may consult it; nothing may require it.
+
+= Security
+
+Everything from ZDS 0002 applies: central-directory-only ZIP reading, the
+no-override name rules, refusal of encrypted entries and unknown
+compression, no DTD processing (`docx.doctype-refused`), and the XML depth
+limit (`docx.xml-too-deep`). The adversarial corpus in `tests/docx.zig`
+asserts each refusal by report code.
+
+= References
+
+- ZDS 0002, _Reading the Office Formats_ — the architectural mapping this
+  record instantiates.
+- ECMA-376 Part 1 (WordprocessingML), Part 2 (Open Packaging Conventions).
