@@ -50,6 +50,30 @@ fn addBenchmark(
             "(use -Doptimize=ReleaseSafe for publishable numbers)",
     );
     benchmark_step.dependOn(&run_harness.step);
+
+    // `zig build benchmark-stages`: the in-process stage split (ZDS 0013),
+    // written to benchmarks/results/stages.json.
+    const stages = b.addExecutable(.{
+        .name = "zenfmt-benchmark-stages",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("benchmarks/stages.zig"),
+            .target = target,
+            .optimize = .ReleaseSafe,
+            .imports = &.{
+                .{ .name = "zenfmt", .module = b.modules.get("zenfmt").? },
+                .{ .name = "zenfmt_core", .module = b.modules.get("zenfmt_core").? },
+            },
+        }),
+    });
+    const run_stages = b.addRunArtifact(stages);
+    run_stages.has_side_effects = true;
+    run_stages.setCwd(b.path("."));
+    const stages_step = b.step(
+        "benchmark-stages",
+        "Run the in-process stage benchmark over the corpus " ++
+            "(writes benchmarks/results/stages.json)",
+    );
+    stages_step.dependOn(&run_stages.step);
 }
 
 // ------------------------------------------------------------- libraries
@@ -331,6 +355,9 @@ fn addLibraries(
         "tests/docx.zig",
         "tests/detect.zig",
         "tests/media.zig",
+        "tests/facets.zig",
+        "tests/lowering.zig",
+        "tests/docs_sync.zig",
     };
     for (end_to_end_sources) |source| {
         const end_to_end = b.addTest(.{
@@ -541,8 +568,12 @@ fn addZdsTool(
 // ------------------------------------------------------------ formatting
 
 const fmt_paths = [_][]const u8{
-    "build.zig", "tools", "core",  "support",  "formats",
-    "src",       "cli",   "tests", "examples", "benchmarks/benchmark.zig",
+    "build.zig",             "tools",
+    "core",                  "support",
+    "formats",               "src",
+    "cli",                   "tests",
+    "examples",              "benchmarks/benchmark.zig",
+    "benchmarks/stages.zig",
 };
 
 fn addFormatting(b: *std.Build) void {
