@@ -382,40 +382,60 @@ result and parses the instruction for its URL. Cell marks (`0x07`)
 flatten into paragraphs with a `doc.tables-flattened` note. That is the
 honest reading of a structure this reader does not yet rebuild.
 
-== What each format loses
+== What each format loses, and what the facets carry
 
 Every reader's ZDS record carries the full table. This is the shape of
 it. The point is not the losses themselves; every converter loses these.
-The point is that each loss has a name you can grep for in the manifest.
+The point is that each loss has a name you can grep for in the manifest,
+and that since IR v2 a third column exists: information Markdown cannot
+hold that now rides in typed facets, carried for a richer writer instead
+of merely mourned.
 
 #table(
-  columns: (auto, 1fr, 1.2fr),
-  table.header([*Format*], [*Converts faithfully*], [*Deliberate, reported losses*]),
+  columns: (4fr, 5fr, 6fr, 5fr),
+  table.header([*Format*], [*Converts faithfully*],
+    [*Deliberate, reported losses*], [*Carried in facets*]),
   [docx], [headings, styled runs, links, lists, tables, footnotes, images],
-  [comments (`docx.comment-dropped`), tracked deletions, text boxes,
-    merged cells degrade (`docx.merged-cells-degraded`)],
+  [comments (`docx.comment-dropped`), text boxes, merged cells degrade
+    (`docx.merged-cells-degraded`)],
+  [style names, tracked insertions and deletions, page size, image
+    bytes as resources],
   [rtf], [styled text, tables, lists, links, footnotes, headings],
   [image bytes (`rtf.images-dropped`), OLE objects
     (`rtf.objects-dropped`), nested tables flatten],
-  [xlsx/xlsb/xls], [typed cells, dates, cached formula values, sheet
+  [stylesheet names on styled paragraphs],
+  [xlsx/xlsb/xls/ods], [typed cells, dates, cached formula values, sheet
     structure],
-  [formulas themselves (`formula-without-cached-value`), charts, cell
-    formatting],
+  [charts, cell formatting],
+  [grid facets: sheet, exact row and column, value type, formula source
+    where the format spells it, cached value, merges],
   [pptx/ppt/odp], [titles, body text, tables, links, images, notes],
-  [geometry, animation, charts (`presentation-projection`)],
-  [odt/ods], [headings, styles, lists, tables, images, footnotes],
-  [annotations (`odt.annotations-dropped`), change marks, sourceless
-    frames (`odt.frame-dropped`)],
+  [animation, charts (`presentation-projection`)],
+  [slide geometry in EMU (pptx, odp), per-slide provenance (ppt),
+    picture bytes as resources (pptx)],
+  [odt], [headings, styles, lists, tables, images, footnotes],
+  [sourceless frames (`odt.frame-dropped`)],
+  [common style names, annotations as comment revisions, image bytes as
+    resources],
   [epub], [chapters in spine order, metadata, images, links],
   [CSS entirely, fonts; DRM'd books refuse (`epub.drm-refused`)],
+  [per-chapter provenance naming the spine member],
   [pdf], [text, headings by size, paragraphs, geometric tables, embedded
     images],
   [layout itself (`pdf.layout-projection`), unmappable glyphs
     (`pdf.unmappable-text`), CCITT and JBIG2 images],
+  [page positions in EMU with projected confidence, per-page
+    provenance],
   [doc], [full text in both encodings, heading styles, hyperlinks],
-  [table grids flatten (`doc.tables-flattened`), embedded objects,
-    non-heading styles],
+  [table grids flatten (`doc.tables-flattened`), embedded objects],
+  [STSH style names, heading provenance with stream positions],
 )
+
+Carried is not converted. The Markdown artifact is the same either way;
+the facets ride in the manifest as counted, digested summaries, and in
+full under `--preserve-facets`. What changed is that the loss ledger
+now distinguishes three fates instead of two: rendered, reported as
+lost, or carried for a writer that can use it.
 
 #teach_back([
   Explain to a colleague why the ZIP reader ignores local file headers,

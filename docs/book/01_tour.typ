@@ -49,6 +49,7 @@ Merged content sits in its first cell; the covered positions are empty.
 
 What you can do:
 
+  Keep the source:
     Keep the source document if the merged-cell layout matters.
 ```
 
@@ -84,12 +85,15 @@ from `report.docx`, pretty-printed and shortened:
     "name": "report.md",
     "plugin": { "id": "ai.insan.zenfmt.markdown" }
   },
-  "ast": { "schema": "ai.insan.zenfmt.ast", "version": 1 },
+  "ast": { "schema": "ai.insan.zenfmt.ast", "version": 2 },
   "document_metadata": {},
+  "facets": {
+    "layout": { "count": 1, "digest": { ... }, "unused": true }
+  },
   "plugins": {},
   "reports": [ ... ],
   "schema": "ai.insan.zenfmt.artifact-manifest",
-  "schema_version": 1,
+  "schema_version": 2,
   "source": {
     "digest": {
       "algorithm": "blake3-256",
@@ -118,6 +122,11 @@ Read it as a chain of custody.
   canonical form. *plugins* holds versioned, namespaced preservation
   data that readers stash for a future round trip. Chapter 3 returns to
   it.
+- *facets* summarizes the rich-document annotations the reader attached
+  and this writer did not consume: page geometry here, spreadsheet
+  formulas or tracked revisions elsewhere. Each kind carries a count and
+  a digest; `--preserve-facets` serializes the full rows. Carried but
+  unused is not lost, and the manifest says which it was.
 - *schema* and *schema_version* let a tool refuse a manifest it does not
   understand instead of misreading it.
 
@@ -156,7 +165,7 @@ doc xls ppt xlsb
 
 What you can do:
 
-    Select the intended format explicitly:
+  Select the intended format explicitly:
 
         zenfmt --from docx report.docx
 ```
@@ -217,7 +226,9 @@ $ zenfmt report.docx -o notes.md      # choose the output path
 $ zenfmt report.docx --stdout         # document bytes only, to stdout
 $ zenfmt - --from html --stdout < page.html   # stdin needs --from
 $ zenfmt report.docx --overwrite      # replace an existing artifact
-$ zenfmt report.docx --strict         # any warning fails, before commit
+$ zenfmt report.docx --strict         # refuse dropped content, pre-commit
+$ zenfmt report.docx --strict=exact   # refuse any declared loss at all
+$ zenfmt report.docx --preserve-facets   # full facet rows in the manifest
 $ zenfmt report.docx --reports json   # structured diagnostics on stderr
 $ zenfmt big.xlsx --limit max_input_bytes=2147483648
 ```
@@ -225,11 +236,16 @@ $ zenfmt big.xlsx --limit max_input_bytes=2147483648
 Three behaviors deserve emphasis. First, overwriting is a refusal by
 default. If `report.md` exists, zenfmt reports it and exits 2 rather
 than clobbering it; `--overwrite` replaces the artifact and manifest
-together. Second, strict mode fails early. `--strict` promotes warnings
-to failure before anything is committed, so a pipeline that cannot
-tolerate loss gets no partial output. Third, `--stdout` writes only
-document bytes. Reports go to stderr, and the manifest is dropped unless
-you ask for it with `--metadata-out PATH`.
+together. Second, strict mode fails early and is graded. Bare `--strict`
+refuses when the conversion would drop semantic content;
+`--strict=structure` also refuses structural degradation; and
+`--strict=exact` refuses any declared loss at all, styling included. In
+every grade the refusal happens before anything is committed, so a
+pipeline that cannot tolerate loss gets no partial output. Third,
+`--stdout` writes only document bytes. Reports go to stderr, the
+manifest is dropped unless you ask for it with `--metadata-out PATH`,
+and an embedding application can additionally ask the result whether the
+stream received nothing, a partial prefix, or the complete artifact.
 
 Here is the roster. This transcript is real, and Part III walks every
 row:
@@ -272,9 +288,13 @@ keep honest, while many readers feed one consumer.
   conversion, or something else?
 ])
 
-The extension is only the first hint. If it matches a registered reader,
-that reader is chosen. When it does not match, or there is no extension
-at all, zenfmt reads the bytes and looks for content signatures:
+The extension is only the first hint. When it matches a registered
+reader, that reader is chosen, and for in-memory input the bytes are
+still checked: if the content signature names a different format, the
+content wins and a `core.extension-mismatch` note says so, which is how
+`report.docx` holding RTF parses as RTF instead of failing confusingly.
+When nothing matches, or there is no extension at all, zenfmt reads the
+bytes and looks for content signatures:
 
 #book_figure(
   [Format detection: explicit flag, then extension, then content
@@ -329,29 +349,34 @@ if nothing happened. The name was wrong; the bytes were not.
 == The road a document travels
 
 Every conversion in this book, every format, every chapter, makes the
-same six stops:
+same seven stops:
 
 #book_figure(
   [The conversion pipeline. One representation in the middle. The
-  validator guards both sides of the filter stage.],
+  validator guards both sides of the filter stage, and the lowering plan
+  prices every loss before the writer runs.],
   pipeline((
     [reader],
     [document #linebreak() tree],
     [validator],
     [filters],
+    [lowering #linebreak() plan],
     [writer],
     [commit],
-  ), spacing: 17mm),
+  ), spacing: 14mm),
 )
 
-The reader parses one format and emits nodes. The tree is the single
+The reader parses one format and emits nodes, attaching typed facets
+for what Markdown alone cannot hold. The tree is the single
 representation of Part II. The validator proves structural invariants
 before anything else may touch the tree, and proves them again after
 every filter stage. Filters are Zig transforms compiled into your binary
-(Chapter 7). The writer renders Markdown deterministically. Commit
-writes the artifact, then any extracted media, then the manifest,
-atomically. Nothing in the middle knows what format the bytes came from.
-That ignorance is enforced at compile time, and it is the subject of
+(Chapter 7). The lowering plan records and prices every degradation the
+writer declares, which is where the graded `--strict` refusal happens.
+The writer renders Markdown deterministically. Commit writes the
+artifact, then any extracted media, then the manifest, atomically.
+Nothing in the middle knows what format the bytes came from. That
+ignorance is enforced at compile time, and it is the subject of
 Chapter 3.
 
 #teach_back([

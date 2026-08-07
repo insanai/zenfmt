@@ -47,8 +47,10 @@ pub const reader = core.Reader(.{
     digits, hyphens.],
   [`extensions`], [Detection hints and derived output names. Primary
     first, no dots.],
-  [`input`], [`.seekable` for container formats that need the whole
-    file. Streaming text formats can relax this.],
+  [`input`], [`.bytes`, the default, delivers the whole input as one
+    slice. `.seekable` marks container formats: they receive a
+    file-backed input, the ZIP layer reads it through bounded windows,
+    and piped input spills to a temporary file first.],
   [`data_version`], [Versions the plugin's preservation-data namespace.
     Bump it, and old carried data is dropped rather than misread.],
   [`read`], [The one function the engine will call.],
@@ -93,13 +95,12 @@ pub const reader = core.Reader(.{
     .id = "com.example.minutes",
     .format = "minutes",
     .extensions = &.{"minutes"},
-    .input = .seekable,
     .data_version = 1,
     .read = read,
 });
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
-    var lines = std.mem.splitScalar(u8, ctx.input.bytes, '\n');
+    var lines = std.mem.splitScalar(u8, try ctx.inputBytes(), '\n');
     var list: ?core.builder.BlockToken = null;
     while (lines.next()) |line| {
         if (line.len == 0) continue;
@@ -111,10 +112,7 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
         } else if (std.mem.startsWith(u8, line, "@ ")) {
             try ctx.out.metaString("date", line["@ ".len..]);
         } else if (std.mem.startsWith(u8, line, "- ")) {
-            if (list == null) list = try ctx.out.beginList(.{
-                .kind = .unordered,
-                .tight = true,
-            });
+            if (list == null) list = try ctx.out.beginList(.unordered);
             const item = try ctx.out.beginBlock(.list_item);
             const body = try ctx.out.beginPlain();
             try ctx.out.text(line["- ".len..]);
@@ -167,20 +165,46 @@ Note what is absent: no `free`, no ownership transfer, no lifetime
 puzzle. The conversion ends, the arena goes, and the reader never
 cleans up.
 
-Beyond this toy, three more Emitter families matter in real readers.
+Beyond this toy, five more Emitter families matter in real readers.
 Staged attributes: `ctx.out.attrs(.{ .classes = &.{"notes"} })` applies
 to the next opened node. This is how ODP marks its speaker-notes
 container. Deferred notes: `declareNote` mid-flow, then `beginNoteBody`
 and `endNoteBody` after the main flow. This is the shape footnotes take
-in DOCX, RTF, and ODT. Media: `ctx.out.media(source, bytes, mime)`
-registers extracted image bytes, and the engine commits them beside the
-artifact. The PDF chapter shows it end to end.
+in DOCX, RTF, and ODT. Resources:
+`ctx.out.resource(source, bytes, mime)` registers extracted image bytes
+under a `ResourceId`, and the engine commits them beside the artifact.
+Facets: every token can carry typed stand-off annotation, which is how
+rich-document meaning survives a Markdown-shaped kernel. One real call
+from the XLSX reader:
+
+```zig
+try ctx.out.attachGrid(cell, .{
+    .sheet = sheet_name,
+    .row = row_index,
+    .col = column,
+    .value_type = .number,
+    .formula = formula_text,
+    .cached = cached_text,
+});
+```
+
+The facet rule is ZDS 0013's erasure axiom: a facet refines, it never
+carries primary content. The kernel must render meaningfully with every
+facet table empty, and the validator enforces the checkable half of
+that promise. Extensions, finally, are the escape hatch for constructs
+the kernel does not model: `beginExtension(owner, name, version)` opens
+a namespaced node whose children are a mandatory source-neutral
+fallback. A writer that understands the namespace uses the extension; a
+writer that does not renders the fallback and reports the loss. The
+validator rejects an empty fallback and a same-owner extension nested
+inside another.
 
 #api_anchor([`core.ReadContext`], [
-  Everything a reader receives: `gpa` (the arena), `input.bytes`,
-  `input_name`, `out` (the Emitter), `reports`, `limits`, and
-  `manifest_in` for carried data. There is no I/O handle. A reader that
-  cannot reach the filesystem cannot leak paths into the tree.
+  Everything a reader receives: `gpa` (the arena), `input` (bytes, or a
+  file handle for `.seekable` readers, with `inputBytes()` as the
+  whole-slice shim), `input_name`, `out` (the Emitter), `reports`,
+  `limits`, and `manifest_in` for carried data. A reader windows what it
+  needs; it never opens paths of its own.
 ], source: [`core/src/plugin.zig`])
 
 == The obligations
@@ -193,9 +217,14 @@ story of applying them to hostile real-world formats.
   record review will find it. The merged-cells note from Chapter 1 is
   the pattern. Reports carry stable codes, and the codes appear in
   tests.
++ Facets refine; they never carry content. Anything a writer must see to
+  render correctly belongs in the kernel. Anything that enriches it, a
+  style name, a cell formula, a page position, belongs in a facet, where
+  it costs nothing to the conversions that ignore it.
 + Limits are honored, not interpreted. `ctx.limits` caps input size,
-  nesting depth, archive expansion, and media bytes. Hitting a limit is
-  a refusal with exit class 3. It is never an invitation to be clever.
+  nesting depth, archive expansion, node and facet counts, and resource
+  bytes. Hitting a limit is a refusal with exit class 3. It is never an
+  invitation to be clever.
 + No recursion. Every walker is a loop over an explicit, bounded stack.
   A document's nesting depth must not become your call depth, because
   the attacker chooses the document.
@@ -256,8 +285,9 @@ the default is privileged.
 
 == The writer side
 
-One writer ships: Markdown. Its descriptor mirrors the reader's, and its
-context hands over the finished document and a stream:
+One writer ships: Markdown. Its descriptor mirrors the reader's, plus
+one field the reader has no analogue for: the capability declaration of
+ZDS 0013.
 
 ```zig
 pub const writer = core.Writer(.{
@@ -265,14 +295,27 @@ pub const writer = core.Writer(.{
     .format = "markdown",
     .extensions = &.{ "md", "markdown" },
     .write = write,
+    .capabilities = &capabilities,
 });
 
-fn write(ctx: *core.WriteContext) core.WriteError!void {
-    // ctx.doc: *const Document. Views only; storage is private.
-    // ctx.out: *std.Io.Writer. Bytes stream through a hashing writer,
-    // so the manifest digest covers exactly what was written.
-}
+pub const capabilities: core.lowering.Capabilities = .{
+    .exact_blocks = &.{ .paragraph, .heading, .quote, .list, ... },
+    .lowered_blocks = &.{ .definition_list, .table_cell, .extension, ... },
+    .exact_inlines = &.{ .text, .emphasis, .strong, .code, ... },
+    .lowered_inlines = &.{ .underline, .citation, ... },
+    .rules = &rules, // each with a name, a priced LossCost, a note
+};
 ```
+
+The declaration is validated for totality at compile time: every kernel
+tag must be exact, lowered, or refused, so a new tag fails this writer's
+build until someone decides its disposition. At run time the writer's
+emission sites record rule hits on `ctx.plan`; the engine prices the
+plan, gates the graded `--strict` predicate before anything is
+committed, and flushes one aggregated loss report per fired rule.
+A writer can also recover what its own reader preserved:
+`ctx.preservation("ai.insan.zenfmt.docx")` returns that namespace from
+the input's verified manifest.
 
 A writer walks views with the same sibling hop the validator uses, and
 it owns its output discipline completely. The Markdown writer's escaping
@@ -290,7 +333,7 @@ versioned JSON value to the conversion:
 ```zig
 ctx.own_plugin_data = .{
     .version = 1,
-    .json = "{\"paragraph_style_ids\":[\"Quote\",\"Intense\"]}",
+    .data = "{\"paragraph_style_ids\":[\"Quote\",\"Intense\"]}",
 };
 ```
 

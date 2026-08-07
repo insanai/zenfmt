@@ -33,12 +33,16 @@ detect from and no name to derive the output path from.
   [`--overwrite`], [], [Replace existing artifact and manifest paths.
     Without it an existing destination is a refusal
     (`core.destination-exists`).],
+  [`--preserve-facets`], [], [Serialize full facet rows into the
+    manifest instead of the default digest-and-count summaries.],
   [`--filters`], [], [Run the filter pipeline compiled into this binary.],
   [`--list-formats`], [], [Print the bundle's readers and writers with
     their extensions.],
   [`--list-filters`], [], [Print the filters compiled into this binary, in
     pipeline order.],
-  [`--strict`], [], [Promote warnings to errors, before anything commits.],
+  [`--strict`], [], [Refuse declared loss before anything commits.
+    Graded: bare `--strict` (content), `--strict=structure`,
+    `--strict=exact`.],
   [`--quiet`], [], [Suppress notes.],
   [`--reports`], [`FORM`], [`text` (default) or `json`.],
   [`--limit`], [`NAME=VALUE`], [Override one resource limit. Repeatable.
@@ -55,7 +59,8 @@ detect from and no name to derive the output path from.
   [0], [success], [The artifact committed, and on path output the manifest
     with it. Notes and warnings may still be present. Read the reports.],
   [1], [conversion], [The input could not be converted: malformed content,
-    an invalid tree, an I/O failure, or `--strict` promoting a warning.],
+    an invalid tree, an I/O failure, or a graded `--strict` refusal of
+    declared loss.],
   [2], [usage], [The invocation is wrong: an unknown format, an
     undetectable input, a flag mistake. Fixable at the command line.],
   [3], [limit], [A resource limit refused the input: archive bombs, depth
@@ -66,45 +71,58 @@ detect from and no name to derive the output path from.
 == The formats
 
 19 readers, one writer. Every reader's plugin id is
-`ai.insan.zenfmt.<format>`. Detection tries the extension first, then
-content signatures. `--from` overrides both.
+`ai.insan.zenfmt.<format>`. Detection weighs both kinds of evidence:
+for in-memory input the content signature always runs, and when it
+contradicts the extension, content wins with a `core.extension-mismatch`
+note. File inputs whose extension routes are read directly. `--from`
+overrides everything.
 
 #table(
-  columns: (auto, auto, 1fr, auto),
-  table.header([*Format*], [*Extensions*], [*Content signature*], [*Record*]),
+  columns: (4fr, 5fr, 8fr, 6fr, 3fr),
+  table.header([*Format*], [*Extensions*], [*Content signature*],
+    [*Facets*], [*Record*]),
   [`docx`], [`.docx .docm`], [ZIP central directory names
-    `word/document.xml`], [0003],
-  [`doc`], [`.doc`], [CFB magic + `WordDocument` stream], [0012],
-  [`odt`], [`.odt`], [ZIP + OpenDocument text mimetype], [0006],
-  [`rtf`], [`.rtf`], [Leading `{\rtf`], [0004],
-  [`xlsx`], [`.xlsx .xlsm`], [ZIP names `xl/workbook.xml`], [0005],
-  [`xlsb`], [`.xlsb`], [ZIP names `xl/workbook.bin`], [0012],
-  [`xls`], [`.xls`], [CFB magic + `Workbook` or `Book` stream], [0012],
-  [`ods`], [`.ods`], [ZIP + OpenDocument spreadsheet mimetype], [0008],
-  [`csv`], [`.csv .tsv`], [extension only], [0002],
+    `word/document.xml`], [style, revision, layout, media], [0003],
+  [`doc`], [`.doc`], [CFB magic + `WordDocument` stream], [style,
+    provenance], [0012],
+  [`odt`], [`.odt`], [ZIP + OpenDocument text mimetype], [style,
+    revision, media], [0006],
+  [`rtf`], [`.rtf`], [Leading `{\rtf`], [style], [0004],
+  [`xlsx`], [`.xlsx .xlsm`], [ZIP names `xl/workbook.xml`], [grid],
+    [0005],
+  [`xlsb`], [`.xlsb`], [ZIP names `xl/workbook.bin`], [grid], [0012],
+  [`xls`], [`.xls`], [CFB magic + `Workbook` or `Book` stream], [grid],
+    [0012],
+  [`ods`], [`.ods`], [ZIP + OpenDocument spreadsheet mimetype], [grid],
+    [0008],
+  [`csv`], [`.csv .tsv`], [extension only], [none], [0002],
   [`pptx`], [`.pptx .pptm .ppsx .ppsm`], [ZIP names
-    `ppt/presentation.xml`], [0007],
+    `ppt/presentation.xml`], [layout, media], [0007],
   [`ppt`], [`.ppt .pps .pot`], [CFB magic + `PowerPoint Document`
-    stream], [0012],
-  [`odp`], [`.odp`], [ZIP + OpenDocument presentation mimetype], [0009],
-  [`epub`], [`.epub`], [ZIP + `application/epub+zip` mimetype], [0010],
-  [`pdf`], [`.pdf`], [Leading `%PDF`], [0011],
-  [`html`], [`.html .htm`], [extension only], [0002],
-  [`markdown`], [`.md .markdown`], [extension only], [0002],
-  [`asciidoc`], [`.adoc .asciidoc`], [extension only], [0002],
-  [`rst`], [`.rst`], [extension only], [0002],
+    stream], [provenance], [0012],
+  [`odp`], [`.odp`], [ZIP + OpenDocument presentation mimetype],
+    [layout], [0009],
+  [`epub`], [`.epub`], [ZIP + `application/epub+zip` mimetype],
+    [provenance], [0010],
+  [`pdf`], [`.pdf`], [Leading `%PDF`], [layout, provenance, media],
+    [0011],
+  [`html`], [`.html .htm`], [extension only], [extension nodes], [0002],
+  [`markdown`], [`.md .markdown`], [extension only], [none], [0002],
+  [`asciidoc`], [`.adoc .asciidoc`], [extension only], [none], [0002],
+  [`rst`], [`.rst`], [extension only], [none], [0002],
   [`text`], [`.txt .text`], [extension only. The fallback is never silent:
-    an undetectable input is a usage refusal.], [0002],
+    an undetectable input is a usage refusal.], [none], [0002],
 )
 
 *Word processing.* DOCX maps styles to headings through `basedOn` chains,
 synthesizes lists from numbering properties, folds merged table cells, and
-carries footnotes. Tracked deletions, comments, and text boxes are counted
-omissions. Legacy DOC resolves Heading 1 through 9 from the binary
-stylesheet and extracts hyperlink fields; other styles degrade to plain
-paragraphs. ODT resolves automatic styles, images, sections, and inline
-footnotes. RTF covers tables, lists, fields, footnotes, and outline
-headings.
+carries footnotes. Comments and text boxes are counted omissions; tracked
+insertions and deletions additionally ride as revision facets, and style
+names, page size, and image bytes are carried too. Legacy DOC resolves
+Heading 1 through 9 from the binary stylesheet and extracts hyperlink
+fields; other named styles survive as style facets. ODT resolves automatic
+styles, images, sections, and inline footnotes. RTF covers tables, lists,
+fields, footnotes, and outline headings.
 
 *Spreadsheets.* All five spreadsheet readers project one sheet to one `h2`
 plus one table, first row as header, with typed cells. Dates render ISO.
@@ -114,8 +132,8 @@ says so.
 *Presentations.* A slide projects to a title heading plus body content:
 lists, tables, links, images. Speaker notes land in a `container` classed
 `notes`. Every presentation conversion carries its projection warning.
-Geometry, charts, and animation do not survive, and the reader says so
-rather than pretending.
+Charts and animation do not survive, and the reader says so rather than
+pretending; shape geometry, though, now rides in layout facets in EMU.
 
 *Publishing.* EPUB walks container, then package, then spine, and parses
 chapters with the HTML machinery. DRM is refused outright. PDF is native
@@ -150,8 +168,15 @@ notes and warnings, which fail a conversion only under `--strict`.
     `flatten-nested-tables` filter replaced an inner table.],
   [`core.stale-or-invalid-manifest`], [warning], [none], [An adjacent
     input manifest failed digest or schema checks and was ignored.],
-  [`core.strict-warnings`], [error], [conversion], [`--strict` promoted
-    warnings. Nothing was committed.],
+  [`core.strict-refused`], [error], [conversion], [The graded `--strict`
+    predicate refused the priced loss. Nothing was committed.],
+  [`core.construct-refused`], [error], [conversion], [The document
+    contains a construct the selected writer refuses to degrade in any
+    mode.],
+  [`core.extension-mismatch`], [note], [none], [The file extension and
+    the content signature disagreed; content evidence routed the file.],
+  [`cli.usage`], [error], [usage], [The command line itself was invalid;
+    the report highlights the offending argument.],
   [`core.undetectable-input-format`], [error], [usage], [No extension
     match and no content signature. The report lists every known
     format.],
@@ -170,6 +195,9 @@ the writer degraded it deliberately, and the manifest says so.
   table.header([*Code*], [*Severity*], [*Meaning*]),
   [`markdown.style-dropped`], [note], [Underline, small caps, and similar
     styling have no Markdown syntax. The text is kept plain.],
+  [`markdown.extension-fallback`], [note], [A namespaced plugin extension
+    the writer does not understand rendered as its source-neutral
+    fallback content.],
   [`markdown.container-attributes-dropped`], [note], [A container's id,
     classes, or attributes have no plain-Markdown form.],
   [`markdown.cell-span-degraded`], [note], [GFM tables cannot span. Merged
@@ -213,6 +241,8 @@ the writer degraded it deliberately, and the manifest says so.
     relationships name no main document.],
   [`docx.unhandled-construct`], [warning], [none], [Recognized
     WordprocessingML handled by nobody. Named in the report.],
+  [`docx.media-limit`], [note], [none], [Image extraction stopped at the
+    resource limits; later images keep their in-archive references.],
   [`docx.merged-cells-degraded`], [note], [none], [`gridSpan` and `vMerge`
     folded for the Markdown table.],
   [`docx.comment-dropped`], [warning], [none], [Comments are review
@@ -229,6 +259,8 @@ the writer degraded it deliberately, and the manifest says so.
     statement: geometry, charts, and animation are absent.],
   [`pptx.merged-cells`], [note], [none], [Table span folding, as in
     DOCX.],
+  [`pptx.media-limit`], [note], [none], [Embedded picture extraction
+    stopped at the resource limits; the rest keep path references.],
 )
 
 === OpenDocument (`odt.*`, `ods.*`, `odp.*`)
@@ -242,6 +274,8 @@ the writer degraded it deliberately, and the manifest says so.
     parse.],
   [`odt.annotations-dropped`], [warning], [none], [Review annotations are
     not content.],
+  [`odt.media-limit`], [note], [none], [Image extraction stopped at the
+    resource limits; later images keep their in-archive references.],
   [`odt.frame-dropped`], [warning], [none], [A frame with neither image
     source nor text.],
   [`ods.not-an-archive`], [error], [conversion], [As above, for
@@ -412,10 +446,19 @@ walker stacks, and no input is worth an unbounded stack.
   [`max_manifest_depth`], [64], [JSON nesting in an accepted manifest.],
   [`max_report_samples`], [4], [Locations an aggregated report lists
     before counting the rest.],
-  [`max_media_files`], [256], [Media files a reader may extract from one
+  [`max_resources`], [256], [Resources a reader may extract from one
     document.],
-  [`max_media_bytes`], [128 MiB], [Total extracted media bytes per
+  [`max_resource_bytes`], [128 MiB], [Total extracted resource bytes per
     document.],
+  [`max_nodes`], [16 Mi], [Kernel nodes, blocks plus inlines, per
+    document.],
+  [`max_facet_rows`], [1 Mi], [Facet rows across all facet tables.],
+  [`max_decoded_text_bytes`], [256 MiB], [Decoded text pool bytes,
+    distinct from `max_input_bytes`.],
+  [`max_lowering_alternatives`], [8], [Lowering alternatives a writer may
+    declare per construct.],
+  [`max_lowering_work`], [64 Mi], [Lowering rule applications per
+    conversion.],
 )
 
 == Environment
@@ -460,6 +503,10 @@ runtime half.
   [0011], [The PDF Reader.],
   [0012], [The Legacy Binary Office Readers: DOC, XLS, PPT, and XLSB, plus
     the CFB container.],
+  [0013], [Layered Document IR and Writer Lowering: the IR v2 kernel
+    schema, entities and sparse facets, extension nodes, the resource
+    store, the lowering planner with graded strict, and the core
+    contract repairs. Committed: the system this book describes.],
 )
 
 #book_quote(

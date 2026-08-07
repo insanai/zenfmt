@@ -447,6 +447,60 @@ parsing.
   ],
 )
 
+== Where the time goes
+
+The process benchmark treats each tool as a black box. A second harness,
+`zig build benchmark-stages`, opens zenfmt's box from inside the library:
+for each corpus file it times a conversion through a probe writer that
+emits nothing, which prices reading, tree building, validation, and the
+manifest, and then times the ordinary Markdown conversion. The difference
+is the rendering share. That difference is a derived number, not a direct
+measurement, and the results file says so in a `derived` field.
+
+#let stages = json("/benchmarks/results/stages.json")
+#let stage_pick = ("data.csv", "page.html", "book.epub", "slides.pptx", "slides.odp", "deck.ppt", "report.docx", "sheet.xlsx")
+#figure(
+  placement: auto,
+  kind: table,
+  table(
+    columns: (2fr, 1fr, 1fr, 1fr, 1fr),
+    align: (left, right, right, right, right),
+    table.header(
+      [*File*], [*Read (ms)*], [*Render (ms)*], [*Total (ms)*],
+      [*Render share*],
+    ),
+    ..{
+      let rows = ()
+      for f in stages.files {
+        if f.name in stage_pick {
+          let share = if f.full_ms > 0.0 { f.render_ms / f.full_ms * 100 } else { 0 }
+          rows += (
+            raw(f.name),
+            [#calc.round(f.read_ms, digits: 2)],
+            [#calc.round(f.render_ms, digits: 2)],
+            [#calc.round(f.full_ms, digits: 2)],
+            [#calc.round(share, digits: 0)%],
+          )
+        }
+      }
+      rows
+    },
+  ),
+  caption: [
+    In-process stage split, median of #stages.iterations runs, for the
+    eight files with the most work to split. Read covers parsing,
+    building, and validation; render is derived as total minus read.
+  ],
+)
+
+Two facts fall out. For the container formats, parsing dominates: an ODT
+or a PPTX spends nine-tenths of its time inside the archive and the XML,
+and the Markdown writer is almost free. The exception proves the model:
+`data.csv` spends three-quarters of its time rendering, because a
+633 KiB CSV becomes one enormous Markdown table whose column alignment
+is exactly the work anydoc skips. The loss in the previous section and
+the render share in this table are the same fact seen from two sides.
+
 == Reading it honestly
 
 A benchmark this favorable deserves its caveats stated plainly.

@@ -47,9 +47,16 @@ pub const Conversion = struct {
     reports: []const Report,      // every diagnostic, structured
     manifest_json: ?[]const u8,   // canonical JSON; null on failure
     exit_class: report.ExitClass, // .conversion, .usage, or .limit
+    stream: StreamState,          // what a .writer output received
     arena_state: std.heap.ArenaAllocator.State,
 };
 ```
+
+`stream` answers a question only streamed output can raise: did the
+caller's writer receive nothing, a partial prefix, or the complete
+artifact? A failed streamed conversion is thereby distinguishable from
+a successful conversion of an empty document. Path output reports
+`.none`; its transactional commit makes the question moot.
 
 #definition([The never-fails-out contract], [
   `convert` returns a value in every case: success, malformed input, limit
@@ -124,7 +131,8 @@ pub const ConvertOptions = struct {
     to: ?[]const u8 = null,     // explicit output format
     limits: Limits = .{},       // every resource bound, overridable
     overwrite: bool = false,    // replace existing artifact + manifest
-    strict: bool = false,       // warnings fail before anything commits
+    strict: Strictness = .off,  // graded refusal of declared loss
+    preserve_facets: bool = false, // full facet rows in the manifest
     pipeline: ?*const Pipeline = null,
 };
 ```
@@ -137,10 +145,14 @@ carries it. Path output is transactional: temp files first, then the
 artifact renamed into place, then extracted media, then the manifest. A
 crash never leaves a half-converted file under the destination name.
 
-#warning([Strict means strict before commit], [
-  With `.strict = true` a warning fails the conversion before the artifact
-  is committed, not after. A pipeline that must never publish lossy output
-  gets a hard guarantee, not a log line after the fact.
+#warning([Strict is graded, and strict before commit], [
+  `Strictness` has four values. `.off` converts and reports. `.content`
+  refuses when the priced plan would drop semantic content.
+  `.structure` also refuses structural degradation, and `.exact`
+  refuses any declared loss at all, styling included. Every grade is
+  checked against the writer's lowering plan before the artifact is
+  committed, so a pipeline that must never publish lossy output gets a
+  hard guarantee, not a log line after the fact.
 ])
 
 == Bundles: bring only the formats you need
@@ -363,12 +375,43 @@ leaks a half-rebuilt document into your error path. You get `.status ==
   discovery section.
 ])
 
+== Reading facets
+
+A filter or an embedding application that wants more than flow can ask
+the document for its facets. The lookup is two steps, both cheap: node
+to entity, entity to facet row. A node without facets has no entity and
+the first step answers null, which is the whole cost of facets to code
+that ignores them.
+
+```zig
+if (doc.blockEntity(index)) |entity| {
+    if (doc.gridOf(entity)) |cell| {
+        // cell.sheet, cell.row, cell.col, cell.formula, cell.cached
+    }
+    for (doc.revisionsOf(entity)) |revision| {
+        // revision.kind, revision.author, revision.timestamp
+    }
+}
+```
+
+Five accessors cover the five kinds: `provenanceOf`, `styleOf`,
+`layoutOf`, and `gridOf` return at most one row; `revisionsOf` returns
+a slice, because one span can carry an insertion and a comment at once.
+Layout coordinates are EMU from a top-left origin regardless of source
+format; the reader that attached them already did the arithmetic.
+Extracted binary content lives in the resource store,
+`doc.store.resources`, each entry carrying its source name, MIME type,
+bytes, and a BLAKE3 digest computed at registration.
+
 == The manifest as an integration surface
 
 Every path conversion commits `<output>.zenfmt.json` beside the artifact.
 Every streamed conversion returns the same bytes in `manifest_json`. The
-encoding is canonical JSON: UTF-8, sorted keys, shortest numbers, no
-whitespace. Two identical conversions are byte-identical, so a digest of
+encoding is the zenfmt canonical JSON profile: UTF-8, bytewise-sorted
+keys, exact integers, no whitespace. It is deliberately not RFC 8785,
+which orders keys by UTF-16 code units and forces every number through
+a double; the profile is specified in `core/src/json.zig` and pinned by
+goldens. Two identical conversions are byte-identical, so a digest of
 the manifest is meaningful.
 
 #table(
@@ -381,6 +424,11 @@ the manifest is meaningful.
   [`ast`], [The tree schema name and version the conversion used.],
   [`document_metadata`], [The document's own metadata (title, authors, and
     so on) in the canonical metadata encoding.],
+  [`facets`], [Present only when the document carries facets: one entry
+    per kind with a row count, a digest of the canonical rows, and an
+    `unused` marker saying whether the selected writer consumed the
+    kind. With `preserve_facets` the full rows ride along, so a later
+    same-family writer can recover them without the source.],
   [`media`], [Present only when media was extracted: one entry per
     committed file under `<stem>_media/`, path plus BLAKE3-256 digest.],
   [`reports`], [Every diagnostic, structured: code, severity, loss tier,

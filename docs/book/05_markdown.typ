@@ -7,9 +7,10 @@
   By the end of this chapter you should be able to state the writer's
   determinism rules from memory and predict which characters get escaped
   at a given position. You should be able to explain how a trailing space
-  escapes a bold span without breaking CommonMark. You should be able to
-  walk the emphasis delimiter algorithm over a small input, and prove,
-  with two commands, that Markdown round-trips to a fixed point.
+  escapes a bold span without breaking CommonMark, read the writer's
+  capability declaration and price a document's losses from the rule
+  table, choose the right `--strict` grade for a job, and prove, with
+  two commands, that Markdown round-trips to a fixed point.
 ])
 
 zenfmt ships nineteen readers and exactly one writer. The asymmetry is
@@ -172,6 +173,100 @@ happens to store them: inline for ODT and RTF, in a separate part for
 DOCX. The tree always carries them deferred. What Markdown cannot express
 at all, `underline` and `small_caps`, renders as its plain content with
 one aggregated `markdown.style-dropped` note.
+
+== What the writer declares
+
+Until ZDS 0013 the writer's losses were correct but implicit: the
+underline rule lived in one function, the nested-table rule in another,
+and only the code said which constructs degrade. The writer now states
+its position once, at compile time, in
+`formats/markdown/src/capabilities.zig`:
+
+```zig
+pub const capabilities: lowering.Capabilities = .{
+    .exact_blocks = &.{ .plain, .paragraph, .heading, .quote, ... },
+    .lowered_blocks = &.{ .raw_block, .table, .definition_list, ... },
+    .exact_inlines = &.{ .text, .emphasis, .strong, .link, ... },
+    .lowered_inlines = &.{ .underline, .small_caps, .raw, ... },
+    .rules = &rules,   // the priced degradations below
+};
+```
+
+The declaration is total, and totality is checked where lies are
+cheapest to catch. Every kernel tag must appear in exactly one of
+exact, lowered, or refused, or the bundle does not compile. When a new
+tag joins the schema table of Chapter 2, this file refuses to build
+until the writer decides what it will do about it. The mapping-table
+obligation that ZDS 0001 places on readers now has its mirror on the
+writer side.
+
+== Pricing the losses
+
+Each degradation is a rule with a stable name, a diagnostic, and a cost
+on the loss vector of ZDS 0013: component one counts dropped content,
+component two structural degradation, component three style and
+metadata loss. The ten rules:
+
+#table(
+  columns: (2fr, 1.4fr, 2.6fr),
+  table.header([*Rule*], [*Costs*], [*Report code*]),
+  [`raw-dropped`], [content], [`markdown.raw-dropped`],
+  [`nested-table`], [content], [`markdown.nested-table-dropped`],
+  [`cell-flattened`], [structure], [`markdown.table-cell-flattened`],
+  [`cell-span`], [structure], [`markdown.cell-span-degraded`],
+  [`definition-list`], [structure], [`markdown.definition-list-degraded`],
+  [`style-dropped`], [style], [`markdown.style-dropped`],
+  [`extension-fallback`], [style], [`markdown.extension-fallback`],
+  [`citation-dropped`], [style], [`markdown.citation-dropped`],
+  [`number-style`], [style], [`markdown.list-number-style-degraded`],
+  [`container-attrs`], [style], [`markdown.container-attributes-dropped`],
+)
+
+The rendering code did not move. Where the writer used to report a loss
+directly, it now records a hit against the rule, and the engine's plan
+accumulator prices the hits and flushes one aggregated report per fired
+rule, in first-hit order, with the count. The refactor was verified
+byte-for-byte: same artifacts, same reports, same manifests, across the
+whole benchmark corpus. What changed is that the losses now have prices
+the engine can act on before writing anything.
+
+#definition([Loss taxonomy], [
+  ZDS 0013 names five outcomes for any construct: equality,
+  normalization (equal meaning, canonical spelling), degradation (some
+  meaning lost, priced and reported), omission (a subtree dropped), and
+  refusal (no output at all). Every rule above is a priced degradation
+  or omission. Nothing is lost silently, and nothing lost is called
+  equal.
+])
+
+== Strict, in three grades
+
+The prices exist so refusal can be a policy instead of a feeling.
+`--strict` gates the conversion on the aggregated cost, in three
+grades:
+
+#table(
+  columns: (2fr, 3fr),
+  table.header([*Flag*], [*Refuses when*]),
+  [`--strict` or `--strict=content`],
+  [Any semantic content would drop: raw fragments, nested tables, or a
+    reader-side dropped construct.],
+  [`--strict=structure`],
+  [Content loss, or structural degradation: flattened cells, degraded
+    spans, definition lists.],
+  [`--strict=exact`],
+  [Any degradation at all. The plan must be pure exact emission.],
+)
+
+The gate runs before emission. The engine performs a dry run into a
+discarding writer, prices the plan it would select, adds the losses the
+reader already reported, and tests the grade. A refused conversion
+emits `core.strict-refused` and commits nothing: no artifact, no
+manifest, not a byte on a stream. A writer may also refuse a construct
+in every mode by listing it in its capabilities; the engine then fails
+the conversion with `core.construct-refused` before planning at all.
+Markdown refuses nothing, degrades much, and prices everything, which
+is the honest posture for a plain-text target.
 
 == The reader: the writer's sparring partner
 

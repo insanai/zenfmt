@@ -68,8 +68,13 @@ from the command line, with one exception explained below.
       manifest],
     [`max_report_samples`], [4], [locations one aggregated report lists
       before counting the rest],
-    [`max_media_files`], [256], [media files a reader may extract],
-    [`max_media_bytes`], [128 MiB], [total extracted media bytes],
+    [`max_resources`], [256], [resources a reader may extract],
+    [`max_resource_bytes`], [128 MiB], [total extracted resource bytes],
+    [`max_nodes`], [16 Mi], [kernel nodes per document],
+    [`max_facet_rows`], [1 Mi], [facet rows across all tables],
+    [`max_decoded_text_bytes`], [256 MiB], [decoded text pool bytes],
+    [`max_lowering_alternatives`], [8], [lowering alternatives per construct],
+    [`max_lowering_work`], [64 Mi], [rule applications per conversion],
   ),
 )
 
@@ -77,6 +82,21 @@ The exception: `max_depth` and `max_xml_depth` may be raised only to
 4,096, the hard cap that sizes every fixed walker stack in the binary.
 An override above the cap is refused as an invalid value. There is no
 flag that turns a bounded stack into an unbounded one.
+
+The last five rows are IR v2's additions (ZDS 0013). `max_nodes` and
+`max_decoded_text_bytes` bound the kernel itself, so a small compressed
+input cannot decode into an unbounded tree or text pool. A facet bomb,
+one paragraph carrying a million annotations, dies at `max_facet_rows`
+as a refusal rather than an allocation storm; the erasure axiom makes
+this safe, because no facet can change what renders. The two lowering
+limits cap the writer's planning work under hostile rule interactions.
+
+Memory has one more bound worth knowing. Since the InputMode repair, a
+ZIP-backed format read from a file is never held in memory whole: the
+reader windows the central directory and each entry separately, so peak
+memory is the directory plus one expanding entry, not the archive
+beside its expansion. Piped input for those formats spills to a
+temporary file first for the same reason.
 
 == Bombs are a budget problem
 
