@@ -17,7 +17,7 @@ fn readFixture(ctx: *core.ReadContext) core.ReadError!void {
     try ctx.out.text("a diagram");
     ctx.out.endInline(image);
     ctx.out.endBlock(paragraph);
-    try ctx.out.media("embedded:pic", png_bytes, "image/png");
+    _ = try ctx.out.resource("embedded:pic", png_bytes, "image/png");
 }
 
 const fixture_reader = core.Reader(.{

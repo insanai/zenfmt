@@ -102,6 +102,48 @@ fn convertDocx(gpa: std.mem.Allocator, bytes: []const u8, out: *std.Io.Writer) z
     });
 }
 
+test "a file-backed docx converts identically to its bytes" {
+    const gpa = testing.allocator;
+    const io = testing.io;
+    const bytes = try buildDocx(gpa);
+    defer gpa.free(bytes);
+
+    var bytes_buffer: [16 * 1024]u8 = undefined;
+    var bytes_out = std.Io.Writer.fixed(&bytes_buffer);
+    var from_bytes = convertDocx(gpa, bytes, &bytes_out);
+    defer from_bytes.deinit(gpa);
+    try testing.expectEqual(zenfmt.Status.success, from_bytes.status);
+
+    // The same archive through the seekable file path: the reader windows
+    // the file (ZDS 0013), and the output does not change by one byte.
+    const dir = ".zig-cache/tmp/zenfmt-input-file";
+    const cwd = std.Io.Dir.cwd();
+    cwd.deleteTree(io, dir) catch {};
+    try cwd.createDirPath(io, dir);
+    defer cwd.deleteTree(io, dir) catch {};
+    const path = dir ++ "/report.docx";
+    try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
+
+    var file_buffer: [16 * 1024]u8 = undefined;
+    var file_out = std.Io.Writer.fixed(&file_buffer);
+    var from_file = zenfmt.convert(gpa, io, .{
+        .input = .{ .path = path },
+        .output = .{ .writer = &file_out },
+    });
+    defer from_file.deinit(gpa);
+    try testing.expectEqual(zenfmt.Status.success, from_file.status);
+    try testing.expectEqualStrings(bytes_out.buffered(), file_out.buffered());
+    // Same source digest in both manifests: the streamed file digest
+    // matches the slice digest.
+    const needle = "\"source\":{\"digest\"";
+    const bytes_tail = std.mem.indexOf(u8, from_bytes.manifest_json.?, needle).?;
+    const file_tail = std.mem.indexOf(u8, from_file.manifest_json.?, needle).?;
+    try testing.expectEqualStrings(
+        from_bytes.manifest_json.?[bytes_tail..][0..120],
+        from_file.manifest_json.?[file_tail..][0..120],
+    );
+}
+
 test "a real-shaped docx converts to the expected markdown" {
     const gpa = testing.allocator;
     const bytes = try buildDocx(gpa);
