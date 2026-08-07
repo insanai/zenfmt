@@ -36,10 +36,11 @@ const flags = [_]Flag{
     .{ .long = "--stdout", .help = "Write the document to stdout instead of a file." },
     .{ .long = "--metadata-out", .value = "PATH", .help = "Persist the manifest produced with --stdout." },
     .{ .long = "--overwrite", .help = "Replace existing artifact and manifest paths." },
+    .{ .long = "--preserve-facets", .help = "Serialize full facet rows into the manifest." },
     .{ .long = "--filters", .help = "Run the pipeline compiled into this binary." },
     .{ .long = "--list-formats", .help = "Print the registry's readers and writers." },
     .{ .long = "--list-filters", .help = "Print the filters compiled into this binary." },
-    .{ .long = "--strict", .help = "Promote warnings to errors; exit non-zero." },
+    .{ .long = "--strict", .help = "Refuse declared loss; grades: content (default), structure, exact." },
     .{ .long = "--quiet", .help = "Suppress notes." },
     .{ .long = "--reports", .value = "FORM", .help = "text (default) or json." },
     .{ .long = "--limit", .value = "NAME=VALUE", .help = "Override one resource limit." },
@@ -86,10 +87,11 @@ const Cli = struct {
     to_stdout: bool = false,
     metadata_out: ?[]const u8 = null,
     overwrite: bool = false,
+    preserve_facets: bool = false,
     filters: bool = false,
     list_formats: bool = false,
     list_filters: bool = false,
-    strict: bool = false,
+    strict: zenfmt.Strictness = .off,
     quiet: bool = false,
     reports_form: ReportForm = .text,
     show_help: bool = false,
@@ -167,7 +169,9 @@ fn run(
         return exit_usage;
     };
 
-    const options = (try buildOptions(arena, io, validated, cli, out, err_out)) orelse
+    var spill_path: ?[]const u8 = null;
+    defer if (spill_path) |path| Io.Dir.cwd().deleteFile(io, path) catch {};
+    const options = (try buildOptions(arena, io, validated, cli, out, err_out, &spill_path)) orelse
         return exit_usage;
 
     var options_with_pipeline = options;
@@ -235,7 +239,9 @@ fn parseArgs(argv: []const []const u8, cli: *Cli, parse_error: *?UsageError) voi
         const inline_value = if (equals) |index| arg[index + 1 ..] else null;
 
         const value: ?[]const u8, const consumed_next: bool = blk: {
-            if (!flagTakesValue(name)) break :blk .{ null, false };
+            // A flag that takes no value still accepts an inline one when
+            // it is graded, like `--strict=exact`; `applyFlag` decides.
+            if (!flagTakesValue(name)) break :blk .{ inline_value, false };
             if (inline_value) |v| break :blk .{ v, false };
             if (i + 1 < argv.len) break :blk .{ argv[i + 1], true };
             parse_error.* = .{
@@ -279,6 +285,9 @@ fn applyFlag(cli: *Cli, name: []const u8, value: ?[]const u8) bool {
         cli.metadata_out = value.?;
     } else if (matches(name, "--overwrite", null)) {
         cli.overwrite = true;
+    } else if (matches(name, "--preserve-facets", null)) {
+        if (value != null) return false;
+        cli.preserve_facets = true;
     } else if (matches(name, "--filters", null)) {
         cli.filters = true;
     } else if (matches(name, "--list-formats", null)) {
@@ -286,8 +295,13 @@ fn applyFlag(cli: *Cli, name: []const u8, value: ?[]const u8) bool {
     } else if (matches(name, "--list-filters", null)) {
         cli.list_filters = true;
     } else if (matches(name, "--strict", null)) {
-        cli.strict = true;
+        if (value) |grade| {
+            cli.strict = zenfmt.Strictness.parse(grade) orelse return false;
+        } else {
+            cli.strict = .content;
+        }
     } else if (matches(name, "--quiet", null)) {
+        if (value != null) return false;
         cli.quiet = true;
     } else if (matches(name, "--reports", null)) {
         if (std.mem.eql(u8, value.?, "json")) {
@@ -351,6 +365,17 @@ fn validate(cli: *Cli, usage_error: *?UsageError) ?Validated {
     return .{ .input = input, .stdin = stdin };
 }
 
+/// True when the `--from` format's reader wants seekable input, so a
+/// stdin conversion spills to a temporary file.
+fn stdinSpillsToFile(from: []const u8) bool {
+    for (zenfmt.Default.readers) |descriptor| {
+        if (std.mem.eql(u8, descriptor.format, from)) {
+            return descriptor.input == .seekable;
+        }
+    }
+    return false;
+}
+
 fn buildOptions(
     arena: std.mem.Allocator,
     io: Io,
@@ -358,6 +383,7 @@ fn buildOptions(
     cli: Cli,
     out: *Io.Writer,
     err_out: *Io.Writer,
+    spill_path: *?[]const u8,
 ) !?zenfmt.ConvertOptions {
     const input_spec: zenfmt.InputSpec = if (validated.stdin) blk: {
         var stdin_buffer: [16 * 1024]u8 = undefined;
@@ -372,6 +398,24 @@ fn buildOptions(
             },
             else => return err,
         };
+        // A seekable format spills to a temporary file (ZDS 0013, Core
+        // Contract Repairs): the reader windows the file instead of the
+        // engine holding the pipe's whole contents twice.
+        if (stdinSpillsToFile(cli.from.?)) {
+            var suffix: [8]u8 = undefined;
+            io.random(&suffix);
+            const path = try std.fmt.allocPrint(
+                arena,
+                ".zenfmt-stdin-{x}.tmp",
+                .{&suffix},
+            );
+            Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes }) catch {
+                try err_out.writeAll("zenfmt: could not spill stdin to a temporary file\n");
+                return null;
+            };
+            spill_path.* = path;
+            break :blk .{ .path = path };
+        }
         break :blk .{ .bytes = .{ .name = "stdin", .data = bytes } };
     } else .{ .path = validated.input };
 
@@ -392,6 +436,7 @@ fn buildOptions(
         .to = cli.to,
         .limits = cli.limits,
         .overwrite = cli.overwrite,
+        .preserve_facets = cli.preserve_facets,
         .strict = cli.strict,
     };
 }

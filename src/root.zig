@@ -18,6 +18,7 @@ pub const Conversion = core.Conversion;
 pub const InputSpec = core.InputSpec;
 pub const OutputSpec = core.OutputSpec;
 pub const Status = core.Status;
+pub const Strictness = core.Strictness;
 pub const Limits = core.Limits;
 pub const Document = core.Document;
 pub const BlockTag = core.BlockTag;
@@ -38,6 +39,10 @@ pub const limits = core.limits;
 pub const ast = core.ast;
 pub const manifest = core.manifest;
 pub const builder = core.builder;
+pub const payload = core.payload;
+pub const schema = core.schema;
+pub const facets = core.facets;
+pub const lowering = core.lowering;
 
 test {
     _ = @import("default_bundle.zig");
