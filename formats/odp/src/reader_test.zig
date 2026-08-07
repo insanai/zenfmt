@@ -49,6 +49,7 @@ const content_prefix =
     \\  xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
     \\  xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
     \\  xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+    \\  xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
     \\  xmlns:xlink="http://www.w3.org/1999/xlink">
 ;
 
@@ -270,4 +271,30 @@ test "lists inside slides keep their structure" {
     };
     try testing.expectEqual(@as(u32, 1), lists);
     try testing.expectEqual(@as(u32, 2), items);
+}
+
+test "frame geometry attaches as a slide layout facet in exact EMU" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const result = try convertOdp(arena, content_prefix ++
+        \\<office:body><office:presentation>
+        \\<draw:page draw:name="Overview">
+        \\<draw:frame presentation:class="title" svg:x="1in" svg:y="2.54cm"
+        \\ svg:width="25.4mm" svg:height="72pt">
+        \\<draw:text-box><text:p>Placed title</text:p></draw:text-box>
+        \\</draw:frame>
+        \\</draw:page>
+        \\</office:presentation></office:body></office:document-content>
+    );
+
+    const rows = result.doc.store.layout_facets.items;
+    try testing.expectEqual(@as(usize, 1), rows.len);
+    try testing.expectEqual(core.facets.Surface.slide, rows[0].surface);
+    try testing.expectEqual(@as(u32, 0), rows[0].surface_index);
+    try testing.expectEqual(@as(i32, 914400), rows[0].x);
+    try testing.expectEqual(@as(i32, 914400), rows[0].y);
+    try testing.expectEqual(@as(i32, 914400), rows[0].width);
+    try testing.expectEqual(@as(i32, 914400), rows[0].height);
 }

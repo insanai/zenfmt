@@ -19,7 +19,7 @@ const missingPartReport = reports_mod.missingPartReport;
 
 pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport(err, ctx.input_name));
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -68,6 +68,7 @@ pub fn read(ctx: *core.ReadContext) core.ReadError!void {
         .styles = &styles,
         .numbering = &numbering,
         .rels = &rels,
+        .archive = &archive,
     };
     defer machine.deinit();
 

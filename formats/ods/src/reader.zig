@@ -32,7 +32,7 @@ const max_rows_per_sheet = 65536;
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -66,6 +66,12 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
 const Cell = struct {
     text: []const u8,
     has_formula: bool = false,
+    /// Grid facet fields (ZDS 0013), carried from parse to emission.
+    formula: []const u8 = "",
+    value_type: core.facets.ValueType = .empty,
+    cached: []const u8 = "",
+    merge_rows: u16 = 1,
+    merge_cols: u16 = 1,
 };
 
 const Machine = struct {
@@ -87,6 +93,9 @@ const Machine = struct {
     cell_time: []const u8 = "",
     cell_boolean: []const u8 = "",
     cell_has_formula: bool = false,
+    cell_formula: []const u8 = "",
+    cell_merge_rows: u16 = 1,
+    cell_merge_cols: u16 = 1,
     text_buffer: std.ArrayList(u8) = .empty,
 
     formula_noted: bool = false,
@@ -182,6 +191,9 @@ const Machine = struct {
         m.cell_time = "";
         m.cell_boolean = "";
         m.cell_has_formula = false;
+        m.cell_formula = "";
+        m.cell_merge_rows = 1;
+        m.cell_merge_cols = 1;
         m.text_buffer.clearRetainingCapacity();
         for (element.attributes) |attribute| {
             const a = attribute.name;
@@ -200,6 +212,13 @@ const Machine = struct {
                 m.cell_boolean = try m.arena.dupe(u8, attribute.value);
             } else if (a.is(table_ns, "formula")) {
                 m.cell_has_formula = true;
+                m.cell_formula = try m.arena.dupe(u8, attribute.value);
+            } else if (a.is(table_ns, "number-rows-spanned")) {
+                const count = std.fmt.parseInt(u16, attribute.value, 10) catch 1;
+                m.cell_merge_rows = @max(count, 1);
+            } else if (a.is(table_ns, "number-columns-spanned")) {
+                const count = std.fmt.parseInt(u16, attribute.value, 10) catch 1;
+                m.cell_merge_cols = @max(count, 1);
             }
         }
         if (element.self_closing) {
@@ -234,11 +253,29 @@ const Machine = struct {
             m.formula_noted = true;
             try m.ctx.reports.add(formulaNote());
         }
-        const cell: Cell = .{ .text = text, .has_formula = m.cell_has_formula };
+        const cell: Cell = .{
+            .text = text,
+            .has_formula = m.cell_has_formula,
+            .formula = m.cell_formula,
+            .value_type = gridValueType(m.cell_value_type, text),
+            .cached = m.cachedSpelling(text),
+            .merge_rows = m.cell_merge_rows,
+            .merge_cols = m.cell_merge_cols,
+        };
         var i: u32 = 0;
         while (i < m.cell_repeat and m.row.items.len < max_cells_per_row) : (i += 1) {
             try m.row.append(m.arena, cell);
         }
+    }
+
+    /// The cached value exactly as the source spelled it: the typed
+    /// attribute when present, the displayed text otherwise.
+    fn cachedSpelling(m: *Machine, text: []const u8) []const u8 {
+        if (m.cell_value.len > 0) return m.cell_value;
+        if (m.cell_date.len > 0) return m.cell_date;
+        if (m.cell_time.len > 0) return m.cell_time;
+        if (m.cell_boolean.len > 0) return m.cell_boolean;
+        return text;
     }
 
     /// Typed attributes are canonical and deterministic; the displayed
@@ -316,6 +353,21 @@ const Machine = struct {
             while (column < columns) : (column += 1) {
                 const text = if (column < cells.len) cells[column].text else "";
                 const cell = try ctx.out.beginTableCell(.plain);
+                if (column < cells.len and
+                    (cells[column].text.len > 0 or cells[column].has_formula))
+                {
+                    const data = cells[column];
+                    try ctx.out.attachGrid(cell, .{
+                        .sheet = m.sheet_name,
+                        .row = @intCast(row_index),
+                        .col = @intCast(column),
+                        .value_type = data.value_type,
+                        .formula = data.formula,
+                        .cached = data.cached,
+                        .merge_rows = data.merge_rows,
+                        .merge_cols = data.merge_cols,
+                    });
+                }
                 const plain = try ctx.out.beginPlain();
                 if (text.len > 0) try ctx.out.text(text);
                 ctx.out.endBlock(plain);
@@ -328,6 +380,20 @@ const Machine = struct {
         ctx.out.endBlock(table);
     }
 };
+
+/// The facet's value type (ZDS 0013) from ODF's `office:value-type`.
+fn gridValueType(kind: []const u8, text: []const u8) core.facets.ValueType {
+    if (std.mem.eql(u8, kind, "float") or
+        std.mem.eql(u8, kind, "percentage") or
+        std.mem.eql(u8, kind, "currency"))
+    {
+        return .number;
+    }
+    if (std.mem.eql(u8, kind, "date") or std.mem.eql(u8, kind, "time")) return .date;
+    if (std.mem.eql(u8, kind, "boolean")) return .boolean;
+    if (text.len == 0) return .empty;
+    return .text;
+}
 
 /// `PT13H30M5S` becomes `13:30:05`; anything else is left to the caller.
 fn formatDuration(arena: std.mem.Allocator, value: []const u8) ![]const u8 {
@@ -536,6 +602,41 @@ test "typed cells resolve through office attributes" {
     };
     try testing.expectEqual(@as(u32, 1), heads);
     try testing.expectEqual(@as(u32, 3), rows);
+}
+
+test "grid facets carry coordinates, formulas, and merges" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const result = try convertOds(arena, content_prefix ++
+        \\<table:table table:name="Calc">
+        \\<table:table-row>
+        \\<table:table-cell office:value-type="float" office:value="2"/>
+        \\<table:table-cell table:number-columns-spanned="2"
+        \\  office:value-type="string"><text:p>wide</text:p></table:table-cell>
+        \\<table:covered-table-cell/>
+        \\</table:table-row>
+        \\<table:table-row>
+        \\<table:table-cell table:formula="of:=SUM([.A1])"
+        \\  office:value-type="float" office:value="2"/>
+        \\</table:table-row>
+        \\</table:table>
+    ++ content_suffix);
+    try core.ast.validate(&result.doc, .{});
+
+    const store = result.doc.store;
+    const rows = store.grid_facets.items;
+    try testing.expectEqual(@as(usize, 3), rows.len);
+    try testing.expectEqualStrings("Calc", store.textSlice(rows[0].sheet));
+    try testing.expectEqual(core.facets.ValueType.number, rows[0].value_type);
+    try testing.expectEqualStrings("2", store.textSlice(rows[0].cached));
+    try testing.expectEqual(@as(u16, 2), rows[1].merge_cols);
+    try testing.expectEqual(core.facets.ValueType.text, rows[1].value_type);
+    const formula_row = rows[2];
+    try testing.expectEqual(@as(u32, 1), formula_row.row);
+    try testing.expectEqual(@as(u32, 0), formula_row.col);
+    try testing.expectEqualStrings("of:=SUM([.A1])", store.textSlice(formula_row.formula));
 }
 
 test "repeated filler cells and rows stay bounded" {

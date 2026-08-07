@@ -24,7 +24,7 @@ const r_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationship
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -245,11 +245,14 @@ fn readSheet(
 
     var in_value = false;
     var in_inline_text = false;
+    var in_formula = false;
     var cell_kind: NumberKind = .general;
     var cell_type: enum { number, shared, inline_string, boolean, err } = .number;
     var cell_has_formula = false;
     var value_buffer: std.ArrayList(u8) = .empty;
     defer value_buffer.deinit(arena);
+    var formula_buffer: std.ArrayList(u8) = .empty;
+    defer formula_buffer.deinit(arena);
 
     while (true) {
         const event = parser.next() catch {
@@ -290,6 +293,7 @@ fn readSheet(
                     cell_type = .number;
                     cell_has_formula = false;
                     value_buffer.clearRetainingCapacity();
+                    formula_buffer.clearRetainingCapacity();
                     var declared_column: ?u32 = null;
                     for (element.attributes) |attribute| {
                         if (std.mem.eql(u8, attribute.name.local, "r")) {
@@ -330,6 +334,7 @@ fn readSheet(
                     in_inline_text = !element.self_closing;
                 } else if (element.name.is(main_ns, "f")) {
                     cell_has_formula = true;
+                    in_formula = !element.self_closing;
                 }
             },
             .element_end => |end_name| {
@@ -357,17 +362,35 @@ fn readSheet(
                             formula_noted.* = true;
                             try ctx.reports.add(formulaNote());
                         }
-                        try emitCellText(ctx, text);
+                        // A cell with any content or formula carries its
+                        // grid facet (ZDS 0013): exact coordinates, the
+                        // formula source, and the cached value as spelled.
+                        const grid: ?core.facets.GridData = if (value_buffer.items.len > 0 or
+                            cell_has_formula)
+                            .{
+                                .sheet = name,
+                                .row = row_index,
+                                .col = emitted_in_row,
+                                .value_type = gridValueType(cell_type, cell_kind, value_buffer.items),
+                                .formula = formula_buffer.items,
+                                .cached = value_buffer.items,
+                            }
+                        else
+                            null;
+                        try emitCell(ctx, text, grid);
                         emitted_in_row += 1;
                     }
                 } else if (std.mem.eql(u8, end_name.local, "v")) {
                     in_value = false;
                 } else if (std.mem.eql(u8, end_name.local, "t")) {
                     in_inline_text = false;
+                } else if (std.mem.eql(u8, end_name.local, "f")) {
+                    in_formula = false;
                 }
             },
             .text => |value| {
                 if (in_value or in_inline_text) try value_buffer.appendSlice(arena, value);
+                if (in_formula) try formula_buffer.appendSlice(arena, value);
             },
         }
     }
@@ -379,11 +402,40 @@ fn readSheet(
 }
 
 fn emitCellText(ctx: *core.ReadContext, text: []const u8) core.ReadError!void {
+    try emitCell(ctx, text, null);
+}
+
+fn emitCell(
+    ctx: *core.ReadContext,
+    text: []const u8,
+    grid: ?core.facets.GridData,
+) core.ReadError!void {
     const cell = try ctx.out.beginTableCell(.plain);
+    if (grid) |data| try ctx.out.attachGrid(cell, data);
     const plain = try ctx.out.beginPlain();
     if (text.len > 0) try ctx.out.text(text);
     ctx.out.endBlock(plain);
     ctx.out.endBlock(cell);
+}
+
+/// The facet's value type (ZDS 0013): what the cell holds, judged from the
+/// declared type and the number-format family.
+fn gridValueType(
+    cell_type: anytype,
+    kind: NumberKind,
+    raw: []const u8,
+) core.facets.ValueType {
+    return switch (cell_type) {
+        .shared, .inline_string => .text,
+        .boolean => .boolean,
+        .err => .error_value,
+        .number => if (raw.len == 0)
+            .empty
+        else switch (kind) {
+            .date => .date,
+            .percent, .general => .number,
+        },
+    };
 }
 
 fn cellText(
@@ -568,6 +620,69 @@ test "self-closing rows and cells keep the table balanced" {
     }
     try testing.expectEqual(@as(u32, 3), rows);
     try testing.expectEqual(@as(u32, 6), cells);
+}
+
+test "grid facets carry coordinates, formula source, and cached values" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const workbook =
+        \\<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        \\  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        \\<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>
+        \\</workbook>
+    ;
+    const rels =
+        \\<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        \\<Relationship Id="rId1"
+        \\  Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+        \\  Target="worksheets/sheet1.xml"/>
+        \\</Relationships>
+    ;
+    const sheet =
+        \\<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        \\<sheetData>
+        \\<row r="1"><c r="A1"><v>2</v></c><c r="B1"><v>4</v></c></row>
+        \\<row r="2"><c r="B2"><f>SUM(B1:B1)</f><v>4</v></c></row>
+        \\</sheetData>
+        \\</worksheet>
+    ;
+    const bytes = try ooxml.zip.buildStoredArchive(arena, &.{
+        .{ .name = "xl/workbook.xml", .data = workbook },
+        .{ .name = "xl/_rels/workbook.xml.rels", .data = rels },
+        .{ .name = "xl/worksheets/sheet1.xml", .data = sheet },
+    });
+
+    const store = try arena.create(core.ast.Store);
+    store.* = .{};
+    var b = core.builder.Builder.init(arena, store, .{});
+    const reports = try arena.create(core.Reports);
+    reports.* = core.Reports.init(arena, .{});
+    var ctx: core.ReadContext = .{
+        .gpa = arena,
+        .out = .{ .builder = &b },
+        .input = .{ .bytes = bytes },
+        .input_name = "grid.xlsx",
+        .reports = reports,
+        .manifest_in = null,
+        .limits = .{},
+    };
+    try read(&ctx);
+    const doc = try b.finish();
+    try core.ast.validate(&doc, .{});
+
+    // Three content cells, three facets; the padded gap in row 2 gets none.
+    const rows = store.grid_facets.items;
+    try testing.expectEqual(@as(usize, 3), rows.len);
+    const formula_row = rows[2];
+    try testing.expectEqualStrings("Data", store.textSlice(formula_row.sheet));
+    try testing.expectEqual(@as(u32, 1), formula_row.row);
+    try testing.expectEqual(@as(u32, 1), formula_row.col);
+    try testing.expectEqual(core.facets.ValueType.number, formula_row.value_type);
+    try testing.expectEqualStrings("SUM(B1:B1)", store.textSlice(formula_row.formula));
+    try testing.expectEqualStrings("4", store.textSlice(formula_row.cached));
+    try testing.expectEqual(@as(u16, 1), formula_row.merge_rows);
 }
 
 test "column references and serial dates" {

@@ -41,7 +41,7 @@ const NumberKind = enum { general, date, percent };
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var file = cfb.Cfb.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var file = cfb.Cfb.open(arena, try ctx.inputBytes(), ctx.limits) catch |err| {
         try ctx.reports.add(notCompoundReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -187,6 +187,8 @@ const Cell = struct {
     row: u32,
     col: u32,
     text: []const u8,
+    /// Grid facet value type (ZDS 0013), judged from the record kind.
+    value_type: core.facets.ValueType = .text,
 };
 
 const PendingFormula = struct {
@@ -222,7 +224,12 @@ fn readSheet(
                 pending_formula = null;
                 var cursor = StringCursor{ .iter = &iter, .data = record.data, .pos = 0 };
                 const text = cursor.readString(arena, .sixteen_bit) catch continue;
-                try cells.append(arena, .{ .row = pending.row, .col = pending.col, .text = text });
+                try cells.append(arena, .{
+                    .row = pending.row,
+                    .col = pending.col,
+                    .text = text,
+                    .value_type = .text,
+                });
             },
             rec_labelsst, rec_label, rec_number, rec_rk, rec_mulrk, rec_boolerr, rec_formula => {
                 pending_formula = null;
@@ -253,26 +260,41 @@ fn sheetCell(
             if (data.len < 10) return;
             const isst = readInt(u32, data[6..10]);
             if (isst >= globals.shared.items.len) return;
-            try cells.append(arena, .{ .row = row, .col = col, .text = globals.shared.items[isst] });
+            try cells.append(arena, .{
+                .row = row,
+                .col = col,
+                .text = globals.shared.items[isst],
+                .value_type = .text,
+            });
         },
         rec_label => {
             var cursor = StringCursor{ .iter = iter, .data = data, .pos = 6 };
             const text = cursor.readString(arena, .sixteen_bit) catch return;
-            try cells.append(arena, .{ .row = row, .col = col, .text = text });
+            try cells.append(arena, .{ .row = row, .col = col, .text = text, .value_type = .text });
         },
         rec_number => {
             if (data.len < 14) return;
             const kind = globals.cellKind(readInt(u16, data[4..6]));
             const value: f64 = @bitCast(readInt(u64, data[6..14]));
             const text = try numberText(arena, value, kind, globals.date1904);
-            try cells.append(arena, .{ .row = row, .col = col, .text = text });
+            try cells.append(arena, .{
+                .row = row,
+                .col = col,
+                .text = text,
+                .value_type = numberValueType(kind),
+            });
         },
         rec_rk => {
             if (data.len < 10) return;
             const kind = globals.cellKind(readInt(u16, data[4..6]));
             const value = rkValue(readInt(u32, data[6..10]));
             const text = try numberText(arena, value, kind, globals.date1904);
-            try cells.append(arena, .{ .row = row, .col = col, .text = text });
+            try cells.append(arena, .{
+                .row = row,
+                .col = col,
+                .text = text,
+                .value_type = numberValueType(kind),
+            });
         },
         rec_mulrk => {
             if (data.len < 12) return;
@@ -286,6 +308,7 @@ fn sheetCell(
                     .row = row,
                     .col = first_col + @as(u32, @intCast(i)),
                     .text = text,
+                    .value_type = numberValueType(kind),
                 });
             }
         },
@@ -297,7 +320,12 @@ fn sheetCell(
                 "TRUE"
             else
                 "FALSE";
-            try cells.append(arena, .{ .row = row, .col = col, .text = text });
+            try cells.append(arena, .{
+                .row = row,
+                .col = col,
+                .text = text,
+                .value_type = if (data[7] != 0) .error_value else .boolean,
+            });
         },
         rec_formula => {
             if (data.len < 14) return;
@@ -309,11 +337,13 @@ fn sheetCell(
                         .row = row,
                         .col = col,
                         .text = if (data[8] != 0) "TRUE" else "FALSE",
+                        .value_type = .boolean,
                     }),
                     2 => try cells.append(arena, .{
                         .row = row,
                         .col = col,
                         .text = errorText(data[8]),
+                        .value_type = .error_value,
                     }),
                     else => {
                         if (!formula_noted.*) {
@@ -325,7 +355,12 @@ fn sheetCell(
             } else {
                 const value: f64 = @bitCast(readInt(u64, data[6..14]));
                 const text = try numberText(arena, value, kind, globals.date1904);
-                try cells.append(arena, .{ .row = row, .col = col, .text = text });
+                try cells.append(arena, .{
+                    .row = row,
+                    .col = col,
+                    .text = text,
+                    .value_type = numberValueType(kind),
+                });
             }
         },
         else => unreachable,
@@ -345,6 +380,13 @@ fn rkValue(rk: u32) f64 {
         value = @bitCast(@as(u64, rk & 0xFFFFFFFC) << 32);
     }
     return if (div100) value / 100 else value;
+}
+
+fn numberValueType(kind: NumberKind) core.facets.ValueType {
+    return switch (kind) {
+        .date => .date,
+        .percent, .general => .number,
+    };
 }
 
 fn numberText(
@@ -443,7 +485,19 @@ fn emitSheet(
             if (cell.col >= max_columns) continue;
             while (emitted < cell.col) : (emitted += 1) try emitCellText(ctx, "");
             if (emitted == cell.col) {
-                try emitCellText(ctx, cell.text);
+                // Coordinates in the facet are the record's own, exact
+                // (ZDS 0013); BIFF formula source is not decoded.
+                const grid: ?core.facets.GridData = if (cell.text.len > 0)
+                    .{
+                        .sheet = name,
+                        .row = cell.row,
+                        .col = cell.col,
+                        .value_type = cell.value_type,
+                        .cached = cell.text,
+                    }
+                else
+                    null;
+                try emitCell(ctx, cell.text, grid);
                 emitted += 1;
             }
         }
@@ -457,7 +511,16 @@ fn emitSheet(
 }
 
 fn emitCellText(ctx: *core.ReadContext, text: []const u8) core.ReadError!void {
+    try emitCell(ctx, text, null);
+}
+
+fn emitCell(
+    ctx: *core.ReadContext,
+    text: []const u8,
+    grid: ?core.facets.GridData,
+) core.ReadError!void {
     const cell = try ctx.out.beginTableCell(.plain);
+    if (grid) |data| try ctx.out.attachGrid(cell, data);
     const plain = try ctx.out.beginPlain();
     if (text.len > 0) try ctx.out.text(text);
     ctx.out.endBlock(plain);
@@ -840,6 +903,39 @@ test "a BIFF8 sheet becomes a heading and a typed table" {
     try testing.expect(std.mem.indexOf(u8, text, "cached") != null);
     try testing.expect(std.mem.indexOf(u8, text, "2024-01-15") != null);
     try testing.expect(std.mem.indexOf(u8, text, "TRUE") != null);
+}
+
+test "grid facets carry record coordinates and value types" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const reports = try arena.create(core.Reports);
+    reports.* = core.Reports.init(arena, .{});
+
+    const bytes = try buildWorkbook(arena, false, false);
+    const doc = try convertXls(arena, bytes, reports);
+
+    const store = doc.store;
+    const rows = store.grid_facets.items;
+    try testing.expect(rows.len >= 4);
+    // Every facet names the sheet, and each carries the value it displays.
+    var saw_number = false;
+    var saw_date = false;
+    var saw_boolean = false;
+    for (rows) |row| {
+        try testing.expectEqualStrings("Data", store.textSlice(row.sheet));
+        try testing.expectEqual(@as(usize, 0), row.formula.len);
+        try testing.expect(row.cached.len > 0);
+        switch (row.value_type) {
+            .number => saw_number = true,
+            .date => saw_date = true,
+            .boolean => saw_boolean = true,
+            else => {},
+        }
+    }
+    try testing.expect(saw_number);
+    try testing.expect(saw_date);
+    try testing.expect(saw_boolean);
 }
 
 test "FILEPASS and pre-BIFF8 workbooks are refusals with their own codes" {

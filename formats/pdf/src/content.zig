@@ -100,6 +100,10 @@ pub const Machine = struct {
     limits: core.Limits,
 
     lines: std.ArrayList(Line) = .empty,
+    /// Page heights in points, indexed by page number, recorded from each
+    /// page's (inherited) MediaBox so layout facets can flip the bottom-up
+    /// y axis to the top-left origin (ZDS 0013).
+    page_heights: std.ArrayList(f64) = .empty,
     /// Fonts cached by their dictionary's object number; direct dicts get
     /// per-page instances.
     font_cache: std.AutoHashMapUnmanaged(u32, *fonts.Font) = .empty,

@@ -58,6 +58,25 @@ pub fn projectionNote() core.Report {
     };
 }
 
+pub fn mediaLimitNote() core.Report {
+    return .{
+        .severity = .note,
+        .code = "pptx.media-limit",
+        .title = "MEDIA EXTRACTION STOPPED AT THE LIMIT",
+        .problem = "This deck embeds more picture data than the media " ++
+            "limits allow to be extracted.",
+        .consequence = "Pictures past the limit keep their archive path " ++
+            "references; their bytes were not extracted.",
+        .loss = .degraded,
+        .directions = &.{.{
+            .title = "Raise the limit",
+            .explanation = "Raise --limit max_resources or " ++
+                "--limit max_resource_bytes if the remaining pictures " ++
+                "matter.",
+        }},
+    };
+}
+
 pub fn mergedCellNote() core.Report {
     return .{
         .severity = .note,

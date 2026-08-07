@@ -52,7 +52,7 @@ const Package = struct {
 
 pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport(err));
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -113,7 +113,19 @@ pub fn read(ctx: *core.ReadContext) core.ReadError!void {
             continue;
         };
         const bytes = try extract(&archive, arena, entry, ctx);
+        const first_block: u32 = @intCast(ctx.out.builder.store.blocks.len);
         try html.parseFragment(ctx, bytes, dirname(path));
+        if (ctx.out.builder.store.blocks.len > first_block) {
+            // Chapter provenance (ZDS 0013): the spine item's archive
+            // member, bound to the chapter's first block. The HTML
+            // machinery owns emission, so the token is reconstructed from
+            // the recorded index; the block is already complete.
+            try ctx.out.attachProvenance(.{ .index = first_block }, .{
+                .plugin = "ai.insan.zenfmt.epub",
+                .member = path,
+                .confidence = .exact,
+            });
+        }
         chapters += 1;
     }
 

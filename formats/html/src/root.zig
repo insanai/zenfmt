@@ -5,5 +5,6 @@ pub const parseFragment = @import("reader.zig").parseFragment;
 
 test {
     _ = @import("reader.zig");
+    _ = @import("reader_test.zig");
     _ = @import("entities.zig");
 }

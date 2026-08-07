@@ -26,11 +26,12 @@ const fo_ns = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const draw_ns = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const table_ns = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const presentation_ns = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
+const svg_ns = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const xlink_ns = "http://www.w3.org/1999/xlink";
 
 pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -271,6 +272,13 @@ const Machine = struct {
     page_name: []const u8 = "",
     page_heading_done: bool = false,
     in_page: bool = false,
+    /// Zero-based slide index of the open page, and the running counter
+    /// that assigns it; the surface index of layout facets (ZDS 0013).
+    current_slide: u32 = 0,
+    slide_counter: u32 = 0,
+    /// The most recent `draw:frame` geometry, attached to the next
+    /// materialized block; frames without geometry clear it.
+    pending_layout: ?core.facets.LayoutData = null,
 
     in_paragraph: bool = false,
     props: TextProps = .{},
@@ -329,6 +337,9 @@ const Machine = struct {
             m.in_page = true;
             m.page_heading_done = false;
             m.page_name = "";
+            m.current_slide = m.slide_counter;
+            m.slide_counter += 1;
+            m.pending_layout = null;
             for (element.attributes) |attribute| {
                 if (attribute.name.is(draw_ns, "name")) {
                     m.page_name = try m.arena.dupe(u8, attribute.value);
@@ -344,6 +355,7 @@ const Machine = struct {
                     class = attribute.value;
                 }
             }
+            m.pending_layout = frameLayout(element, m.current_slide);
             const is_title = std.mem.eql(u8, class, "title") and !m.page_heading_done;
             return m.push(.{ .kind = if (is_title) .title_frame else .transparent });
         }
@@ -393,6 +405,7 @@ const Machine = struct {
                 .style = .decimal,
                 .delimiter = .period,
             });
+            try m.takePendingLayout(token);
             return m.push(.{ .kind = .list, .block_token = token });
         }
         if (name.is(text_ns, "list-item") or name.is(text_ns, "list-header")) {
@@ -515,6 +528,7 @@ const Machine = struct {
         defer alignments.deinit(m.arena);
         try alignments.appendNTimes(m.arena, .default, 1);
         const token = try m.ctx.out.beginTable(alignments.items);
+        try m.takePendingLayout(token);
         assert(m.table_depth < m.tables.len);
         m.tables[m.table_depth] = .{ .token = token };
         try m.push(.{ .kind = .table, .table_index = m.table_depth });
@@ -590,6 +604,7 @@ const Machine = struct {
             else
                 try m.ctx.out.beginParagraph();
         }
+        try m.takePendingLayout(token);
         m.props = .{};
         if (styleAttribute(element.attributes)) |style_name| {
             if (m.styles.text.get(style_name)) |props| m.props = props;
@@ -610,6 +625,13 @@ const Machine = struct {
         const heading = try m.ctx.out.beginHeading(2);
         try m.ctx.out.text(if (m.page_name.len > 0) m.page_name else "Slide");
         m.ctx.out.endBlock(heading);
+    }
+
+    /// Attaches the pending frame geometry to `token`, once per frame.
+    fn takePendingLayout(m: *Machine, token: core.builder.BlockToken) core.ReadError!void {
+        const layout = m.pending_layout orelse return;
+        m.pending_layout = null;
+        try m.ctx.out.attachLayout(token, layout);
     }
 
     fn ensureStyles(m: *Machine) core.ReadError!void {
@@ -641,6 +663,70 @@ const Machine = struct {
         m.open_props = .{};
     }
 };
+
+/// The layout facet for a `draw:frame`, from its `svg:x`/`svg:y`/
+/// `svg:width`/`svg:height` attributes; null when the frame names no
+/// geometry. Lengths convert exactly to EMU (ZDS 0013, One coordinate
+/// system); ODF's origin is already top-left.
+fn frameLayout(element: xml.ElementStart, slide_index: u32) ?core.facets.LayoutData {
+    var layout: core.facets.LayoutData = .{
+        .surface = .slide,
+        .surface_index = slide_index,
+    };
+    var seen = false;
+    for (element.attributes) |attribute| {
+        if (!std.mem.eql(u8, attribute.name.uri, svg_ns)) continue;
+        const local = attribute.name.local;
+        const emu = lengthToEmu(attribute.value) orelse continue;
+        if (std.mem.eql(u8, local, "x")) {
+            layout.x = emu;
+        } else if (std.mem.eql(u8, local, "y")) {
+            layout.y = emu;
+        } else if (std.mem.eql(u8, local, "width")) {
+            layout.width = @max(0, emu);
+        } else if (std.mem.eql(u8, local, "height")) {
+            layout.height = @max(0, emu);
+        } else {
+            continue;
+        }
+        seen = true;
+    }
+    return if (seen) layout else null;
+}
+
+/// An ODF length like `2.54cm` or `1in` as clamped EMU. The per-unit
+/// factors are exact: cm 360000, mm 36000, in 914400, pt 12700, pc 152400,
+/// px 9525.
+fn lengthToEmu(value: []const u8) ?i32 {
+    var digits_end: usize = 0;
+    while (digits_end < value.len) : (digits_end += 1) {
+        const byte = value[digits_end];
+        const numeric = (byte >= '0' and byte <= '9') or byte == '.' or byte == '-' or byte == '+';
+        if (!numeric) break;
+    }
+    if (digits_end == 0) return null;
+    const number = std.fmt.parseFloat(f64, value[0..digits_end]) catch return null;
+    const unit = value[digits_end..];
+    const per_unit: f64 = if (std.mem.eql(u8, unit, "cm"))
+        360000
+    else if (std.mem.eql(u8, unit, "mm"))
+        36000
+    else if (std.mem.eql(u8, unit, "in"))
+        914400
+    else if (std.mem.eql(u8, unit, "pt"))
+        12700
+    else if (std.mem.eql(u8, unit, "pc"))
+        152400
+    else if (std.mem.eql(u8, unit, "px"))
+        9525
+    else
+        return null;
+    const emu = number * per_unit;
+    if (!std.math.isFinite(emu)) return null;
+    if (emu >= @as(f64, @floatFromInt(std.math.maxInt(i32)))) return std.math.maxInt(i32);
+    if (emu <= @as(f64, @floatFromInt(std.math.minInt(i32)))) return std.math.minInt(i32);
+    return @intFromFloat(@round(emu));
+}
 
 fn styleAttribute(attributes: []const xml.Attribute) ?[]const u8 {
     for (attributes) |attribute| {

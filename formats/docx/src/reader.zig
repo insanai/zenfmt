@@ -138,6 +138,14 @@ pub const Machine = struct {
     style_ids_seen: std.StringHashMapUnmanaged(void) = .empty,
     pending_sdt_tag: ?[]const u8 = null,
 
+    // Facet state (ZDS 0013): the archive for media extraction, the first
+    // body block as the page-layout anchor, and a revision met between
+    // paragraphs.
+    archive: ?*ooxml.zip.Archive = null,
+    first_block_token: ?core.builder.BlockToken = null,
+    layout_attached: bool = false,
+    pending_revision: ?facets_mod.PendingRevision = null,
+
     // Deliberate-omission counters, reported once at the end.
     count_comments: u32 = 0,
     count_deletions: u32 = 0,
@@ -196,6 +204,17 @@ pub const Machine = struct {
     pub fn top(m: *Machine) ?*Frame {
         if (m.depth == 0) return null;
         return &m.frames[m.depth - 1];
+    }
+
+    /// The open paragraph's block token, for facet attachment from run
+    /// context; null between paragraphs.
+    pub fn currentParagraphToken(m: *Machine) ?core.builder.BlockToken {
+        var i = m.depth;
+        while (i > 0) {
+            i -= 1;
+            if (m.frames[i].kind == .paragraph) return m.frames[i].block_token;
+        }
+        return null;
     }
 
     pub fn push(m: *Machine, frame: Frame) core.ReadError!void {
@@ -315,11 +334,16 @@ pub const Machine = struct {
         }
         if (std.mem.eql(u8, local, "del") or std.mem.eql(u8, local, "moveFrom")) {
             m.count_deletions += 1;
+            try facets_mod.onRevision(m, element, .deletion);
             if (!element.self_closing) try m.skipCurrent();
             return;
         }
-        if (std.mem.eql(u8, local, "ins") or std.mem.eql(u8, local, "moveTo") or
-            std.mem.eql(u8, local, "smartTag") or std.mem.eql(u8, local, "body") or
+        if (std.mem.eql(u8, local, "ins") or std.mem.eql(u8, local, "moveTo")) {
+            try facets_mod.onRevision(m, element, .insertion);
+            if (element.self_closing) return;
+            return m.push(.{ .kind = .transparent });
+        }
+        if (std.mem.eql(u8, local, "smartTag") or std.mem.eql(u8, local, "body") or
             std.mem.eql(u8, local, "document"))
         {
             if (element.self_closing) return;
@@ -340,7 +364,7 @@ pub const Machine = struct {
         }
         if (std.mem.eql(u8, local, "sectPr")) {
             m.count_section_properties += 1;
-            if (!element.self_closing) try m.skipCurrent();
+            if (!element.self_closing) try facets_mod.onSectionProperties(m);
             return;
         }
         if (std.mem.eql(u8, local, "proofErr") or std.mem.eql(u8, local, "lastRenderedPageBreak") or
@@ -415,6 +439,7 @@ pub const Machine = struct {
         }
 
         var block_token: ?core.builder.BlockToken = null;
+        var style_facet: ?[]const u8 = null;
         if (props.num) |num| {
             try m.enterListItem(num.id, num.ilvl);
             block_token = try m.ctx.out.beginPlain();
@@ -430,10 +455,20 @@ pub const Machine = struct {
                     block_token = try m.ctx.out.beginHeading(level);
                 } else {
                     try m.style_ids_seen.put(m.arena, try m.arena.dupe(u8, props.style_id), {});
+                    style_facet = props.style_id;
                 }
             }
             if (block_token == null) block_token = try m.ctx.out.beginParagraph();
         }
+
+        // Facets (ZDS 0013): the named style rides beside the kernel node,
+        // the first block anchors the page layout, and a paragraph-level
+        // tracked change stashed by `w:ins` lands here.
+        if (m.first_block_token == null) m.first_block_token = block_token;
+        if (style_facet) |name| {
+            try m.ctx.out.attachStyle(block_token.?, .{ .name = name });
+        }
+        try facets_mod.applyPendingRevision(m, block_token.?);
 
         m.in_paragraph = true;
         m.style_props = .{};
@@ -683,6 +718,7 @@ pub const Machine = struct {
         const token = try m.ctx.out.beginImage(source, "");
         if (description) |alt| try m.ctx.out.text(alt);
         m.ctx.out.endInline(token);
+        try facets_mod.registerImage(m, source);
     }
 
     // ------------------------------------------------------------- lists
@@ -924,8 +960,10 @@ pub const Machine = struct {
     }
 };
 
-// The report constructors live beside the reader in `reports.zig`; the
-// mapping and the diagnostics catalog stay one import apart.
+// The facet and media logic lives in `facets.zig` (ZDS 0013); the report
+// constructors beside the reader in `reports.zig`, so the mapping and the
+// diagnostics catalog stay one import apart.
+const facets_mod = @import("facets.zig");
 const reports_mod = @import("reports.zig");
 const archiveReport = reports_mod.archiveReport;
 const missingPartReport = reports_mod.missingPartReport;

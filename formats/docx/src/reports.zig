@@ -263,3 +263,21 @@ pub fn addCounted(reports: *core.Reports, template: core.Report, count: u32) err
     value.count = count;
     try reports.add(value);
 }
+
+pub fn mediaLimitNote() core.Report {
+    return .{
+        .severity = .note,
+        .code = "docx.media-limit",
+        .title = "MEDIA EXTRACTION STOPPED AT THE LIMIT",
+        .problem = "This document embeds more image data than the " ++
+            "resource limits allow to extract.",
+        .consequence = "Images past the limit keep their in-archive " ++
+            "references; the text converted completely.",
+        .loss = .dropped,
+        .directions = &.{.{
+            .title = "Raise the resource limits if the images matter",
+            .explanation = "Run again with --limit max_resources=N or " ++
+                "--limit max_resource_bytes=N to extract more.",
+        }},
+    };
+}

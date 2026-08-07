@@ -22,6 +22,7 @@ pub const writer = core.Writer(.{
     .format = "markdown",
     .extensions = &.{ "md", "markdown" },
     .write = write,
+    .capabilities = &capabilities_mod.capabilities,
 });
 
 pub fn write(ctx: *core.WriteContext) core.WriteError!void {
@@ -31,6 +32,7 @@ pub fn write(ctx: *core.WriteContext) core.WriteError!void {
         .out = ctx.out,
         .reports = ctx.reports,
         .limits = ctx.limits,
+        .plan = ctx.plan,
     };
     defer renderer.deinit();
     try renderer.renderForest(ctx.doc.body, null);
@@ -42,6 +44,7 @@ const InlineMode = enum { multiline, single_line, table_cell };
 const FrameKind = enum {
     quote,
     container,
+    extension,
     figure,
     caption,
     list,
@@ -69,6 +72,10 @@ const Renderer = struct {
     out: *std.Io.Writer,
     reports: *core.Reports,
     limits: core.Limits,
+    /// The lowering plan (ZDS 0013); every degradation site records its
+    /// rule hit here, and the engine prices and reports the result. Null
+    /// when the writer runs outside the engine: hits then report directly.
+    plan: ?*core.lowering.Plan = null,
 
     prefix: std.ArrayList(u8) = .empty,
     /// Replaces the tail of the prefix on the next written line: a list
@@ -87,6 +94,17 @@ const Renderer = struct {
         r.inline_buffer.deinit(r.gpa);
         r.cell_buffer.deinit(r.gpa);
         r.notes.deinit(r.gpa);
+    }
+
+    /// Records one degradation at an emission site. Under the engine the
+    /// hit lands in the lowering plan, which prices it and flushes one
+    /// aggregated report per rule; standalone, the note reports directly.
+    fn hit(r: *Renderer, id: capabilities_mod.RuleId) core.WriteError!void {
+        if (r.plan) |plan| {
+            plan.hit(@intFromEnum(id));
+        } else {
+            try r.reports.add(capabilities_mod.rules[@intFromEnum(id)].note());
+        }
     }
 
     // -------------------------------------------------------- line output
@@ -207,6 +225,14 @@ const Renderer = struct {
                     try r.push(.container, cursor + subtree_len);
                     cursor += 1;
                 },
+                .extension => {
+                    // Markdown declares no extension namespaces: the
+                    // source-neutral fallback subtree renders and the
+                    // extension identity is reported as a loss.
+                    try r.hit(.extension_fallback);
+                    try r.push(.extension, cursor + subtree_len);
+                    cursor += 1;
+                },
                 .figure => {
                     try r.push(.figure, cursor + subtree_len);
                     cursor += 1;
@@ -293,7 +319,7 @@ const Renderer = struct {
             }
         }
         if (list.style != .decimal and list.kind == .ordered) {
-            try r.reports.add(numberStyleNote());
+            try r.hit(.number_style);
         }
         try r.push(.list, index + r.doc.store.blocks.items(.subtree_len)[index]);
         const frame = &r.frames[r.depth - 1];
@@ -376,7 +402,7 @@ const Renderer = struct {
             var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, r.doc.text(raw.text), "\n"), '\n');
             while (lines.next()) |line| try r.writeLine(line);
         } else {
-            try r.reports.add(rawDroppedNote());
+            try r.hit(.raw_dropped);
         }
         cursor.* = index + 1;
     }
@@ -479,7 +505,7 @@ const Renderer = struct {
             const cell = r.doc.blockAs(cell_index, .table_cell).?;
             if ((cell.col_span > 1 or cell.row_span > 1) and !spans_noted.*) {
                 spans_noted.* = true;
-                try r.reports.add(spanNote());
+                try r.hit(.cell_span);
             }
             try cells.append(r.gpa, try r.renderCellText(cell.blocks));
             var extra: u32 = 1;
@@ -518,7 +544,7 @@ const Renderer = struct {
                 },
                 .table => {
                     try r.cell_buffer.appendSlice(r.gpa, "(nested table)");
-                    try r.reports.add(nestedTableWarning());
+                    try r.hit(.nested_table);
                     flattened = true;
                 },
                 else => {
@@ -542,7 +568,7 @@ const Renderer = struct {
             cursor += lengths[cursor];
         }
         if (block_count > 1 or flattened) {
-            try r.reports.add(cellFlattenedNote());
+            try r.hit(.cell_flattened);
         }
         // A cell is one line: any soft break became a space in table_cell
         // mode already.
@@ -686,9 +712,10 @@ const Renderer = struct {
                     close_text = "~~";
                 },
                 .superscript, .subscript, .underline, .small_caps => {
-                    try r.reports.add(styleDroppedNote(@tagName(view.content)));
+                    try r.hit(.style_dropped);
                 },
                 .span => {},
+                .extension => try r.hit(.extension_fallback),
                 .quote => |quote| {
                     const mark: []const u8 = switch (quote.kind) {
                         .single => "'",
@@ -712,7 +739,7 @@ const Renderer = struct {
                     if (std.mem.eql(u8, format, "markdown") or std.mem.eql(u8, format, "html")) {
                         try r.inline_buffer.appendSlice(r.gpa, r.doc.text(raw.text));
                     } else {
-                        try r.reports.add(rawDroppedNote());
+                        try r.hit(.raw_dropped);
                     }
                 },
                 .link => |target| {
@@ -731,7 +758,7 @@ const Renderer = struct {
                 },
                 .citation => |citation| {
                     _ = citation;
-                    try r.reports.add(citationDroppedNote());
+                    try r.hit(.citation_dropped);
                 },
             }
 
@@ -882,41 +909,11 @@ const Renderer = struct {
     fn reportContainerAttrs(r: *Renderer, index: u32) core.WriteError!void {
         const view = r.doc.block(@enumFromInt(index));
         if (view.attrs == .none) return;
-        try r.reports.add(.{
-            .severity = .note,
-            .code = "markdown.container-attributes-dropped",
-            .title = "CONTAINER ATTRIBUTES DROPPED",
-            .problem = "A container in this document carries an " ++
-                "identifier, classes, or attributes, and Markdown has no " ++
-                "plain syntax for an attributed container.",
-            .consequence = "The container's content was kept; its " ++
-                "attributes were dropped.",
-            .loss = .degraded,
-            .directions = &.{.{
-                .title = "Keep the source",
-                .explanation = "Keep the source document if the container " ++
-                    "roles matter; a future --markdown-divs option will " ++
-                    "emit fenced divs instead.",
-            }},
-        });
+        try r.hit(.container_attrs);
     }
 
     fn reportDefinitionList(r: *Renderer) core.WriteError!void {
-        try r.reports.add(.{
-            .severity = .note,
-            .code = "markdown.definition-list-degraded",
-            .title = "DEFINITION LIST DEGRADED",
-            .problem = "This document contains a definition list, and GFM " ++
-                "has no definition-list syntax.",
-            .consequence = "Each term was emitted as a bold paragraph and " ++
-                "each definition as ordinary paragraphs below it.",
-            .loss = .degraded,
-            .directions = &.{.{
-                .title = "Keep the source",
-                .explanation = "Keep the source document if the exact " ++
-                    "definition-list structure matters downstream.",
-            }},
-        });
+        try r.hit(.definition_list);
     }
 };
 
@@ -964,13 +961,7 @@ fn longestRun(text: []const u8, byte: u8) usize {
     return longest;
 }
 
-// The report constructors live in `writer_reports.zig`; tests in
-// `writer_test.zig`.
-const writer_reports = @import("writer_reports.zig");
-const styleDroppedNote = writer_reports.styleDroppedNote;
-const citationDroppedNote = writer_reports.citationDroppedNote;
-const rawDroppedNote = writer_reports.rawDroppedNote;
-const cellFlattenedNote = writer_reports.cellFlattenedNote;
-const nestedTableWarning = writer_reports.nestedTableWarning;
-const spanNote = writer_reports.spanNote;
-const numberStyleNote = writer_reports.numberStyleNote;
+// The capability declaration and rule table (ZDS 0013) live in
+// `capabilities.zig`; the report constructors in `writer_reports.zig`;
+// tests in `writer_test.zig`.
+const capabilities_mod = @import("capabilities.zig");

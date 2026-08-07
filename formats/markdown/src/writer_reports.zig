@@ -21,6 +21,70 @@ pub fn styleDroppedNote(style: []const u8) core.Report {
     };
 }
 
+/// The rule-table spelling of `styleDroppedNote`: the note ignores which
+/// style fired, so the capability rule needs no argument.
+pub fn styleDroppedRuleNote() core.Report {
+    return styleDroppedNote("");
+}
+
+pub fn containerAttrsNote() core.Report {
+    return .{
+        .severity = .note,
+        .code = "markdown.container-attributes-dropped",
+        .title = "CONTAINER ATTRIBUTES DROPPED",
+        .problem = "A container in this document carries an " ++
+            "identifier, classes, or attributes, and Markdown has no " ++
+            "plain syntax for an attributed container.",
+        .consequence = "The container's content was kept; its " ++
+            "attributes were dropped.",
+        .loss = .degraded,
+        .directions = &.{.{
+            .title = "Keep the source",
+            .explanation = "Keep the source document if the container " ++
+                "roles matter; a future --markdown-divs option will " ++
+                "emit fenced divs instead.",
+        }},
+    };
+}
+
+pub fn definitionListNote() core.Report {
+    return .{
+        .severity = .note,
+        .code = "markdown.definition-list-degraded",
+        .title = "DEFINITION LIST DEGRADED",
+        .problem = "This document contains a definition list, and GFM " ++
+            "has no definition-list syntax.",
+        .consequence = "Each term was emitted as a bold paragraph and " ++
+            "each definition as ordinary paragraphs below it.",
+        .loss = .degraded,
+        .directions = &.{.{
+            .title = "Keep the source",
+            .explanation = "Keep the source document if the exact " ++
+                "definition-list structure matters downstream.",
+        }},
+    };
+}
+
+pub fn extensionFallbackNote() core.Report {
+    return .{
+        .severity = .note,
+        .code = "markdown.extension-fallback",
+        .title = "EXTENSION LOWERED TO FALLBACK",
+        .problem = "This document carries a namespaced plugin extension " ++
+            "construct that the Markdown writer does not understand.",
+        .consequence = "The extension's source-neutral fallback content " ++
+            "was written; the extension identity and any behavior it " ++
+            "implied were dropped.",
+        .loss = .degraded,
+        .directions = &.{.{
+            .title = "Keep the source",
+            .explanation = "Keep the source document, or convert with a " ++
+                "writer that declares this extension namespace, if the " ++
+                "construct itself matters downstream.",
+        }},
+    };
+}
+
 pub fn citationDroppedNote() core.Report {
     return .{
         .severity = .note,

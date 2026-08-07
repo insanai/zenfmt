@@ -138,6 +138,19 @@ test "a two-chapter book converts in spine order with metadata" {
         if (std.mem.eql(u8, item.code, "epub.skipped-spine-item")) noted = true;
     }
     try testing.expect(noted);
+
+    // Chapter provenance (ZDS 0013): one facet per spine chapter, naming
+    // the archive member, bound to the chapter's first block.
+    const store = converted.doc.store;
+    try testing.expectEqual(@as(usize, 2), store.provenance_facets.items.len);
+    var members: [2][]const u8 = undefined;
+    for (store.provenance_facets.items, 0..) |row, index| {
+        try testing.expectEqualStrings("ai.insan.zenfmt.epub", store.textSlice(row.plugin));
+        try testing.expectEqual(core.facets.Confidence.exact, row.confidence);
+        members[index] = store.textSlice(row.member);
+    }
+    try testing.expect(std.mem.endsWith(u8, members[0], ".xhtml"));
+    try testing.expect(!std.mem.eql(u8, members[0], members[1]));
 }
 
 test "drm-protected books are refused outright" {

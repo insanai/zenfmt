@@ -16,10 +16,15 @@ const fkp_page_len = 512;
 /// A PAPX FKP holds at most 29 paragraphs: (cpara+1)*4 + cpara*13 <= 511.
 const max_fkp_paragraphs = 29;
 const max_styles = 4096;
+/// Style names longer than this are noise, not names.
+const max_style_name_len = 64;
 
 pub const Resolver = struct {
     /// Heading level per style index; 0 marks a non-heading style.
     levels: []const u8,
+    /// Style name per style index; empty when unnamed or non-ASCII. Same
+    /// length as `levels`.
+    names: []const []const u8,
     /// PlcfBtePapx boundaries (n+1 file positions) and n page numbers.
     fcs: []const u32,
     pages: []const u32,
@@ -27,6 +32,7 @@ pub const Resolver = struct {
 
     pub const empty: Resolver = .{
         .levels = &.{},
+        .names = &.{},
         .fcs = &.{},
         .pages = &.{},
         .word = &.{},
@@ -44,6 +50,19 @@ pub const Resolver = struct {
         const istd = r.istdForFc(fc) orelse return 0;
         if (istd >= r.levels.len) return 0;
         return r.levels[istd];
+    }
+
+    /// The stylesheet name of the paragraph's style, when the paragraph
+    /// names a non-default style with a readable name. Index 0 is the
+    /// default style and stays unnamed on purpose: attaching "Normal" to
+    /// every paragraph would be facet noise, not information.
+    pub fn styleName(r: *const Resolver, fc: u64) ?[]const u8 {
+        if (!r.active()) return null;
+        assert(r.names.len == r.levels.len);
+        const istd = r.istdForFc(fc) orelse return null;
+        if (istd == 0 or istd >= r.names.len) return null;
+        const name = r.names[istd];
+        return if (name.len > 0) name else null;
     }
 
     fn istdForFc(r: *const Resolver, fc: u64) ?u16 {
@@ -94,7 +113,8 @@ pub fn parse(
     table: []const u8,
 ) error{OutOfMemory}!Resolver {
     if (word.len < fc_bte_papx_offset + 8) return .empty;
-    const levels = try parseStsh(arena, word, table) orelse return .empty;
+    const stsh = try parseStsh(arena, word, table) orelse return .empty;
+    const levels = stsh.levels;
 
     const fc_bte = readInt(u32, word[fc_bte_papx_offset..][0..4]);
     const lcb_bte = readInt(u32, word[fc_bte_papx_offset + 4 ..][0..4]);
@@ -110,17 +130,29 @@ pub fn parse(
     for (fcs[0 .. fcs.len - 1], fcs[1..]) |a, b| {
         if (b < a) return .empty;
     }
-    return .{ .levels = levels, .fcs = fcs, .pages = pages, .word = word };
+    return .{
+        .levels = levels,
+        .names = stsh.names,
+        .fcs = fcs,
+        .pages = pages,
+        .word = word,
+    };
 }
+
+const Stsh = struct {
+    levels: []const u8,
+    names: []const []const u8,
+};
 
 /// The STSH: an LPStshi header, then one LPStd per style index. A style
 /// is a heading when its built-in identifier is 1..9 or its name reads
-/// "heading N".
+/// "heading N"; every readable ASCII name is also kept for the style
+/// facet.
 fn parseStsh(
     arena: std.mem.Allocator,
     word: []const u8,
     table: []const u8,
-) error{OutOfMemory}!?[]const u8 {
+) error{OutOfMemory}!?Stsh {
     const fc = readInt(u32, word[fc_stshf_offset..][0..4]);
     const lcb = readInt(u32, word[fc_stshf_offset + 4 ..][0..4]);
     if (lcb < 6 or @as(u64, fc) + lcb > table.len) return null;
@@ -133,8 +165,10 @@ fn parseStsh(
 
     const levels = try arena.alloc(u8, cstd);
     @memset(levels, 0);
+    const names = try arena.alloc([]const u8, cstd);
+    @memset(names, "");
     var pos: usize = 2 + cb_stshi;
-    for (levels) |*level| {
+    for (levels, names) |*level, *name| {
         pos += pos % 2; // LPStd elements are 2-byte aligned.
         if (pos + 2 > stsh.len) break;
         const cb_std = readInt(u16, stsh[pos..][0..2]);
@@ -144,8 +178,32 @@ fn parseStsh(
         const std_bytes = stsh[pos..][0..cb_std];
         pos += cb_std;
         level.* = headingLevelOfStd(std_bytes, cb_std_base);
+        name.* = try styleNameOfStd(arena, std_bytes, cb_std_base);
     }
-    return levels;
+    return .{ .levels = levels, .names = names };
+}
+
+/// The style's Xst name as ASCII, or "" when absent, oversized, or not
+/// printable ASCII. Non-ASCII names are skipped rather than mangled: the
+/// facet carries names, not guesses.
+fn styleNameOfStd(
+    arena: std.mem.Allocator,
+    std_bytes: []const u8,
+    cb_std_base: u16,
+) error{OutOfMemory}![]const u8 {
+    if (std_bytes.len < @as(usize, cb_std_base) + 2) return "";
+    const cch = readInt(u16, std_bytes[cb_std_base..][0..2]);
+    if (cch == 0 or cch > max_style_name_len) return "";
+    const name_at = @as(usize, cb_std_base) + 2;
+    if (std_bytes.len < name_at + @as(usize, cch) * 2) return "";
+    const name = try arena.alloc(u8, cch);
+    for (name, 0..) |*byte, i| {
+        const unit = readInt(u16, std_bytes[name_at + i * 2 ..][0..2]);
+        if (unit < 0x20 or unit > 0x7E) return "";
+        byte.* = @intCast(unit);
+    }
+    assert(name.len == cch);
+    return name;
 }
 
 fn headingLevelOfStd(std_bytes: []const u8, cb_std_base: u16) u8 {

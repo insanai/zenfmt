@@ -37,6 +37,13 @@ pub fn ensureParagraph(p: *Parser) core.ReadError!void {
     p.paragraph = token;
     p.open_style = .{};
     p.style_count = 0;
+
+    // Style facet (ZDS 0013): the stylesheet name the paragraph declares.
+    if (p.para.style) |style_number| {
+        if (p.styleName(style_number)) |name| {
+            try p.ctx.out.attachStyle(token, .{ .name = name });
+        }
+    }
 }
 
 /// `\cell`: the cell's content (which opened it lazily) is complete.

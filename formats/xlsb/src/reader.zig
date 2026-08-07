@@ -43,7 +43,7 @@ const NumberKind = enum { general, date, percent };
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -228,6 +228,7 @@ fn readSheet(
     var body_token: ?core.builder.BlockToken = null;
     var row_token: ?core.builder.BlockToken = null;
     var row_index: u32 = 0;
+    var current_row: u32 = 0;
     var emitted: u32 = 0;
 
     var iter = RecordIter{ .bytes = bytes };
@@ -244,6 +245,12 @@ fn readSheet(
                 body_token = try ctx.out.beginTableBody(.{ .row_head_columns = 0, .head_rows = 0 });
             }
             row_token = try ctx.out.beginBlock(.table_row);
+            // The header names its own row; the counter is the fallback
+            // for truncated records.
+            current_row = if (record.data.len >= 4)
+                readInt(u32, record.data[0..4])
+            else
+                row_index;
             row_index += 1;
             emitted = 0;
             continue;
@@ -263,7 +270,19 @@ fn readSheet(
             try emitCellText(ctx, "");
         }
         if (emitted == col) {
-            try emitCellText(ctx, text);
+            // Facet coordinates are the record's own (ZDS 0013); BIFF12
+            // formula source is not decoded.
+            const grid: ?core.facets.GridData = if (text.len > 0)
+                .{
+                    .sheet = name,
+                    .row = current_row,
+                    .col = col,
+                    .value_type = gridValueType(record.id, kind),
+                    .cached = text,
+                }
+            else
+                null;
+            try emitCell(ctx, text, grid);
             emitted += 1;
         }
     }
@@ -335,11 +354,34 @@ fn cellText(
 }
 
 fn emitCellText(ctx: *core.ReadContext, text: []const u8) core.ReadError!void {
+    try emitCell(ctx, text, null);
+}
+
+fn emitCell(
+    ctx: *core.ReadContext,
+    text: []const u8,
+    grid: ?core.facets.GridData,
+) core.ReadError!void {
     const cell = try ctx.out.beginTableCell(.plain);
+    if (grid) |data| try ctx.out.attachGrid(cell, data);
     const plain = try ctx.out.beginPlain();
     if (text.len > 0) try ctx.out.text(text);
     ctx.out.endBlock(plain);
     ctx.out.endBlock(cell);
+}
+
+/// The facet's value type (ZDS 0013) from the BIFF12 record family and
+/// the number-format kind.
+fn gridValueType(record_id: u16, kind: NumberKind) core.facets.ValueType {
+    return switch (record_id) {
+        brt_cell_rk, brt_cell_real, brt_fmla_num => switch (kind) {
+            .date => .date,
+            .percent, .general => .number,
+        },
+        brt_cell_error, brt_fmla_error => .error_value,
+        brt_cell_bool, brt_fmla_bool => .boolean,
+        else => .text,
+    };
 }
 
 /// RkNumber: bit 0 divides by 100, bit 1 marks a 30-bit integer.
@@ -777,6 +819,40 @@ test "a binary worksheet becomes a heading and a typed table" {
     try testing.expect(std.mem.indexOf(u8, text, "2.5") != null);
     try testing.expect(std.mem.indexOf(u8, text, "2024-01-15") != null);
     try testing.expect(std.mem.indexOf(u8, text, "TRUE") != null);
+}
+
+test "grid facets carry record coordinates and value types" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const reports = try arena.create(core.Reports);
+    reports.* = core.Reports.init(arena, .{});
+
+    const bytes = try buildXlsb(arena, .spec);
+    const doc = try convertXlsb(arena, bytes, reports);
+
+    const store = doc.store;
+    const rows = store.grid_facets.items;
+    try testing.expect(rows.len >= 4);
+    var saw_number = false;
+    var saw_date = false;
+    var saw_boolean = false;
+    var saw_text = false;
+    for (rows) |row| {
+        try testing.expectEqualStrings("Sheet1", store.textSlice(row.sheet));
+        try testing.expect(row.cached.len > 0);
+        switch (row.value_type) {
+            .number => saw_number = true,
+            .date => saw_date = true,
+            .boolean => saw_boolean = true,
+            .text => saw_text = true,
+            else => {},
+        }
+    }
+    try testing.expect(saw_number);
+    try testing.expect(saw_date);
+    try testing.expect(saw_boolean);
+    try testing.expect(saw_text);
 }
 
 test "the wild BrtBundleSh shape with an extra field still finds its sheets" {

@@ -29,7 +29,7 @@ const notes_type = "http://schemas.openxmlformats.org/officeDocument/2006/relati
 
 pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(reports_mod.archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -53,6 +53,7 @@ pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     // Slides in `sldIdLst` order.
     var parser = xml.Parser.init(arena, presentation, ctx.limits.max_xml_depth);
     defer parser.deinit();
+    var slide_index: u32 = 0;
     while (true) {
         const event = parser.next() catch {
             try ctx.reports.add(reports_mod.notPresentationReport());
@@ -72,7 +73,8 @@ pub fn read(ctx: *core.ReadContext) core.ReadError!void {
                 }
                 const relationship = rels.byId(rel_id) orelse continue;
                 const part = try ooxml.resolveTarget(arena, "ppt", relationship.target);
-                try readSlide(ctx, &archive, arena, part);
+                try readSlide(ctx, &archive, arena, part, slide_index);
+                slide_index += 1;
             },
             else => {},
         }
@@ -108,11 +110,12 @@ fn readSlide(
     archive: *ooxml.zip.Archive,
     arena: std.mem.Allocator,
     part: []const u8,
+    slide_index: u32,
 ) core.ReadError!void {
     const bytes = extract(archive, arena, part, ctx) orelse return;
     const dir = std.fs.path.dirname(part) orelse "ppt/slides";
     const slide_rels = try loadRels(archive, arena, part, ctx);
-    try emitShapes(ctx, arena, bytes, .slide, &slide_rels, dir);
+    try emitShapes(ctx, arena, archive, bytes, .slide, &slide_rels, dir, slide_index);
 
     // Speaker notes hang off the slide's own relationships.
     const notes = slide_rels.byType(notes_type) orelse return;
@@ -124,7 +127,7 @@ fn readSlide(
 
     try ctx.out.attrs(.{ .classes = &.{"notes"} });
     const container = try ctx.out.beginBlock(.container);
-    try emitShapes(ctx, arena, notes_bytes, .notes, &notes_rels, notes_dir);
+    try emitShapes(ctx, arena, archive, notes_bytes, .notes, &notes_rels, notes_dir, slide_index);
     ctx.out.endBlock(container);
 }
 
@@ -148,17 +151,21 @@ const ShapeContext = enum { slide, notes };
 fn emitShapes(
     ctx: *core.ReadContext,
     arena: std.mem.Allocator,
+    archive: *ooxml.zip.Archive,
     bytes: []const u8,
     shape_context: ShapeContext,
     rels: *const ooxml.Relationships,
     part_dir: []const u8,
+    slide_index: u32,
 ) core.ReadError!void {
     var machine: Machine = .{
         .ctx = ctx,
         .arena = arena,
+        .archive = archive,
         .rels = rels,
         .part_dir = part_dir,
         .shape_context = shape_context,
+        .slide_index = slide_index,
     };
     var parser = xml.Parser.init(arena, bytes, ctx.limits.max_xml_depth);
     defer parser.deinit();
@@ -198,6 +205,10 @@ const Frame = struct {
     block_token: ?core.builder.BlockToken = null,
     /// For shapes: whether a title placeholder was seen.
     is_title: bool = false,
+    /// For shapes: the `a:xfrm` geometry, attached to the shape's first
+    /// emitted block as a layout facet (ZDS 0013).
+    layout: ?core.facets.LayoutData = null,
+    layout_attached: bool = false,
     /// For bodies: where this context's lists begin.
     list_base: u32 = 0,
     /// Table frames index into `tables`.
@@ -223,12 +234,16 @@ const BulletKind = enum { inherit, none, char, autonum };
 const Machine = struct {
     ctx: *core.ReadContext,
     arena: std.mem.Allocator,
+    archive: *ooxml.zip.Archive,
     rels: *const ooxml.Relationships,
     part_dir: []const u8,
     shape_context: ShapeContext,
+    /// Zero-based slide index; the surface index of layout facets.
+    slide_index: u32 = 0,
     parser: *xml.Parser = undefined,
     pending: ?xml.Event = null,
     finished: bool = false,
+    media_limit_noted: bool = false,
 
     frames: [128]Frame = undefined,
     depth: u32 = 0,
@@ -348,6 +363,10 @@ const Machine = struct {
             if (!element.self_closing) try m.push(.{ .kind = .transparent });
             return;
         }
+        if (name.is(a_ns, "xfrm") or name.is(p_ns, "xfrm")) {
+            try m.onTransform(element);
+            return;
+        }
         if (name.is(a_ns, "tbl")) return m.onTableStart(element);
         if (name.is(a_ns, "tr")) return m.onRowStart(element);
         if (name.is(a_ns, "tc")) return m.onCellStart(element);
@@ -401,6 +420,64 @@ const Machine = struct {
             if (m.frames[i].kind == .shape) return m.frames[i].is_title;
         }
         return false;
+    }
+
+    // ------------------------------------------------------------ layout
+
+    /// `a:xfrm` inside a shape or graphic frame: `a:off` and `a:ext` are
+    /// already EMU with a top-left origin, exactly the facet's unit
+    /// (ZDS 0013, One coordinate system). Stored on the enclosing shape
+    /// frame and attached to its first emitted block.
+    fn onTransform(m: *Machine, element: xml.ElementStart) core.ReadError!void {
+        const shape = m.enclosingShape() orelse {
+            if (!element.self_closing) try m.skipCurrent();
+            return;
+        };
+        if (m.shape_context != .slide or element.self_closing) {
+            if (!element.self_closing) try m.skipCurrent();
+            return;
+        }
+        var layout: core.facets.LayoutData = .{
+            .surface = .slide,
+            .surface_index = m.slide_index,
+        };
+        const target = m.parser.depth;
+        while (m.parser.depth >= target) {
+            const event = try m.next();
+            switch (event) {
+                .done => break,
+                .element_start => |child| {
+                    if (child.name.is(a_ns, "off")) {
+                        layout.x = emuAttribute(child, "x");
+                        layout.y = emuAttribute(child, "y");
+                    } else if (child.name.is(a_ns, "ext")) {
+                        layout.width = @max(0, emuAttribute(child, "cx"));
+                        layout.height = @max(0, emuAttribute(child, "cy"));
+                    }
+                    if (!child.self_closing) try m.skipCurrent();
+                },
+                else => {},
+            }
+        }
+        if (shape.layout == null) shape.layout = layout;
+    }
+
+    fn enclosingShape(m: *Machine) ?*Frame {
+        var i = m.depth;
+        while (i > 0) {
+            i -= 1;
+            if (m.frames[i].kind == .shape) return &m.frames[i];
+        }
+        return null;
+    }
+
+    /// Attaches the enclosing shape's geometry to `token` once.
+    fn attachShapeLayout(m: *Machine, token: core.builder.BlockToken) core.ReadError!void {
+        const shape = m.enclosingShape() orelse return;
+        if (shape.layout_attached) return;
+        const layout = shape.layout orelse return;
+        shape.layout_attached = true;
+        try m.ctx.out.attachLayout(token, layout);
     }
 
     fn bodyListBase(m: *Machine) u32 {
@@ -480,6 +557,7 @@ const Machine = struct {
             else
                 try m.ctx.out.beginParagraph();
         }
+        try m.attachShapeLayout(m.para_open.?);
     }
 
     // -------------------------------------------------------------- runs
@@ -654,6 +732,7 @@ const Machine = struct {
         defer alignments.deinit(m.arena);
         try alignments.appendNTimes(m.arena, .default, @max(columns, 1));
         const token = try m.ctx.out.beginTable(alignments.items);
+        try m.attachShapeLayout(token);
 
         assert(m.table_depth < m.tables.len);
         m.tables[m.table_depth] = .{ .first_row_header = first_row_header };
@@ -800,6 +879,7 @@ const Machine = struct {
         }
         const alt = if (description.len > 0) description else shape_name;
         if (source.len == 0 and alt.len == 0) return;
+        if (source.len > 0) try m.registerPicture(source);
 
         const wrapper = if (m.in_paragraph) blk: {
             try m.materialize();
@@ -811,7 +891,61 @@ const Machine = struct {
         m.ctx.out.endInline(token);
         if (wrapper) |block| m.ctx.out.endBlock(block);
     }
+
+    /// Extracts the picture's archive entry and registers the bytes with
+    /// the resource store; past the limits, remaining pictures degrade to
+    /// path-only references with one note.
+    fn registerPicture(m: *Machine, source: []const u8) core.ReadError!void {
+        const entry = m.archive.find(source) orelse return;
+        const bytes = m.archive.extract(m.arena, entry, m.ctx.limits) catch return;
+        if (bytes.len == 0) return;
+        _ = m.ctx.out.resource(source, bytes, pictureMime(source)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.DepthLimitExceeded => return error.DepthLimitExceeded,
+            error.LimitExceeded => {
+                if (!m.media_limit_noted) {
+                    m.media_limit_noted = true;
+                    try m.ctx.reports.add(reports_mod.mediaLimitNote());
+                }
+            },
+        };
+    }
 };
+
+/// MIME by extension for embedded pictures; unknown kinds stay opaque.
+fn pictureMime(source: []const u8) []const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, source, '.') orelse return "application/octet-stream";
+    const extension = source[dot + 1 ..];
+    const table = [_]struct { extension: []const u8, mime: []const u8 }{
+        .{ .extension = "png", .mime = "image/png" },
+        .{ .extension = "jpg", .mime = "image/jpeg" },
+        .{ .extension = "jpeg", .mime = "image/jpeg" },
+        .{ .extension = "gif", .mime = "image/gif" },
+        .{ .extension = "bmp", .mime = "image/bmp" },
+        .{ .extension = "tif", .mime = "image/tiff" },
+        .{ .extension = "tiff", .mime = "image/tiff" },
+        .{ .extension = "emf", .mime = "image/emf" },
+        .{ .extension = "wmf", .mime = "image/wmf" },
+        .{ .extension = "svg", .mime = "image/svg+xml" },
+        .{ .extension = "webp", .mime = "image/webp" },
+    };
+    for (table) |row| {
+        if (std.ascii.eqlIgnoreCase(row.extension, extension)) return row.mime;
+    }
+    return "application/octet-stream";
+}
+
+/// One EMU attribute as a clamped i32; DrawingML spells them as decimal
+/// integers, and hostile values saturate instead of overflowing.
+fn emuAttribute(element: xml.ElementStart, name: []const u8) i32 {
+    for (element.attributes) |attribute| {
+        if (!std.mem.eql(u8, attribute.name.local, name)) continue;
+        const value = std.fmt.parseInt(i64, attribute.value, 10) catch return 0;
+        return std.math.cast(i32, value) orelse
+            if (value > 0) std.math.maxInt(i32) else std.math.minInt(i32);
+    }
+    return 0;
+}
 
 fn truthy(value: []const u8) bool {
     return std.mem.eql(u8, value, "1") or std.mem.eql(u8, value, "true");

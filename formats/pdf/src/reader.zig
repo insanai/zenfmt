@@ -29,7 +29,7 @@ const max_pages = 8192;
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var file = xref.File.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var file = xref.File.open(arena, try ctx.inputBytes(), ctx.limits) catch |err| {
         try ctx.reports.add(switch (err) {
             error.NotPdf => reports_mod.notPdfReport(),
             error.Encrypted => reports_mod.encryptionReport(),
@@ -69,7 +69,13 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
 const PendingNode = struct {
     node: objects.Object,
     resources: ?objects.Dict,
+    /// Inherited MediaBox, unresolved; pages resolve it for the height
+    /// that flips y to the top-left origin (ZDS 0013, layout facets).
+    media_box: ?objects.Object,
 };
+
+/// US Letter height in points, when a page names no usable MediaBox.
+const default_page_height = 792.0;
 
 fn walkPages(
     ctx: *core.ReadContext,
@@ -86,7 +92,7 @@ fn walkPages(
     defer stack.deinit(arena);
     var visited: std.AutoHashMapUnmanaged(u32, void) = .empty;
     defer visited.deinit(arena);
-    try pushNode(arena, &stack, &visited, catalog.get("Pages"), null);
+    try pushNode(arena, &stack, &visited, catalog.get("Pages"), null, null);
     _ = pages_obj;
 
     var page_index: u32 = 0;
@@ -102,6 +108,7 @@ fn walkPages(
             }
             break :blk pending.resources;
         };
+        const media_box: ?objects.Object = dict.get("MediaBox") orelse pending.media_box;
 
         const node_type = dict.get("Type") orelse objects.Object.null;
         if (node_type.isName("Pages")) {
@@ -112,7 +119,7 @@ fn walkPages(
                     var i = kids_obj.array.len;
                     while (i > 0) {
                         i -= 1;
-                        try pushNode(arena, &stack, &visited, kids_obj.array[i], resources);
+                        try pushNode(arena, &stack, &visited, kids_obj.array[i], resources, media_box);
                     }
                 }
             }
@@ -123,6 +130,9 @@ fn walkPages(
             try ctx.reports.add(reports_mod.limitReport());
             return error.LimitExceeded;
         }
+        // Every leaf records a height, content or not, so `Line.page`
+        // always indexes `page_heights`.
+        try machine.page_heights.append(arena, pageHeight(file, media_box));
         try readPage(ctx, file, machine, dict, resources orelse .{}, page_index);
         countLinks(file, dict, link_count);
         page_index += 1;
@@ -135,6 +145,7 @@ fn pushNode(
     visited: *std.AutoHashMapUnmanaged(u32, void),
     node: ?objects.Object,
     resources: ?objects.Dict,
+    media_box: ?objects.Object,
 ) error{OutOfMemory}!void {
     const value = node orelse return;
     if (value == .ref) {
@@ -142,7 +153,23 @@ fn pushNode(
         if (slot.found_existing) return;
     }
     if (stack.items.len >= max_pages * 2) return;
-    try stack.append(arena, .{ .node = value, .resources = resources });
+    try stack.append(arena, .{ .node = value, .resources = resources, .media_box = media_box });
+}
+
+/// The page's height in points from its (inherited) MediaBox; hostile or
+/// absent boxes fall back to US Letter rather than poisoning every facet.
+fn pageHeight(file: *xref.File, media_box: ?objects.Object) f64 {
+    const box_obj = media_box orelse return default_page_height;
+    const resolved = file.resolve(box_obj) catch return default_page_height;
+    if (resolved != .array) return default_page_height;
+    if (resolved.array.len != 4) return default_page_height;
+    const y0_obj = file.resolve(resolved.array[1]) catch return default_page_height;
+    const y1_obj = file.resolve(resolved.array[3]) catch return default_page_height;
+    const y0 = y0_obj.asNumber() orelse return default_page_height;
+    const y1 = y1_obj.asNumber() orelse return default_page_height;
+    const height = @abs(y1 - y0);
+    if (!std.math.isFinite(height) or height <= 0) return default_page_height;
+    return height;
 }
 
 fn readPage(

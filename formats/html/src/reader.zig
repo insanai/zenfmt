@@ -18,7 +18,7 @@ pub const reader = core.Reader(.{
     .read = read,
 });
 
-fn read(ctx: *core.ReadContext) core.ReadError!void {
+pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     try parseFragment(ctx, ctx.input.bytes, "");
 }
 
@@ -69,6 +69,9 @@ const ElementKind = enum {
     list_item,
     pre,
     container,
+    /// `<details>`: a namespaced extension node whose fallback subtree is
+    /// the summary paragraph plus the disclosure content (ZDS 0013).
+    extension,
     table,
     table_section,
     table_row,
@@ -106,6 +109,9 @@ const Parser = struct {
 
     stack: [core.limits.max_depth_hard_cap]Open = undefined,
     depth: u32 = 0,
+    /// Open `<details>` extensions; a nested one degrades to a container
+    /// because same-owner extension nesting is invalid (ZDS 0013).
+    details_depth: u32 = 0,
     /// The innermost open paragraph-like leaf, if any.
     leaf: ?core.builder.BlockToken = null,
     /// Inside `<pre>`: text accumulates verbatim into a buffer.
@@ -260,7 +266,8 @@ const Parser = struct {
             .paragraph => {
                 try p.closeParagraph();
                 p.leaf = try p.ctx.out.beginParagraph();
-                try p.push(.{ .kind = .paragraph, .tag = "p", .block_token = p.leaf });
+                const stack_tag: []const u8 = if (std.mem.eql(u8, tag, "summary")) "summary" else "p";
+                try p.push(.{ .kind = .paragraph, .tag = stack_tag, .block_token = p.leaf });
             },
             .blockquote => {
                 try p.closeParagraph();
@@ -310,9 +317,26 @@ const Parser = struct {
             },
             .table_cell => {
                 try p.closeImplicit(.table_cell);
-                const cell = try p.ctx.out.beginTableCell(.plain);
+                const cell = try p.ctx.out.beginTableCell(.{
+                    .alignment = .default,
+                    .row_span = spanAttribute(attrs, "rowspan"),
+                    .col_span = spanAttribute(attrs, "colspan"),
+                });
                 p.leaf = try p.ctx.out.beginPlain();
                 try p.push(.{ .kind = .table_cell, .tag = "td", .block_token = cell });
+            },
+            .extension => {
+                try p.closeParagraph();
+                if (p.details_depth > 0) {
+                    // Same-owner nesting is invalid (ZDS 0013); an inner
+                    // disclosure degrades to a plain container.
+                    const token = try p.ctx.out.beginBlock(.container);
+                    try p.push(.{ .kind = .container, .tag = "details", .block_token = token });
+                } else {
+                    const token = try p.ctx.out.beginExtension("ai.insan.zenfmt.html", "details", 1);
+                    p.details_depth += 1;
+                    try p.push(.{ .kind = .extension, .tag = "details", .block_token = token });
+                }
             },
             .container => {
                 try p.closeParagraph();
@@ -463,6 +487,20 @@ const Parser = struct {
                 }
                 if (open.block_token) |token| p.ctx.out.endBlock(token);
             },
+            .extension => {
+                assert(p.details_depth > 0);
+                p.details_depth -= 1;
+                if (open.block_token) |token| {
+                    // The fallback subtree is mandatory: an empty
+                    // `<details>` gets an empty paragraph so the validator
+                    // accepts the node.
+                    if (p.ctx.out.builder.store.blocks.len == token.index + 1) {
+                        const filler = try p.ctx.out.beginParagraph();
+                        p.ctx.out.endBlock(filler);
+                    }
+                    p.ctx.out.endBlock(token);
+                }
+            },
             else => {
                 if (open.inline_token) |token| p.ctx.out.endInline(token);
                 if (open.block_token) |token| p.ctx.out.endBlock(token);
@@ -544,6 +582,9 @@ fn classify(tag: []const u8) ElementKind {
         std.mem.eql(u8, tag, "figure") or std.mem.eql(u8, tag, "main") or
         std.mem.eql(u8, tag, "nav") or std.mem.eql(u8, tag, "header") or
         std.mem.eql(u8, tag, "footer")) return .container;
+    if (std.mem.eql(u8, tag, "details")) return .extension;
+    // The summary renders as the first fallback paragraph.
+    if (std.mem.eql(u8, tag, "summary")) return .paragraph;
     if (std.mem.eql(u8, tag, "em") or std.mem.eql(u8, tag, "i")) return .emphasis;
     if (std.mem.eql(u8, tag, "strong") or std.mem.eql(u8, tag, "b")) return .strong;
     if (std.mem.eql(u8, tag, "s") or std.mem.eql(u8, tag, "del") or
@@ -599,6 +640,38 @@ fn readToken(inner: []const u8, cursor: *usize) ?[]const u8 {
 
 fn isSpace(byte: u8) bool {
     return byte == ' ' or byte == '\t' or byte == '\n' or byte == '\r';
+}
+
+/// A td/th span attribute, clamped to a sane range; absent or malformed
+/// values mean one. Raw scan, no decoding: span values are digits.
+fn spanAttribute(attrs: []const u8, name: []const u8) u32 {
+    assert(name.len >= 1);
+    var cursor: usize = 0;
+    while (readToken(attrs, &cursor)) |token| {
+        while (cursor < attrs.len and isSpace(attrs[cursor])) cursor += 1;
+        var value: []const u8 = "";
+        if (cursor < attrs.len and attrs[cursor] == '=') {
+            cursor += 1;
+            while (cursor < attrs.len and isSpace(attrs[cursor])) cursor += 1;
+            if (cursor < attrs.len and (attrs[cursor] == '"' or attrs[cursor] == '\'')) {
+                const quote = attrs[cursor];
+                cursor += 1;
+                const start = cursor;
+                while (cursor < attrs.len and attrs[cursor] != quote) cursor += 1;
+                value = attrs[start..cursor];
+                if (cursor < attrs.len) cursor += 1;
+            } else {
+                const start = cursor;
+                while (cursor < attrs.len and !isSpace(attrs[cursor])) cursor += 1;
+                value = attrs[start..cursor];
+            }
+        }
+        if (std.ascii.eqlIgnoreCase(token, name)) {
+            const parsed = std.fmt.parseInt(u32, value, 10) catch return 1;
+            return @max(1, @min(parsed, 1000));
+        }
+    }
+    return 1;
 }
 
 /// Case-insensitive attribute lookup with entity decoding.

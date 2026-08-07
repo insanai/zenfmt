@@ -28,7 +28,7 @@ const TextKind = enum { title, body, notes, other };
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var file = cfb.Cfb.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var file = cfb.Cfb.open(arena, try ctx.inputBytes(), ctx.limits) catch |err| {
         try ctx.reports.add(notCompoundReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -63,6 +63,7 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
     var walk = RecordWalk{ .bytes = stream };
     var kind: TextKind = .other;
     var notes_open: ?core.builder.BlockToken = null;
+    var slide_index: u32 = 0;
     while (walk.next()) |record| {
         switch (record.id) {
             rec_text_header => {
@@ -73,6 +74,9 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
                     2 => .notes,
                     else => .other,
                 };
+                // Titles arrive once per slide in stream order; the
+                // running count is the slide identity provenance names.
+                if (kind == .title) slide_index += 1;
             },
             rec_text_chars, rec_text_bytes => {
                 var text: std.ArrayList(u8) = .empty;
@@ -90,7 +94,7 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
                     ctx.out.endBlock(notes_open.?);
                     notes_open = null;
                 }
-                try emitText(ctx, kind, text.items);
+                try emitText(ctx, kind, text.items, slide_index);
             },
             else => {},
         }
@@ -99,8 +103,14 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
 }
 
 /// One text atom holds one placeholder's text: `\r` separates paragraphs
-/// and `\x0B` is a soft line break within one.
-fn emitText(ctx: *core.ReadContext, kind: TextKind, text: []const u8) core.ReadError!void {
+/// and `\x0B` is a soft line break within one. Slide titles carry a
+/// provenance facet naming their slide (ZDS 0013, Sparse Facets).
+fn emitText(
+    ctx: *core.ReadContext,
+    kind: TextKind,
+    text: []const u8,
+    slide_index: u32,
+) core.ReadError!void {
     var lines = std.mem.splitScalar(u8, text, '\r');
     while (lines.next()) |line| {
         if (std.mem.trim(u8, line, " \x0B\x00").len == 0) continue;
@@ -108,6 +118,17 @@ fn emitText(ctx: *core.ReadContext, kind: TextKind, text: []const u8) core.ReadE
             try ctx.out.beginHeading(2)
         else
             try ctx.out.beginParagraph();
+        if (kind == .title) {
+            assert(slide_index >= 1);
+            var member_buffer: [24]u8 = undefined;
+            const member = std.fmt.bufPrint(&member_buffer, "slide-{d}", .{slide_index}) catch
+                unreachable;
+            try ctx.out.attachProvenance(token, .{
+                .plugin = "ai.insan.zenfmt.ppt",
+                .member = member,
+                .confidence = .exact,
+            });
+        }
         var segments = std.mem.splitScalar(u8, line, '\x0B');
         var first = true;
         while (segments.next()) |segment| {
@@ -343,6 +364,46 @@ test "titles become headings, bodies paragraphs, notes a container" {
         if (std.mem.eql(u8, report_entry.report.code, "ppt.presentation-projection")) found = true;
     }
     try testing.expect(found);
+}
+
+test "slide titles carry provenance facets naming their slide" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const reports = try arena.create(core.Reports);
+    reports.* = core.Reports.init(arena, .{});
+
+    var inner: std.ArrayList(u8) = .empty;
+    try headerAtom(arena, &inner, 0);
+    try appendAtom(arena, &inner, rec_text_bytes, "First slide");
+    try headerAtom(arena, &inner, 1);
+    try appendAtom(arena, &inner, rec_text_bytes, "Body");
+    try headerAtom(arena, &inner, 0);
+    try appendAtom(arena, &inner, rec_text_bytes, "Second slide");
+    var stream: std.ArrayList(u8) = .empty;
+    try appendContainer(arena, &stream, 0x0FF0, inner.items);
+
+    const doc = try convertPpt(arena, stream.items, reports);
+    try testing.expectEqual(@as(usize, 2), doc.store.provenance_facets.items.len);
+
+    var members: [2][]const u8 = undefined;
+    var heading_index: usize = 0;
+    const tags = doc.store.blocks.items(.tag);
+    for (tags, 0..) |tag, index| {
+        if (tag != .heading) continue;
+        const entity = doc.blockEntity(@enumFromInt(index)).?;
+        const provenance = doc.provenanceOf(entity).?;
+        try testing.expectEqual(core.facets.Confidence.exact, provenance.confidence);
+        try testing.expectEqualStrings(
+            "ai.insan.zenfmt.ppt",
+            doc.store.textSlice(provenance.plugin),
+        );
+        members[heading_index] = doc.store.textSlice(provenance.member);
+        heading_index += 1;
+    }
+    try testing.expectEqual(@as(usize, 2), heading_index);
+    try testing.expectEqualStrings("slide-1", members[0]);
+    try testing.expectEqualStrings("slide-2", members[1]);
 }
 
 test "a cryptography session is a refusal with its own code" {

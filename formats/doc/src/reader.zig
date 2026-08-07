@@ -29,7 +29,7 @@ const fc_clx_offset = 154 + 33 * 8;
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var file = cfb.Cfb.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var file = cfb.Cfb.open(arena, try ctx.inputBytes(), ctx.limits) catch |err| {
         try ctx.reports.add(notCompoundReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -278,14 +278,30 @@ const Sink = struct {
     }
 
     /// Opens the pending block: a heading when the paragraph's style
-    /// resolves to one, a plain paragraph otherwise.
+    /// resolves to one, a plain paragraph otherwise. Headings carry a
+    /// provenance facet naming the WordDocument stream position, and any
+    /// paragraph whose style resolves to a named non-default style carries
+    /// a style facet (ZDS 0013, Sparse Facets).
     fn ensureParagraph(s: *Sink) core.ReadError!void {
         if (s.paragraph != null) return;
-        const level = s.styles.headingLevel(s.paragraph_fc orelse 0);
-        s.paragraph = if (level > 0)
+        const fc = s.paragraph_fc orelse 0;
+        const level = s.styles.headingLevel(fc);
+        const token = if (level > 0)
             try s.ctx.out.beginHeading(@min(level, 6))
         else
             try s.ctx.out.beginParagraph();
+        s.paragraph = token;
+        if (s.styles.styleName(fc)) |name| {
+            try s.ctx.out.attachStyle(token, .{ .name = name });
+        }
+        if (level > 0) {
+            try s.ctx.out.attachProvenance(token, .{
+                .plugin = "ai.insan.zenfmt.doc",
+                .member = "WordDocument",
+                .byte_start = fc,
+                .confidence = .exact,
+            });
+        }
     }
 
     fn flush(s: *Sink) core.ReadError!void {
@@ -616,6 +632,105 @@ test "hyperlink fields become links with display text" {
     try testing.expect(std.mem.indexOf(u8, doc.store.text.items, "https://ziglang.org/") != null);
     try testing.expect(std.mem.indexOf(u8, doc.store.text.items, "site") != null);
     try testing.expect(std.mem.indexOf(u8, doc.store.text.items, "HYPERLINK") == null);
+}
+
+/// A document with a real style chain: STSH naming style 1 "heading 1"
+/// (sti 1), a PlcfBtePapx pointing at one FKP page, and a PAPX giving the
+/// first paragraph istd 1. The second paragraph keeps the default style.
+fn buildStyledDoc(arena: std.mem.Allocator) ![]const u8 {
+    var word: [2048]u8 = @splat(0);
+    std.mem.writeInt(u16, word[0..2], fib_ident, .little);
+    std.mem.writeInt(u16, word[10..12], flag_which_table, .little);
+    const text = "Title\rBody text.\r";
+    @memcpy(word[512..][0..text.len], text);
+    std.mem.writeInt(u32, word[76..80], text.len, .little);
+
+    // FKP page 3: boundaries 512/518/529, paragraph 0 has a PAPX with
+    // istd 1, paragraph 1 defers to the default style.
+    const fkp = word[1536..2048];
+    std.mem.writeInt(u32, fkp[0..4], 512, .little);
+    std.mem.writeInt(u32, fkp[4..8], 518, .little);
+    std.mem.writeInt(u32, fkp[8..12], 529, .little);
+    fkp[12] = 64; // BxPap of paragraph 0: PAPX at word offset 128.
+    fkp[25] = 0; // BxPap of paragraph 1: no PAPX.
+    fkp[128] = 1; // PapxInFkp cb; the istd follows directly.
+    std.mem.writeInt(u16, fkp[129..131], 1, .little);
+    fkp[511] = 2; // cpara.
+
+    var table: std.ArrayList(u8) = .empty;
+    try table.appendNTimes(arena, 0, 32);
+    // CLX: one compressed piece at byte fc 512 holding all 17 characters.
+    try table.append(arena, 0x02);
+    var scratch: [4]u8 = undefined;
+    std.mem.writeInt(u32, &scratch, 16, .little);
+    try table.appendSlice(arena, &scratch);
+    std.mem.writeInt(u32, &scratch, 0, .little);
+    try table.appendSlice(arena, &scratch);
+    std.mem.writeInt(u32, &scratch, text.len, .little);
+    try table.appendSlice(arena, &scratch);
+    var pcd: [8]u8 = @splat(0);
+    std.mem.writeInt(u32, pcd[2..6], 0x40000000 | (512 * 2), .little);
+    try table.appendSlice(arena, &pcd);
+    std.mem.writeInt(u32, word[fc_clx_offset..][0..4], 32, .little);
+    std.mem.writeInt(u32, word[fc_clx_offset + 4 ..][0..4], 16 + 5, .little);
+
+    // STSH at table offset 64: style 0 empty, style 1 named "heading 1".
+    try table.appendNTimes(arena, 0, 64 - table.items.len);
+    var stsh: [40]u8 = @splat(0);
+    std.mem.writeInt(u16, stsh[0..2], 4, .little); // cbStshi
+    std.mem.writeInt(u16, stsh[2..4], 2, .little); // cstd
+    std.mem.writeInt(u16, stsh[4..6], 10, .little); // cbSTDBase
+    // LPStd 0 at 6: cb 0. LPStd 1 at 8: cb 30, sti 1, Xst "heading 1".
+    std.mem.writeInt(u16, stsh[8..10], 30, .little);
+    std.mem.writeInt(u16, stsh[10..12], 1, .little);
+    std.mem.writeInt(u16, stsh[20..22], 9, .little);
+    for ("heading 1", 0..) |byte, i| {
+        std.mem.writeInt(u16, stsh[22 + i * 2 ..][0..2], byte, .little);
+    }
+    try table.appendSlice(arena, &stsh);
+    std.mem.writeInt(u32, word[162..166], 64, .little);
+    std.mem.writeInt(u32, word[166..170], 40, .little);
+
+    // PlcfBtePapx at table offset 112: fcs 512..529, page number 3.
+    try table.appendNTimes(arena, 0, 112 - table.items.len);
+    std.mem.writeInt(u32, &scratch, 512, .little);
+    try table.appendSlice(arena, &scratch);
+    std.mem.writeInt(u32, &scratch, 529, .little);
+    try table.appendSlice(arena, &scratch);
+    std.mem.writeInt(u32, &scratch, 3, .little);
+    try table.appendSlice(arena, &scratch);
+    std.mem.writeInt(u32, word[258..262], 112, .little);
+    std.mem.writeInt(u32, word[262..266], 12, .little);
+
+    return cfb.buildFile(arena, &.{
+        .{ .name = "WordDocument", .data = &word },
+        .{ .name = "1Table", .data = table.items },
+    });
+}
+
+test "a styled heading carries style and provenance facets" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const bytes = try buildStyledDoc(arena);
+    const doc = try convertDoc(arena, bytes);
+
+    const tags = doc.store.blocks.items(.tag);
+    try testing.expectEqual(@as(usize, 2), tags.len);
+    try testing.expectEqual(core.BlockTag.heading, tags[0]);
+    try testing.expectEqual(core.BlockTag.paragraph, tags[1]);
+
+    const entity = doc.blockEntity(@enumFromInt(0)).?;
+    const style = doc.styleOf(entity).?;
+    try testing.expectEqualStrings("heading 1", doc.store.textSlice(style.name));
+    const provenance = doc.provenanceOf(entity).?;
+    try testing.expectEqualStrings("WordDocument", doc.store.textSlice(provenance.member));
+    try testing.expectEqual(@as(u64, 512), provenance.byte_start);
+    try testing.expectEqual(core.facets.Confidence.exact, provenance.confidence);
+
+    // The default-styled paragraph carries nothing: facets are sparse.
+    try testing.expectEqual(@as(?core.EntityId, null), doc.blockEntity(@enumFromInt(1)));
 }
 
 test "an encrypted document is refused with its own code" {

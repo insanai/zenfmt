@@ -191,13 +191,13 @@ test "a jpeg xobject extracts as-is into the media table" {
 
     const result = try convertPdf(arena, bytes);
     const store = result.doc.store;
-    try testing.expectEqual(@as(usize, 1), store.media.items.len);
-    const entry = store.media.items[0];
+    try testing.expectEqual(@as(usize, 1), store.resources.items.len);
+    const entry = store.resources.items[0];
     try testing.expectEqualStrings("pdf-image-1", store.textSlice(entry.source));
     try testing.expectEqualStrings("image/jpeg", store.textSlice(entry.mime));
     try testing.expectEqualStrings(
         "\xff\xd8",
-        store.media_bytes.items[entry.bytes.start..][0..entry.bytes.len],
+        store.resource_bytes.items[entry.bytes.start..][0..entry.bytes.len],
     );
     // Both drawings appear in the flow.
     var image_inlines: u32 = 0;
@@ -225,7 +225,7 @@ test "an image encoding zenfmt does not decode stays omitted" {
     const bytes = try b.finish(1);
 
     const result = try convertPdf(arena, bytes);
-    try testing.expectEqual(@as(usize, 0), result.doc.store.media.items.len);
+    try testing.expectEqual(@as(usize, 0), result.doc.store.resources.items.len);
     try expectReport(result.reports, "pdf.images-omitted");
 }
 
@@ -362,4 +362,39 @@ test "xref stream and object stream documents load" {
     const result = try convertPdf(arena, out.items);
     try testing.expect(std.mem.indexOf(u8, documentText(result.doc), "object") != null);
     try testing.expect(std.mem.indexOf(u8, documentText(result.doc), "stream.") != null);
+}
+
+test "projected blocks carry provenance and top-left layout facets" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var b = testpdf.Builder.init(arena);
+    _ = try b.add("<< /Type /Catalog /Pages 2 0 R >>");
+    _ = try b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>");
+    _ = try b.add("<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>");
+    _ = try b.addStream("", "BT /F1 12 Tf 72 720 Td (Placed text) Tj ET");
+    const bytes = try b.finish(1);
+
+    const result = try convertPdf(arena, bytes);
+    const store = result.doc.store;
+
+    try testing.expectEqual(@as(usize, 1), store.provenance_facets.items.len);
+    const provenance = store.provenance_facets.items[0];
+    try testing.expectEqualStrings("page-1", store.textSlice(provenance.member));
+    try testing.expectEqualStrings("ai.insan.zenfmt.pdf", store.textSlice(provenance.plugin));
+    try testing.expectEqual(core.facets.Confidence.projected, provenance.confidence);
+
+    try testing.expectEqual(@as(usize, 1), store.layout_facets.items.len);
+    const layout = store.layout_facets.items[0];
+    try testing.expectEqual(core.facets.Surface.page, layout.surface);
+    try testing.expectEqual(@as(u32, 0), layout.surface_index);
+    // x: 72 pt; y: (792 - 720 - 12) pt from the top; height: 12 pt.
+    try testing.expectEqual(@as(i32, 72 * 12700), layout.x);
+    try testing.expectEqual(@as(i32, 60 * 12700), layout.y);
+    try testing.expectEqual(@as(i32, 0), layout.width);
+    try testing.expectEqual(@as(i32, 12 * 12700), layout.height);
+
+    // Both facets bind to the same paragraph entity.
+    try testing.expectEqual(provenance.entity, layout.entity);
 }

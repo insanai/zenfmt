@@ -50,13 +50,14 @@ pub fn emitDocument(
     defer buf.deinit(arena);
     var open_kind: LineKind = .body;
     var block_open = false;
+    var block_first: ?Line = null;
     var previous: ?Line = null;
     var image_cursor: usize = 0;
 
     for (lines, 0..) |line, index| {
         if (imagesAt(machine, &image_cursor, @intCast(index))) |range| {
             if (block_open) {
-                try emitBlock(ctx, open_kind, buf.items);
+                try emitBlock(ctx, machine, open_kind, buf.items, block_first);
                 buf.clearRetainingCapacity();
                 block_open = false;
                 previous = null;
@@ -65,24 +66,25 @@ pub fn emitDocument(
         }
         if (tableAt(tables.items, @intCast(index))) |planned| {
             if (block_open) {
-                try emitBlock(ctx, open_kind, buf.items);
+                try emitBlock(ctx, machine, open_kind, buf.items, block_first);
                 buf.clearRetainingCapacity();
                 block_open = false;
                 previous = null;
             }
-            try emitTable(ctx, planned);
+            try emitTable(ctx, machine, planned, lines);
         }
         if (consumed[index]) continue;
 
         const kind = classify(line, body_size);
         if (block_open and blockBreak(previous, line, kind, open_kind)) {
-            try emitBlock(ctx, open_kind, buf.items);
+            try emitBlock(ctx, machine, open_kind, buf.items, block_first);
             buf.clearRetainingCapacity();
             block_open = false;
         }
         if (!block_open) {
             block_open = true;
             open_kind = kind;
+            block_first = line;
         } else if (buf.items.len > 0) {
             // A hyphenated wrap joins directly with the next line.
             const last = buf.items[buf.items.len - 1];
@@ -95,19 +97,63 @@ pub fn emitDocument(
         try buf.appendSlice(arena, line.text);
         previous = line;
     }
-    if (block_open) try emitBlock(ctx, open_kind, buf.items);
+    if (block_open) try emitBlock(ctx, machine, open_kind, buf.items, block_first);
     if (imagesAt(machine, &image_cursor, @intCast(lines.len))) |range| {
         try emitImages(ctx, machine, range);
     }
 }
 
+// ------------------------------------------------------------- facets
+
+/// Points to EMU, clamped: hostile coordinates saturate instead of
+/// overflowing the i32 facet fields.
+fn emuFromPoints(points: f64) i32 {
+    const emu = points * 12700.0;
+    if (!std.math.isFinite(emu)) return 0;
+    if (emu >= @as(f64, @floatFromInt(std.math.maxInt(i32)))) return std.math.maxInt(i32);
+    if (emu <= @as(f64, @floatFromInt(std.math.minInt(i32)))) return std.math.minInt(i32);
+    return @intFromFloat(@round(emu));
+}
+
+/// Provenance and layout for a projected block, anchored at its first
+/// line (ZDS 0013, worked mappings). The y axis flips to top-left using
+/// the page's recorded MediaBox height: y is the top of the first line's
+/// box (baseline minus size from the top edge), height is the font size,
+/// and width is zero because fragment extents are not tracked.
+fn attachFacets(
+    ctx: *core.ReadContext,
+    machine: *const content_mod.Machine,
+    token: core.builder.BlockToken,
+    first: Line,
+) core.ReadError!void {
+    var label_buffer: [24]u8 = undefined;
+    const member = std.fmt.bufPrint(&label_buffer, "page-{d}", .{first.page + 1}) catch
+        unreachable;
+    try ctx.out.attachProvenance(token, .{
+        .plugin = "ai.insan.zenfmt.pdf",
+        .member = member,
+        .confidence = .projected,
+    });
+
+    const heights = machine.page_heights.items;
+    const page_height = if (first.page < heights.len) heights[first.page] else 792.0;
+    try ctx.out.attachLayout(token, .{
+        .surface = .page,
+        .surface_index = first.page,
+        .x = emuFromPoints(first.x),
+        .y = emuFromPoints(page_height - first.y - first.size),
+        .width = 0,
+        .height = @max(0, emuFromPoints(first.size)),
+    });
+}
+
 // ------------------------------------------------------------- images
 
-/// Registers every unique extracted image with the engine's media
-/// pipeline; past the media limits, remaining images degrade to omitted.
+/// Registers every unique extracted image with the engine's resource
+/// store; past the resource limits, remaining images degrade to omitted.
 fn registerMedia(ctx: *core.ReadContext, machine: *content_mod.Machine) core.ReadError!void {
     for (machine.unique_images.items, 0..) |unique, index| {
-        ctx.out.media(unique.source, unique.bytes, unique.mime) catch |err| switch (err) {
+        _ = ctx.out.resource(unique.source, unique.bytes, unique.mime) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             error.DepthLimitExceeded => return error.DepthLimitExceeded,
             error.LimitExceeded => {
@@ -341,12 +387,19 @@ fn fragmentText(line: Line, index: usize) []const u8 {
 
 /// All rows go to the table body: PDF has no header semantics, and
 /// guessing one from typography would be wrong more often than right.
-fn emitTable(ctx: *core.ReadContext, planned: *const Planned) core.ReadError!void {
+fn emitTable(
+    ctx: *core.ReadContext,
+    machine: *const content_mod.Machine,
+    planned: *const Planned,
+    lines: []const Line,
+) core.ReadError!void {
     const arena = ctx.gpa;
     var alignments: std.ArrayList(core.payload.Alignment) = .empty;
     defer alignments.deinit(arena);
     try alignments.appendNTimes(arena, .default, planned.columns);
     const table = try ctx.out.beginTable(alignments.items);
+    assert(planned.first_line < lines.len);
+    try attachFacets(ctx, machine, table, lines[planned.first_line]);
     const body = try ctx.out.beginTableBody(.{ .row_head_columns = 0, .head_rows = 0 });
     var row: u32 = 0;
     while (row < planned.rows) : (row += 1) {
@@ -374,12 +427,19 @@ fn emitTable(ctx: *core.ReadContext, planned: *const Planned) core.ReadError!voi
 
 const LineKind = union(enum) { body, heading: u8 };
 
-fn emitBlock(ctx: *core.ReadContext, kind: LineKind, text: []const u8) core.ReadError!void {
+fn emitBlock(
+    ctx: *core.ReadContext,
+    machine: *const content_mod.Machine,
+    kind: LineKind,
+    text: []const u8,
+    first: ?Line,
+) core.ReadError!void {
     if (text.len == 0) return;
     const token = switch (kind) {
         .heading => |level| try ctx.out.beginHeading(level),
         .body => try ctx.out.beginParagraph(),
     };
+    if (first) |line| try attachFacets(ctx, machine, token, line);
     try ctx.out.text(text);
     ctx.out.endBlock(token);
 }

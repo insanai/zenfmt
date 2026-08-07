@@ -10,4 +10,6 @@ test {
     _ = @import("util.zig");
     _ = @import("styles.zig");
     _ = @import("numbering.zig");
+    _ = @import("facets.zig");
+    _ = @import("reader_test.zig");
 }

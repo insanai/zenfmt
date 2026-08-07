@@ -68,6 +68,8 @@ pub const ParaProps = struct {
     list: bool = false,
     ilvl: u8 = 0,
     list_kind: ListKind = .unknown,
+    /// `\sN`: the paragraph's stylesheet number, when one applies.
+    style: ?i32 = null,
     /// `\outlinelevelN`: 0-based heading level from the producing word
     /// processor's own outline, the most reliable heading signal RTF has.
     outline: ?u8 = null,
@@ -174,15 +176,86 @@ pub const Parser = struct {
     notes: std.ArrayList(NoteCapture) = .empty,
     in_note: bool = false,
 
+    // Paragraph style names from the `\stylesheet` table (ZDS 0013):
+    // `\sN` numbers mapped to their names, attached as style facets.
+    style_names: std.ArrayList(StyleName) = .empty,
+
     // Deliberate-omission counters, reported once at the end.
     count_images: u32 = 0,
     count_objects: u32 = 0,
     count_nested_tables: u32 = 0,
 
+    pub const StyleName = struct {
+        number: i32,
+        name: []const u8,
+    };
+    pub const max_style_names = 256;
+
     pub fn deinit(p: *Parser) void {
         p.instr_buffer.deinit(p.ctx.gpa);
         p.marker_buffer.deinit(p.ctx.gpa);
         p.notes.deinit(p.ctx.gpa);
+        p.style_names.deinit(p.ctx.gpa);
+    }
+
+    /// The stylesheet name for a `\sN` number, when the table declared it.
+    pub fn styleName(p: *const Parser, number: i32) ?[]const u8 {
+        for (p.style_names.items) |entry| {
+            if (entry.number == number) return entry.name;
+        }
+        return null;
+    }
+
+    /// Harvests `{\sN ... Name;}` entries from the stylesheet group's raw
+    /// bytes. Control words and nested braces are skipped; the trailing
+    /// text before each `;` is the style's name. Bounded by
+    /// `max_style_names` entries and 128 name bytes each.
+    fn parseStylesheet(p: *Parser, bytes: []const u8) error{OutOfMemory}!void {
+        var i: usize = 0;
+        while (i < bytes.len and p.style_names.items.len < max_style_names) : (i += 1) {
+            if (bytes[i] != '\\' or i + 1 >= bytes.len or bytes[i + 1] != 's') continue;
+            var j = i + 2;
+            const digits_start = j;
+            while (j < bytes.len and std.ascii.isDigit(bytes[j])) j += 1;
+            if (j == digits_start) continue;
+            const number = std.fmt.parseInt(i32, bytes[digits_start..j], 10) catch continue;
+
+            var name_buffer: [128]u8 = undefined;
+            var name_len: usize = 0;
+            while (j < bytes.len and bytes[j] != ';' and bytes[j] != '}') {
+                if (bytes[j] == '\\') {
+                    j += 1;
+                    while (j < bytes.len and std.ascii.isAlphabetic(bytes[j])) j += 1;
+                    while (j < bytes.len and (std.ascii.isDigit(bytes[j]) or bytes[j] == '-')) j += 1;
+                    if (j < bytes.len and bytes[j] == ' ') j += 1;
+                    continue;
+                }
+                if (bytes[j] == '{') {
+                    // A nested group inside a style definition holds no
+                    // name text worth keeping.
+                    var balance: u32 = 1;
+                    j += 1;
+                    while (j < bytes.len and balance > 0) : (j += 1) {
+                        if (bytes[j] == '{') balance += 1;
+                        if (bytes[j] == '}') balance -= 1;
+                    }
+                    continue;
+                }
+                if (name_len < name_buffer.len) {
+                    name_buffer[name_len] = bytes[j];
+                    name_len += 1;
+                }
+                j += 1;
+            }
+            const name = std.mem.trim(u8, name_buffer[0..name_len], " ");
+            if (name.len > 0) {
+                try p.style_names.append(p.ctx.gpa, .{
+                    .number = number,
+                    .name = try p.ctx.gpa.dupe(u8, name),
+                });
+            }
+            i = j;
+        }
     }
 
     pub fn run(p: *Parser) core.ReadError!void {
@@ -353,6 +426,13 @@ pub const Parser = struct {
             p.current.destination = false;
             p.current.capture = .none;
             try structure.onFieldResult(p);
+        } else if (std.mem.eql(u8, word, "stylesheet")) {
+            // The table's content is skipped as a destination, but its
+            // `\sN` names are harvested first for style facets.
+            if (p.matchGroupEnd()) |end| {
+                try p.parseStylesheet(p.bytes[p.pos..end]);
+            }
+            p.current.destination = true;
         } else if (isSkipDestination(word)) {
             p.current.destination = true;
         } else if (std.mem.eql(u8, word, "rtf") or std.mem.eql(u8, word, "ansi") or
@@ -394,6 +474,8 @@ pub const Parser = struct {
     fn applyStructureWord(p: *Parser, word: []const u8, value: ?i32) core.ReadError!bool {
         if (std.mem.eql(u8, word, "pard")) {
             p.para = .{};
+        } else if (std.mem.eql(u8, word, "s")) {
+            p.para.style = value;
         } else if (std.mem.eql(u8, word, "intbl")) {
             p.para.in_table = true;
         } else if (std.mem.eql(u8, word, "itap")) {

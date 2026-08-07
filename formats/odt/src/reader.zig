@@ -29,6 +29,11 @@ const table_ns = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const xlink_ns = "http://www.w3.org/1999/xlink";
 const draw_ns = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
 const svg_ns = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
+const dc_ns = "http://purl.org/dc/elements/1.1/";
+
+/// A comment's captured text is bounded: the facet is a marker, not a
+/// second document.
+const max_annotation_note_bytes = 256;
 
 const TextProps = struct {
     strong: bool = false,
@@ -53,11 +58,30 @@ const Styles = struct {
     text: std.StringHashMapUnmanaged(TextProps) = .empty,
     /// List style name to "level 1 is numbered".
     ordered_lists: std.StringHashMapUnmanaged(bool) = .empty,
+    /// Names declared in styles.xml: the document's common styles, the
+    /// honest ones to surface as `StyleFacet` rows (ZDS 0013). Automatic
+    /// "P1"-style names resolve through `parents` to one of these.
+    common: std.StringHashMapUnmanaged(void) = .empty,
+    /// Style name to parent style name, for automatic-style resolution.
+    parents: std.StringHashMapUnmanaged([]const u8) = .empty,
+
+    /// The nearest common ancestor of `name`, when one exists: the facet
+    /// carries a name a person chose, never a generator's counter.
+    fn commonName(styles: *const Styles, name: []const u8) ?[]const u8 {
+        if (styles.common.contains(name)) return name;
+        var current = name;
+        var hops: u8 = 0;
+        while (hops < 8) : (hops += 1) {
+            current = styles.parents.get(current) orelse return null;
+            if (styles.common.contains(current)) return current;
+        }
+        return null;
+    }
 };
 
 pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.open(arena, ctx.input.bytes, ctx.limits) catch |err| {
+    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -82,13 +106,18 @@ pub fn read(ctx: *core.ReadContext) core.ReadError!void {
     var styles: Styles = .{};
     if (archive.find("styles.xml")) |entry| {
         if (archive.extract(arena, entry, ctx.limits)) |bytes| {
-            parseStyles(arena, bytes, ctx.limits, &styles) catch {};
+            parseStyles(arena, bytes, ctx.limits, &styles, true) catch {};
         } else |_| {}
     }
     // Automatic styles live in content.xml itself and win on collision.
-    parseStyles(arena, content_bytes, ctx.limits, &styles) catch {};
+    parseStyles(arena, content_bytes, ctx.limits, &styles, false) catch {};
 
-    var machine: Machine = .{ .ctx = ctx, .arena = arena, .styles = &styles };
+    var machine: Machine = .{
+        .ctx = ctx,
+        .arena = arena,
+        .styles = &styles,
+        .archive = &archive,
+    };
     defer machine.deinit();
 
     {
@@ -108,6 +137,7 @@ fn parseStyles(
     bytes: []const u8,
     limits: core.Limits,
     styles: *Styles,
+    common: bool,
 ) !void {
     var parser = xml.Parser.init(arena, bytes, limits.max_xml_depth);
     defer parser.deinit();
@@ -143,6 +173,10 @@ fn parseStyles(
                     }
                     const relevant = std.mem.eql(u8, family, "text") or
                         std.mem.eql(u8, family, "paragraph");
+                    if (relevant and name.len > 0) {
+                        if (common) try styles.common.put(arena, name, {});
+                        if (parent.len > 0) try styles.parents.put(arena, name, parent);
+                    }
                     current = if (relevant and !element.self_closing)
                         .{ .name = name, .parent = parent, .props = .{} }
                     else
@@ -301,8 +335,30 @@ const Machine = struct {
     notes: std.ArrayList(PendingNote) = .empty,
     image: ?PendingImage = null,
 
+    // Facet state (ZDS 0013): the archive for media extraction, and an
+    // annotation met between paragraphs, held for the next one.
+    archive: ?*ooxml.zip.Archive = null,
+    pending_comment: ?PendingComment = null,
+
+    const PendingComment = struct {
+        author: []const u8,
+        timestamp: []const u8,
+        note: []const u8,
+    };
+
     fn deinit(m: *Machine) void {
         m.notes.deinit(m.arena);
+    }
+
+    /// The open paragraph's block token, for facet attachment; null
+    /// between paragraphs.
+    fn currentParagraphToken(m: *Machine) ?core.builder.BlockToken {
+        var i = m.depth;
+        while (i > 0) {
+            i -= 1;
+            if (m.frames[i].kind == .paragraph) return m.frames[i].block_token;
+        }
+        return null;
     }
 
     fn run(m: *Machine, stop_depth: u32) core.ReadError!void {
@@ -483,11 +539,11 @@ const Machine = struct {
             return;
         }
         if (name.is(office_ns, "annotation")) {
-            // Comments: recognized, dropped, counted through aggregation.
+            // Comments: dropped from the flow, counted through
+            // aggregation, and carried as a `RevisionFacet` (ZDS 0013).
             try m.ctx.reports.add(annotationReport());
-            if (!element.self_closing) {
-                m.parser.skipElement() catch return error.Malformed;
-            }
+            if (element.self_closing) return;
+            try m.onAnnotation();
             return;
         }
         if (name.is(text_ns, "tracked-changes") or name.is(office_ns, "forms") or
@@ -566,10 +622,23 @@ const Machine = struct {
         } else {
             token = try m.ctx.out.beginParagraph();
         }
-        // The paragraph style contributes character properties too.
+        // The paragraph style contributes character properties too; a
+        // common style name additionally rides as a `StyleFacet`.
         m.props = .{};
         if (styleAttribute(element.attributes)) |style_name| {
             if (m.styles.text.get(style_name)) |props| m.props = props;
+            if (m.styles.commonName(style_name)) |common| {
+                try m.ctx.out.attachStyle(token, .{ .name = common });
+            }
+        }
+        if (m.pending_comment) |comment| {
+            m.pending_comment = null;
+            try m.ctx.out.attachRevision(token, .{
+                .kind = .comment,
+                .author = comment.author,
+                .timestamp = comment.timestamp,
+                .note = comment.note,
+            });
         }
         m.in_paragraph = true;
         if (element.self_closing) {
@@ -672,6 +741,7 @@ const Machine = struct {
             const token = try m.ctx.out.beginImage(image.href, "");
             if (alt.len > 0) try m.ctx.out.text(alt);
             m.ctx.out.endInline(token);
+            try m.registerImage(image.href);
             return;
         }
         const paragraph = try m.ctx.out.beginParagraph();
@@ -679,6 +749,93 @@ const Machine = struct {
         if (alt.len > 0) try m.ctx.out.text(alt);
         m.ctx.out.endInline(token);
         m.ctx.out.endBlock(paragraph);
+        try m.registerImage(image.href);
+    }
+
+    /// Consumes an `office:annotation` subtree, harvesting the creator,
+    /// date, and a bounded slice of the comment text into a
+    /// `RevisionFacet` on the containing paragraph, or on the next one
+    /// when the comment sits between paragraphs.
+    fn onAnnotation(m: *Machine) core.ReadError!void {
+        const target = m.parser.depth;
+        var author: []const u8 = "";
+        var timestamp: []const u8 = "";
+        var note: std.ArrayList(u8) = .empty;
+        defer note.deinit(m.arena);
+        var capture: enum { none, creator, date, body } = .none;
+        while (m.parser.depth >= target) {
+            const event = m.parser.next() catch return error.Malformed;
+            switch (event) {
+                .done => break,
+                .element_start => |child| {
+                    if (child.name.is(dc_ns, "creator")) {
+                        capture = .creator;
+                    } else if (child.name.is(dc_ns, "date")) {
+                        capture = .date;
+                    } else if (child.name.is(text_ns, "p")) {
+                        capture = .body;
+                    }
+                },
+                .element_end => capture = .none,
+                .text => |bytes| switch (capture) {
+                    .none => {},
+                    .creator => author = try m.arena.dupe(u8, bytes),
+                    .date => timestamp = try m.arena.dupe(u8, bytes),
+                    .body => {
+                        const room = max_annotation_note_bytes -| note.items.len;
+                        const take = @min(room, bytes.len);
+                        try note.appendSlice(m.arena, bytes[0..take]);
+                    },
+                },
+            }
+        }
+
+        const data: core.facets.RevisionData = .{
+            .kind = .comment,
+            .author = author,
+            .timestamp = timestamp,
+            .note = note.items,
+        };
+        if (m.currentParagraphToken()) |token| {
+            try m.ctx.out.attachRevision(token, data);
+            return;
+        }
+        if (m.pending_comment == null) {
+            m.pending_comment = .{
+                .author = author,
+                .timestamp = timestamp,
+                .note = try m.arena.dupe(u8, note.items),
+            };
+        }
+    }
+
+    /// Extracts an internal image part and registers it with the resource
+    /// store under the same source name the `image` node carries. External
+    /// references and broken parts keep the old behavior; a part past the
+    /// resource limits degrades to a counted note.
+    fn registerImage(m: *Machine, source: []const u8) core.ReadError!void {
+        if (source.len == 0) return;
+        if (std.mem.indexOfScalar(u8, source, ':') != null) return;
+        const archive = m.archive orelse return;
+        const lookup = if (std.mem.startsWith(u8, source, "./")) source[2..] else source;
+        const entry = archive.find(lookup) orelse return;
+        const bytes = archive.extract(m.arena, entry, m.ctx.limits) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.LimitExceeded => {
+                try m.ctx.reports.add(mediaLimitNote());
+                return;
+            },
+            else => return,
+        };
+        if (bytes.len == 0) return;
+        _ = m.ctx.out.resource(source, bytes, imageMime(lookup)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.DepthLimitExceeded => return error.DepthLimitExceeded,
+            error.LimitExceeded => {
+                try m.ctx.reports.add(mediaLimitNote());
+                return;
+            },
+        };
     }
 
     /// A footnote sits inline in `content.xml`; its body is captured as a
@@ -788,90 +945,13 @@ fn styleAttribute(attributes: []const xml.Attribute) ?[]const u8 {
     return null;
 }
 
-// ------------------------------------------------------------- reports
-
-fn archiveReport() core.Report {
-    return .{
-        .severity = .err,
-        .code = "odt.not-an-archive",
-        .title = "NOT A READABLE ODT ARCHIVE",
-        .problem = "This file is not a ZIP archive zenfmt can read, or it " ++
-            "trips an archive safety limit.",
-        .consequence = "The conversion stopped and no output file was " ++
-            "created.",
-        .directions = &.{.{
-            .title = "Check the file",
-            .explanation = "Open the file in LibreOffice to verify it is " ++
-                "intact, and check the detected format.",
-        }},
-    };
-}
-
-fn missingContentReport() core.Report {
-    return .{
-        .severity = .err,
-        .code = "odt.missing-content",
-        .title = "THE CONTENT PART IS MISSING",
-        .problem = "The archive opens but contains no content.xml, so it " ++
-            "is not an OpenDocument text file.",
-        .consequence = "The conversion stopped and no output file was " ++
-            "created.",
-        .directions = &.{.{
-            .title = "Re-export the document",
-            .explanation = "Re-save the document from LibreOffice or its " ++
-                "producing application and convert the fresh copy.",
-        }},
-    };
-}
-
-fn malformedReport() core.Report {
-    return .{
-        .severity = .err,
-        .code = "odt.malformed-xml",
-        .title = "MALFORMED XML INSIDE THE DOCUMENT",
-        .problem = "A part inside this document is not well-formed XML, " ++
-            "or nests beyond the safety limit.",
-        .consequence = "The conversion stopped and no output file was " ++
-            "created.",
-        .directions = &.{.{
-            .title = "Re-export the document",
-            .explanation = "Open the document in LibreOffice; if it " ++
-                "opens, re-save it and convert the fresh copy.",
-        }},
-    };
-}
-
-fn annotationReport() core.Report {
-    return .{
-        .severity = .warning,
-        .code = "odt.annotations-dropped",
-        .title = "ANNOTATIONS DROPPED",
-        .problem = "This document contains annotations (comments), and " ++
-            "comments have no place in the shared document tree.",
-        .consequence = "The annotations are absent from the output.",
-        .loss = .dropped,
-        .directions = &.{.{
-            .title = "Keep the source",
-            .explanation = "Keep the source ODT if the annotations " ++
-                "matter; they exist only there.",
-        }},
-    };
-}
-
-fn frameDroppedReport() core.Report {
-    return .{
-        .severity = .warning,
-        .code = "odt.frame-dropped",
-        .title = "A DRAWING FRAME WAS DROPPED",
-        .problem = "This document contains a drawing frame with neither " ++
-            "an image source nor a description, such as a decorative " ++
-            "shape.",
-        .consequence = "The frame is absent from the output.",
-        .loss = .dropped,
-        .directions = &.{.{
-            .title = "Keep the source",
-            .explanation = "Keep the source ODT if the drawing matters; " ++
-                "it exists only there.",
-        }},
-    };
-}
+// The report constructors and media helpers live in `reports.zig`
+// (file-size rule).
+const reports_mod = @import("reports.zig");
+const archiveReport = reports_mod.archiveReport;
+const missingContentReport = reports_mod.missingContentReport;
+const malformedReport = reports_mod.malformedReport;
+const imageMime = reports_mod.imageMime;
+const mediaLimitNote = reports_mod.mediaLimitNote;
+const annotationReport = reports_mod.annotationReport;
+const frameDroppedReport = reports_mod.frameDroppedReport;

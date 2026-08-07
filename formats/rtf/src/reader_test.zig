@@ -217,3 +217,40 @@ test "images and objects are reported, not silently dropped" {
     try testing.expect(std.mem.indexOf(u8, text, "89504e47") == null);
     try testing.expect(std.mem.indexOf(u8, text, "Before") != null);
 }
+
+test "stylesheet names become style facets on styled paragraphs" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const converted = try convertRtf(
+        arena,
+        "{\\rtf1\\ansi{\\stylesheet{\\s0 Normal;}{\\s1\\b\\fs32 Heading 1;}" ++
+            "{\\*\\cs16 Hyperlink;}}" ++
+            "\\pard\\s1 Title text\\par" ++
+            "\\pard Plain body\\par}",
+    );
+    const store = converted.doc.store;
+
+    // Exactly the styled paragraph carries a facet; the plain one is free.
+    try testing.expectEqual(@as(usize, 1), store.style_facets.items.len);
+    const facet = store.style_facets.items[0];
+    try testing.expectEqualStrings("Heading 1", store.textSlice(facet.name));
+
+    const styled_block = store.block_entities.items[converted.doc.block_entities.start].node;
+    try testing.expectEqual(core.BlockTag.paragraph, store.blocks.items(.tag)[styled_block]);
+}
+
+test "a missing stylesheet attaches no style facets" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const converted = try convertRtf(
+        arena,
+        "{\\rtf1\\ansi\\pard\\s7 Unmapped style\\par}",
+    );
+    try testing.expectEqual(@as(usize, 0), converted.doc.store.style_facets.items.len);
+    const text = converted.doc.store.text.items;
+    try testing.expect(std.mem.indexOf(u8, text, "Unmapped") != null);
+}
