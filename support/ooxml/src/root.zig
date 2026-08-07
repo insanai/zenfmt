@@ -8,6 +8,15 @@ const xml = @import("zenfmt_xml");
 
 pub const zip = @import("zip.zig");
 
+/// The archive source for a reader's input (ZDS 0013, Core Contract
+/// Repairs): byte inputs slice, file inputs window through the handle.
+pub fn zipSource(ctx: *const core.ReadContext) zip.Source {
+    return switch (ctx.input) {
+        .bytes => |bytes| .{ .bytes = bytes },
+        .file => |file| .{ .file = .{ .io = file.io, .handle = file.handle, .size = file.size } },
+    };
+}
+
 pub const relationships_ns = "http://schemas.openxmlformats.org/package/2006/relationships";
 pub const office_document_type = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 

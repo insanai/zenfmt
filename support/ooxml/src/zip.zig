@@ -41,23 +41,91 @@ pub const Method = enum(u16) {
     _,
 };
 
-pub const Archive = struct {
+/// Where archive bytes come from: a whole-input slice, or a file handle
+/// windowed by bounded positional reads (ZDS 0013, Core Contract Repairs).
+/// The file path never holds the archive in memory: the EOCD tail, the
+/// central directory, and one entry's compressed payload at a time.
+pub const Source = union(enum) {
     bytes: []const u8,
+    file: File,
+
+    pub const File = struct {
+        io: std.Io,
+        handle: std.Io.File,
+        size: u64,
+    };
+
+    fn len(source: Source) u64 {
+        return switch (source) {
+            .bytes => |bytes| bytes.len,
+            .file => |file| file.size,
+        };
+    }
+
+    /// Reads exactly `buffer.len` bytes at `offset` into `buffer` for file
+    /// sources; returns the equivalent subslice for byte sources. The
+    /// caller has already bounds-checked the window against `len`.
+    fn window(source: Source, offset: u64, buffer: []u8) Error![]const u8 {
+        assert(offset + buffer.len <= source.len());
+        switch (source) {
+            .bytes => |bytes| {
+                const start = std.math.cast(usize, offset) orelse return error.Malformed;
+                return bytes[start..][0..buffer.len];
+            },
+            .file => |file| {
+                const read = file.handle.readPositionalAll(file.io, buffer, offset) catch
+                    return error.Malformed;
+                if (read != buffer.len) return error.Malformed;
+                return buffer;
+            },
+        }
+    }
+};
+
+/// The central directory of a hostile archive may claim absurd sizes; a
+/// directory beyond this is refused before any window is allocated. 4096
+/// maximal entries fit comfortably.
+const max_directory_bytes: u64 = 64 * 1024 * 1024;
+
+pub const Archive = struct {
+    source: Source,
     entries: []const Entry,
     total_expanded: u64 = 0,
 
     /// Parses the central directory only. Entry names are validated here,
     /// so a hostile name rejects the archive before anything is read.
     pub fn open(arena: std.mem.Allocator, bytes: []const u8, limits: core.Limits) Error!Archive {
-        const eocd = findEndRecord(bytes) orelse return error.Malformed;
+        return openSource(arena, .{ .bytes = bytes }, limits);
+    }
+
+    pub fn openSource(arena: std.mem.Allocator, source: Source, limits: core.Limits) Error!Archive {
+        const eocd = try findEndRecordSource(arena, source);
         const entry_count = eocd.entry_count;
         if (entry_count > limits.max_archive_entries) return error.LimitExceeded;
+        if (eocd.directory_size > max_directory_bytes) return error.Malformed;
+        if (eocd.directory_offset + eocd.directory_size > source.len()) return error.Malformed;
+
+        // The whole central directory as one bounded window; entry names
+        // slice into it, and it stays alive in the arena for file sources.
+        const directory_len = std.math.cast(usize, eocd.directory_size) orelse
+            return error.Malformed;
+        const directory = switch (source) {
+            .bytes => |whole| blk: {
+                const start = std.math.cast(usize, eocd.directory_offset) orelse
+                    return error.Malformed;
+                break :blk whole[start..][0..directory_len];
+            },
+            .file => blk: {
+                const buffer = try arena.alloc(u8, directory_len);
+                break :blk try source.window(eocd.directory_offset, buffer);
+            },
+        };
 
         var entries = try arena.alloc(Entry, entry_count);
-        var pos: usize = eocd.directory_offset;
+        var pos: usize = 0;
         for (0..entry_count) |i| {
-            if (pos + central_header_len > bytes.len) return error.Malformed;
-            const header = bytes[pos..];
+            if (pos + central_header_len > directory.len) return error.Malformed;
+            const header = directory[pos..];
             if (!std.mem.eql(u8, header[0..4], "PK\x01\x02")) return error.Malformed;
 
             const flags = readInt(u16, header[8..10]);
@@ -69,8 +137,8 @@ pub const Archive = struct {
             const comment_len = readInt(u16, header[32..34]);
             const header_offset = readInt(u32, header[42..46]);
 
-            if (pos + central_header_len + name_len > bytes.len) return error.Malformed;
-            const name = bytes[pos + central_header_len ..][0..name_len];
+            if (pos + central_header_len + name_len > directory.len) return error.Malformed;
+            const name = directory[pos + central_header_len ..][0..name_len];
             if (name_len > limits.max_entry_name_bytes) return error.LimitExceeded;
             if (!entryNameSafe(name)) return error.HostileEntryName;
             if (flags & 0x0001 != 0) return error.EncryptedEntry;
@@ -85,7 +153,7 @@ pub const Archive = struct {
             };
             pos += central_header_len + name_len + extra_len + comment_len;
         }
-        return .{ .bytes = bytes, .entries = entries };
+        return .{ .source = source, .entries = entries };
     }
 
     pub fn find(archive: *const Archive, name: []const u8) ?*const Entry {
@@ -104,7 +172,7 @@ pub const Archive = struct {
         entry: *const Entry,
         limits: core.Limits,
     ) Error![]const u8 {
-        const data = try archive.entryData(entry);
+        const data = try archive.entryData(arena, entry);
 
         if (entry.uncompressed_size > limits.max_entry_uncompressed) return error.LimitExceeded;
         // The declared sizes bound the budget; the streamed check below
@@ -126,18 +194,37 @@ pub const Archive = struct {
         return expanded;
     }
 
-    fn entryData(archive: *const Archive, entry: *const Entry) Error![]const u8 {
-        const bytes = archive.bytes;
-        const offset = std.math.cast(usize, entry.header_offset) orelse return error.Malformed;
-        if (offset + local_header_len > bytes.len) return error.Malformed;
-        const header = bytes[offset..];
+    /// The entry's compressed payload. Byte sources slice; file sources
+    /// window the local header and then exactly the payload, so peak
+    /// memory is one entry, never the archive.
+    fn entryData(
+        archive: *const Archive,
+        arena: std.mem.Allocator,
+        entry: *const Entry,
+    ) Error![]const u8 {
+        const source = archive.source;
+        const offset = entry.header_offset;
+        if (offset + local_header_len > source.len()) return error.Malformed;
+
+        var header_buffer: [local_header_len]u8 = undefined;
+        const header = try source.window(offset, &header_buffer);
         if (!std.mem.eql(u8, header[0..4], "PK\x03\x04")) return error.Malformed;
         const name_len = readInt(u16, header[26..28]);
         const extra_len = readInt(u16, header[28..30]);
         const data_start = offset + local_header_len + name_len + extra_len;
         const size = std.math.cast(usize, entry.compressed_size) orelse return error.Malformed;
-        if (data_start + size > bytes.len) return error.Malformed;
-        return bytes[data_start..][0..size];
+        if (data_start + size > source.len()) return error.Malformed;
+
+        switch (source) {
+            .bytes => |bytes| {
+                const start = std.math.cast(usize, data_start) orelse return error.Malformed;
+                return bytes[start..][0..size];
+            },
+            .file => {
+                const buffer = try arena.alloc(u8, size);
+                return try source.window(data_start, buffer);
+            },
+        }
     }
 };
 
@@ -147,6 +234,7 @@ const eocd_len = 22;
 
 const EndRecord = struct {
     entry_count: u16,
+    directory_size: u32,
     directory_offset: u32,
 };
 
@@ -161,11 +249,29 @@ fn findEndRecord(bytes: []const u8) ?EndRecord {
             const record = bytes[i..];
             return .{
                 .entry_count = readInt(u16, record[10..12]),
+                .directory_size = readInt(u32, record[12..16]),
                 .directory_offset = readInt(u32, record[16..20]),
             };
         }
     }
     return null;
+}
+
+/// The end record from either source kind: byte sources scan in place;
+/// file sources read one bounded tail window (comment plus record).
+fn findEndRecordSource(arena: std.mem.Allocator, source: Source) Error!EndRecord {
+    switch (source) {
+        .bytes => |bytes| return findEndRecord(bytes) orelse error.Malformed,
+        .file => {
+            const size = source.len();
+            if (size < eocd_len) return error.Malformed;
+            const tail_len = std.math.cast(usize, @min(size, eocd_len + 65535)) orelse
+                return error.Malformed;
+            const buffer = try arena.alloc(u8, tail_len);
+            const tail = try source.window(size - tail_len, buffer);
+            return findEndRecord(tail) orelse error.Malformed;
+        },
+    }
 }
 
 fn readInt(comptime T: type, bytes: *const [@sizeOf(T)]u8) T {
@@ -286,6 +392,38 @@ test "open and extract a stored archive" {
     const data = try archive.extract(arena, entry, .{});
     try testing.expectEqualStrings("<doc/>", data);
     try testing.expectEqual(@as(?*const Entry, null), archive.find("missing"));
+}
+
+test "a file-backed source opens and extracts through bounded windows" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const io = testing.io;
+
+    const bytes = try buildStoredArchive(arena, &.{
+        .{ .name = "word/document.xml", .data = "<doc/>" },
+        .{ .name = "[Content_Types].xml", .data = "<types/>" },
+    });
+
+    const dir = ".zig-cache/tmp/zenfmt-zip-source";
+    const cwd = std.Io.Dir.cwd();
+    cwd.deleteTree(io, dir) catch {};
+    try cwd.createDirPath(io, dir);
+    defer cwd.deleteTree(io, dir) catch {};
+    const path = dir ++ "/sample.zip";
+    try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
+
+    const handle = try cwd.openFile(io, path, .{});
+    defer handle.close(io);
+    var archive = try Archive.openSource(arena, .{ .file = .{
+        .io = io,
+        .handle = handle,
+        .size = bytes.len,
+    } }, .{});
+    try testing.expectEqual(@as(usize, 2), archive.entries.len);
+    const entry = archive.find("word/document.xml").?;
+    const data = try archive.extract(arena, entry, .{});
+    try testing.expectEqualStrings("<doc/>", data);
 }
 
 test "hostile entry names reject the archive" {
