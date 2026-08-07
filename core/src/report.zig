@@ -206,7 +206,18 @@ pub const Reports = struct {
                 }
             }
             if (report.context) |context| {
-                if (entry.samples.items.len < r.max_samples) {
+                // A location already sampled adds nothing; the count above
+                // carries the repetition.
+                var duplicate = false;
+                for (entry.samples.items) |existing| {
+                    if (contextEql(existing, context)) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                if (duplicate) {
+                    // Counted, not resampled.
+                } else if (entry.samples.items.len < r.max_samples) {
                     try entry.samples.append(r.gpa, context);
                 } else {
                     entry.omitted += 1;
@@ -221,6 +232,21 @@ pub const Reports = struct {
             try entry.samples.append(r.gpa, context);
         }
         try r.entries.append(r.gpa, entry);
+    }
+
+    fn contextEql(a: Context, b: Context) bool {
+        if (@as(std.meta.Tag(Context), a) != @as(std.meta.Tag(Context), b)) return false;
+        return switch (a) {
+            .source => |source| std.mem.eql(u8, source.name, b.source.name) and
+                source.line == b.source.line and
+                source.span_start == b.source.span_start and
+                source.span_len == b.source.span_len,
+            .logical => |name| std.mem.eql(u8, name, b.logical),
+            .archive_member => |member| std.mem.eql(u8, member, b.archive_member),
+            .argv => |argv| argv.highlight == b.argv.highlight,
+            .path => |path| std.mem.eql(u8, path.path, b.path.path) and
+                std.mem.eql(u8, path.operation, b.path.operation),
+        };
     }
 
     fn aggregates(existing: Report, candidate: Report) bool {
@@ -325,8 +351,14 @@ fn renderOne(report: Report, out: *std.Io.Writer, options: RenderOptions) std.Io
     if (report.directions.len > 0) {
         try out.writeAll("\nWhat you can do:\n");
         for (report.directions) |direction| {
-            try out.writeAll("\n");
-            try renderWrapped(out, direction.explanation, 4);
+            try out.writeAll("\n  ");
+            try out.writeAll(direction.title);
+            try out.writeAll(":\n");
+            // A direction whose title says everything carries no separate
+            // explanation line; repeating the bytes would read as a stutter.
+            if (!std.mem.eql(u8, direction.title, direction.explanation)) {
+                try renderWrapped(out, direction.explanation, 4);
+            }
             if (direction.command) |command| {
                 try out.writeAll("\n        ");
                 try renderCommand(command, out);

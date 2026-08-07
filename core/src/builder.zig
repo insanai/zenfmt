@@ -15,6 +15,9 @@ const std = @import("std");
 const assert = std.debug.assert;
 const ast = @import("ast.zig");
 const payload = @import("payload.zig");
+const facets = @import("facets.zig");
+const resources_mod = @import("resources.zig");
+const manifest = @import("manifest.zig");
 const metadata = @import("metadata.zig");
 const limits_mod = @import("limits.zig");
 
@@ -22,8 +25,9 @@ const Store = ast.Store;
 const ByteRange = ast.ByteRange;
 const BlockTag = ast.BlockTag;
 const InlineTag = ast.InlineTag;
+const EntityId = ast.EntityId;
 
-pub const Error = error{ OutOfMemory, DepthLimitExceeded };
+pub const Error = error{ OutOfMemory, DepthLimitExceeded, LimitExceeded };
 
 pub const BlockToken = struct { index: u32 };
 pub const InlineToken = struct { index: u32 };
@@ -64,7 +68,7 @@ pub const Builder = struct {
     open_inlines: [limits_mod.max_depth_hard_cap]u32 = undefined,
     open_inline_depth: u32 = 0,
     /// Running total of extracted media bytes, capped by the limits.
-    media_bytes_total: u64 = 0,
+    resource_bytes_total: u64 = 0,
 
     /// Coalescing state for `text`: what the last emitted node at the
     /// current inline nesting level was.
@@ -80,6 +84,27 @@ pub const Builder = struct {
 
     intern_table: std.StringHashMapUnmanaged(ByteRange) = .empty,
 
+    /// Entity assignment (ZDS 0013, Entities): per-conversion counter and
+    /// the assign-once maps from node index to entity. Zero cost until the
+    /// first facet attaches.
+    next_entity: u32 = 0,
+    block_entity_map: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+    inline_entity_map: std.AutoHashMapUnmanaged(u32, u32) = .empty,
+    /// Where this build's entity and facet rows begin, so `finish` sorts
+    /// only its own suffix of each table.
+    block_entities_start: u32,
+    inline_entities_start: u32,
+    facet_starts: FacetStarts,
+    facet_rows_total: u32 = 0,
+
+    const FacetStarts = struct {
+        provenance: u32,
+        style: u32,
+        layout: u32,
+        grid: u32,
+        revision: u32,
+    };
+
     pub fn init(gpa: std.mem.Allocator, store: *Store, limits: limits_mod.Limits) Builder {
         assert(limits.max_depth <= limits_mod.max_depth_hard_cap);
         return .{
@@ -87,6 +112,15 @@ pub const Builder = struct {
             .store = store,
             .limits = limits,
             .body_start = @intCast(store.blocks.len),
+            .block_entities_start = @intCast(store.block_entities.items.len),
+            .inline_entities_start = @intCast(store.inline_entities.items.len),
+            .facet_starts = .{
+                .provenance = @intCast(store.provenance_facets.items.len),
+                .style = @intCast(store.style_facets.items.len),
+                .layout = @intCast(store.layout_facets.items.len),
+                .grid = @intCast(store.grid_facets.items.len),
+                .revision = @intCast(store.revision_facets.items.len),
+            },
         };
     }
 
@@ -95,6 +129,8 @@ pub const Builder = struct {
         var keys = b.intern_table.keyIterator();
         while (keys.next()) |key| b.gpa.free(key.*);
         b.intern_table.deinit(b.gpa);
+        b.block_entity_map.deinit(b.gpa);
+        b.inline_entity_map.deinit(b.gpa);
         b.* = undefined;
     }
 
@@ -179,6 +215,9 @@ pub const Builder = struct {
         inlines: ast.InlineRange,
         subtree_len: u32,
     ) Error!u32 {
+        if (b.store.blocks.len + b.store.inlines.len >= b.limits.max_nodes) {
+            return error.LimitExceeded;
+        }
         const index: u32 = @intCast(b.store.blocks.len);
         try b.store.blocks.append(b.gpa, .{
             .tag = tag,
@@ -229,6 +268,9 @@ pub const Builder = struct {
     }
 
     fn appendInline(b: *Builder, tag: InlineTag, payload_index: u32, subtree_len: u32) Error!u32 {
+        if (b.store.blocks.len + b.store.inlines.len >= b.limits.max_nodes) {
+            return error.LimitExceeded;
+        }
         const index: u32 = @intCast(b.store.inlines.len);
         try b.store.inlines.append(b.gpa, .{
             .tag = tag,
@@ -306,6 +348,9 @@ pub const Builder = struct {
 
     /// Appends bytes to the text pool without creating a node.
     pub fn appendText(b: *Builder, bytes: []const u8) Error!ByteRange {
+        if (b.store.text.items.len + bytes.len > b.limits.max_decoded_text_bytes) {
+            return error.LimitExceeded;
+        }
         const start: u32 = @intCast(b.store.text.items.len);
         try b.store.text.appendSlice(b.gpa, bytes);
         return .{ .start = start, .len = @intCast(bytes.len) };
@@ -394,6 +439,110 @@ pub const Builder = struct {
         range.len = block_count - range.startRaw();
     }
 
+    // -------------------------------------------------- entities, facets
+
+    /// The entity bound to a block, assigned on first request (ZDS 0013,
+    /// Definition 6). Rows land unsorted and are ordered by node index at
+    /// `finish`.
+    pub fn blockEntityOf(b: *Builder, node: u32) Error!EntityId {
+        return b.entityOf(&b.block_entity_map, &b.store.block_entities, node);
+    }
+
+    pub fn inlineEntityOf(b: *Builder, node: u32) Error!EntityId {
+        return b.entityOf(&b.inline_entity_map, &b.store.inline_entities, node);
+    }
+
+    fn entityOf(
+        b: *Builder,
+        map: *std.AutoHashMapUnmanaged(u32, u32),
+        rows: *std.ArrayList(ast.EntityRow),
+        node: u32,
+    ) Error!EntityId {
+        const entry = try map.getOrPut(b.gpa, node);
+        if (entry.found_existing) return @enumFromInt(entry.value_ptr.*);
+        const entity = b.next_entity;
+        b.next_entity += 1;
+        entry.value_ptr.* = entity;
+        try rows.append(b.gpa, .{ .node = node, .entity = @enumFromInt(entity) });
+        return @enumFromInt(entity);
+    }
+
+    /// One facet row of budget; every attach draws from the same pool so a
+    /// facet bomb is a refusal, not an allocation storm.
+    fn takeFacetRow(b: *Builder) Error!void {
+        if (b.facet_rows_total >= b.limits.max_facet_rows) return error.LimitExceeded;
+        b.facet_rows_total += 1;
+    }
+
+    pub fn attachProvenance(b: *Builder, entity: EntityId, data: facets.ProvenanceData) Error!void {
+        assert(data.plugin.len > 0);
+        try b.takeFacetRow();
+        try b.store.provenance_facets.append(b.gpa, .{
+            .entity = entity,
+            .plugin = try b.intern(data.plugin),
+            .member = try b.intern(data.member),
+            .byte_start = data.byte_start,
+            .byte_len = data.byte_len,
+            .confidence = data.confidence,
+        });
+    }
+
+    pub fn attachStyle(b: *Builder, entity: EntityId, data: facets.StyleData) Error!void {
+        assert(data.name.len > 0 or data.role.len > 0 or data.language.len > 0);
+        try b.takeFacetRow();
+        try b.store.style_facets.append(b.gpa, .{
+            .entity = entity,
+            .name = try b.intern(data.name),
+            .role = try b.intern(data.role),
+            .language = try b.intern(data.language),
+            .direction = data.direction,
+        });
+    }
+
+    pub fn attachLayout(b: *Builder, entity: EntityId, data: facets.LayoutData) Error!void {
+        assert(data.width >= 0);
+        assert(data.height >= 0);
+        try b.takeFacetRow();
+        try b.store.layout_facets.append(b.gpa, .{
+            .entity = entity,
+            .surface = data.surface,
+            .surface_index = data.surface_index,
+            .x = data.x,
+            .y = data.y,
+            .width = data.width,
+            .height = data.height,
+            .z_order = data.z_order,
+        });
+    }
+
+    pub fn attachGrid(b: *Builder, entity: EntityId, data: facets.GridData) Error!void {
+        assert(data.merge_rows >= 1);
+        assert(data.merge_cols >= 1);
+        try b.takeFacetRow();
+        try b.store.grid_facets.append(b.gpa, .{
+            .entity = entity,
+            .sheet = try b.intern(data.sheet),
+            .row = data.row,
+            .col = data.col,
+            .value_type = data.value_type,
+            .formula = try b.appendText(data.formula),
+            .cached = try b.appendText(data.cached),
+            .merge_rows = data.merge_rows,
+            .merge_cols = data.merge_cols,
+        });
+    }
+
+    pub fn attachRevision(b: *Builder, entity: EntityId, data: facets.RevisionData) Error!void {
+        try b.takeFacetRow();
+        try b.store.revision_facets.append(b.gpa, .{
+            .entity = entity,
+            .kind = data.kind,
+            .author = try b.intern(data.author),
+            .timestamp = try b.appendText(data.timestamp),
+            .note = try b.appendText(data.note),
+        });
+    }
+
     // ---------------------------------------------------------- metadata
 
     /// Adds a string entry to the document's root metadata map.
@@ -431,6 +580,18 @@ pub const Builder = struct {
             .len = @intCast(b.pending_meta.items.len),
         });
 
+        // Entity rows sort by node index; facet suffixes sort by entity,
+        // stably, so multi-valued revision rows keep their attach order.
+        const block_rows = b.store.block_entities.items[b.block_entities_start..];
+        std.mem.sort(ast.EntityRow, block_rows, {}, entityRowLessThan);
+        const inline_rows = b.store.inline_entities.items[b.inline_entities_start..];
+        std.mem.sort(ast.EntityRow, inline_rows, {}, entityRowLessThan);
+        sortFacetSuffix(facets.Provenance, &b.store.provenance_facets, b.facet_starts.provenance);
+        sortFacetSuffix(facets.Style, &b.store.style_facets, b.facet_starts.style);
+        sortFacetSuffix(facets.Layout, &b.store.layout_facets, b.facet_starts.layout);
+        sortFacetSuffix(facets.Grid, &b.store.grid_facets, b.facet_starts.grid);
+        sortFacetSuffix(facets.Revision, &b.store.revision_facets, b.facet_starts.revision);
+
         const block_count: u32 = @intCast(b.store.blocks.len);
         const body_end = b.body_end orelse block_count;
         assert(body_end >= b.body_start);
@@ -439,11 +600,32 @@ pub const Builder = struct {
             .body = ast.BlockRange.init(b.body_start, body_end - b.body_start),
             .meta = @enumFromInt(map_index),
             .plugin_data = .empty,
+            .block_entities = .{
+                .start = b.block_entities_start,
+                .len = @intCast(block_rows.len),
+            },
+            .inline_entities = .{
+                .start = b.inline_entities_start,
+                .len = @intCast(inline_rows.len),
+            },
         };
     }
 
     fn metaEntryLessThan(store: *Store, lhs: metadata.MetaEntry, rhs: metadata.MetaEntry) bool {
         return std.mem.order(u8, store.textSlice(lhs.key), store.textSlice(rhs.key)) == .lt;
+    }
+
+    fn entityRowLessThan(_: void, lhs: ast.EntityRow, rhs: ast.EntityRow) bool {
+        return lhs.node < rhs.node;
+    }
+
+    fn sortFacetSuffix(comptime Row: type, rows: *std.ArrayList(Row), start: u32) void {
+        const suffix = rows.items[start..];
+        std.sort.block(Row, suffix, {}, struct {
+            fn lessThan(_: void, lhs: Row, rhs: Row) bool {
+                return lhs.entity.raw() < rhs.entity.raw();
+            }
+        }.lessThan);
     }
 };
 
@@ -550,6 +732,84 @@ pub const Emitter = struct {
         _ = try e.builder.leafBlock(.raw_block, index);
     }
 
+    /// Opens a namespaced extension block (ZDS 0013, Extension Nodes). The
+    /// children emitted before `endBlock` are the mandatory source-neutral
+    /// fallback subtree; the validator rejects an empty one.
+    pub fn beginExtension(
+        e: Emitter,
+        owner: []const u8,
+        name: []const u8,
+        version: u32,
+    ) Error!BlockToken {
+        return e.builder.openBlock(.extension, try e.appendExtension(owner, name, version));
+    }
+
+    /// Opens a namespaced extension inline; children are the fallback.
+    pub fn beginExtensionInline(
+        e: Emitter,
+        owner: []const u8,
+        name: []const u8,
+        version: u32,
+    ) Error!InlineToken {
+        return e.builder.openInline(.extension, try e.appendExtension(owner, name, version));
+    }
+
+    // Entities and facets (ZDS 0013). A token names the node; the entity is
+    // assigned on first use and every facet attach goes through it.
+
+    pub fn blockEntity(e: Emitter, token: BlockToken) Error!ast.EntityId {
+        return e.builder.blockEntityOf(token.index);
+    }
+
+    pub fn inlineEntity(e: Emitter, token: InlineToken) Error!ast.EntityId {
+        return e.builder.inlineEntityOf(token.index);
+    }
+
+    pub fn attachProvenance(e: Emitter, token: BlockToken, data: facets.ProvenanceData) Error!void {
+        try e.builder.attachProvenance(try e.blockEntity(token), data);
+    }
+
+    pub fn attachProvenanceInline(e: Emitter, token: InlineToken, data: facets.ProvenanceData) Error!void {
+        try e.builder.attachProvenance(try e.inlineEntity(token), data);
+    }
+
+    pub fn attachStyle(e: Emitter, token: BlockToken, data: facets.StyleData) Error!void {
+        try e.builder.attachStyle(try e.blockEntity(token), data);
+    }
+
+    pub fn attachStyleInline(e: Emitter, token: InlineToken, data: facets.StyleData) Error!void {
+        try e.builder.attachStyle(try e.inlineEntity(token), data);
+    }
+
+    pub fn attachLayout(e: Emitter, token: BlockToken, data: facets.LayoutData) Error!void {
+        try e.builder.attachLayout(try e.blockEntity(token), data);
+    }
+
+    pub fn attachGrid(e: Emitter, token: BlockToken, data: facets.GridData) Error!void {
+        try e.builder.attachGrid(try e.blockEntity(token), data);
+    }
+
+    pub fn attachRevision(e: Emitter, token: BlockToken, data: facets.RevisionData) Error!void {
+        try e.builder.attachRevision(try e.blockEntity(token), data);
+    }
+
+    pub fn attachRevisionInline(e: Emitter, token: InlineToken, data: facets.RevisionData) Error!void {
+        try e.builder.attachRevision(try e.inlineEntity(token), data);
+    }
+
+    fn appendExtension(e: Emitter, owner: []const u8, name: []const u8, version: u32) Error!u32 {
+        assert(owner.len > 0);
+        assert(name.len > 0);
+        const b = e.builder;
+        const index: u32 = @intCast(b.store.extensions.items.len);
+        try b.store.extensions.append(b.gpa, .{
+            .owner = try b.intern(owner),
+            .name = try b.intern(name),
+            .version = version,
+        });
+        return index;
+    }
+
     // Inline containers.
     pub fn beginInline(e: Emitter, tag: InlineTag) Error!InlineToken {
         assert(switch (tag) {
@@ -575,42 +835,48 @@ pub const Emitter = struct {
         e.builder.closeInline(token);
     }
 
-    pub const MediaError = Error || error{LimitExceeded};
-
-    /// Registers extracted bytes for a media source named in `beginImage`.
-    /// On path output the engine writes the bytes into a `<stem>_media`
-    /// directory beside the artifact and rewrites every image whose URL
-    /// equals `source` to the written file; stream output leaves sources
-    /// untouched. A duplicate source keeps its first registration.
-    pub fn media(
+    /// Registers extracted bytes for a resource named in `beginImage`
+    /// (ZDS 0013, the resource store). On path output the engine writes
+    /// the bytes into a `<stem>_media` directory beside the artifact and
+    /// rewrites every image whose URL equals `source` to the written file;
+    /// stream output leaves sources untouched. A duplicate source keeps
+    /// its first registration and returns its id. The digest is computed
+    /// here, once, and reused by the manifest.
+    pub fn resource(
         e: Emitter,
         source: []const u8,
         bytes: []const u8,
         mime: []const u8,
-    ) MediaError!void {
+    ) Error!resources_mod.ResourceId {
         assert(source.len > 0);
         assert(bytes.len > 0);
         const b = e.builder;
-        for (b.store.media.items) |existing| {
-            if (std.mem.eql(u8, b.store.textSlice(existing.source), source)) return;
+        for (b.store.resources.items, 0..) |existing, index| {
+            if (std.mem.eql(u8, b.store.textSlice(existing.source), source)) {
+                return @enumFromInt(index);
+            }
         }
-        if (b.store.media.items.len >= b.limits.max_media_files) return error.LimitExceeded;
-        if (b.media_bytes_total + bytes.len > b.limits.max_media_bytes) {
+        if (b.store.resources.items.len >= b.limits.max_resources) return error.LimitExceeded;
+        if (b.resource_bytes_total + bytes.len > b.limits.max_resource_bytes) {
             return error.LimitExceeded;
         }
-        b.media_bytes_total += bytes.len;
+        b.resource_bytes_total += bytes.len;
         const source_range = try b.appendText(source);
         const bytes_range: ast.ByteRange = .{
-            .start = @intCast(b.store.media_bytes.items.len),
+            .start = @intCast(b.store.resource_bytes.items.len),
             .len = @intCast(bytes.len),
         };
-        try b.store.media_bytes.appendSlice(b.gpa, bytes);
+        try b.store.resource_bytes.appendSlice(b.gpa, bytes);
         const mime_range = try b.appendText(mime);
-        try b.store.media.append(b.gpa, .{
+        const id: u32 = @intCast(b.store.resources.items.len);
+        try b.store.resources.append(b.gpa, .{
             .source = source_range,
-            .bytes = bytes_range,
             .mime = mime_range,
+            .bytes = bytes_range,
+            .digest_hex = manifest.digestHex(bytes),
+            .alt = ast.ByteRange.empty,
         });
+        return @enumFromInt(id);
     }
 
     // Inline leaves.

@@ -1,11 +1,15 @@
-//! Canonical JSON (ZDS 0002, Adjacent Artifact Manifest).
+//! The zenfmt canonical JSON profile, version 1 (ZDS 0013, Core Contract
+//! Repairs).
 //!
-//! The manifest follows RFC 8785 canonicalization rules: UTF-8, no
-//! insignificant whitespace, object keys in bytewise order, and canonical
-//! number spelling. The writer here emits canonically by construction and
-//! asserts key order; the parser is a bounded, non-recursive loop over
-//! `std.json.Scanner` so hostile manifests are refused within limits rather
-//! than recursed into.
+//! UTF-8 throughout; no insignificant whitespace; object keys unique and
+//! in bytewise order; exact integer spelling; shortest round-trip floats;
+//! a fixed escape set. This is zenfmt's own deterministic profile, not RFC
+//! 8785 (JCS): JCS orders keys by UTF-16 code units and forces every
+//! number through an IEEE-754 double, which cannot carry the exact 64-bit
+//! counts the manifest records. The writer emits canonically by
+//! construction and asserts key order; the parser is a bounded,
+//! non-recursive loop over `std.json.Scanner` so hostile manifests are
+//! refused within limits rather than recursed into.
 
 const std = @import("std");
 const assert = std.debug.assert;

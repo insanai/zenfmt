@@ -17,11 +17,38 @@ const BlockEdit = pipeline.BlockEdit;
 const InlineAction = pipeline.InlineAction;
 const InlineEdit = pipeline.InlineEdit;
 
+/// One contiguous copy the rebuild performed: `len` nodes moved from
+/// `old_start` to `new_start`. Identity runs (`old_start == new_start`)
+/// record inline ranges kept in place. Entity rebasing (ZDS 0013, Lemma 2)
+/// merges the old snapshot's entity rows against these runs.
+const Run = struct {
+    old_start: u32,
+    new_start: u32,
+    len: u32,
+};
+
 const Rebuild = struct {
     ctx: *FilterContext,
     store: *ast.Store,
     gpa: std.mem.Allocator,
     doc: *const ast.Document,
+    /// True when the old snapshot has entity rows; only then are copy runs
+    /// recorded, so entity-free conversions pay nothing here.
+    track: bool = false,
+    block_runs: std.ArrayList(Run) = .empty,
+    inline_runs: std.ArrayList(Run) = .empty,
+
+    fn recordRun(r: *Rebuild, runs: *std.ArrayList(Run), old_start: u32, new_start: u32, len: u32) FilterError!void {
+        if (!r.track or len == 0) return;
+        if (runs.items.len > 0) {
+            const last = &runs.items[runs.items.len - 1];
+            if (last.old_start + last.len == old_start and last.new_start + last.len == new_start) {
+                last.len += len;
+                return;
+            }
+        }
+        try runs.append(r.gpa, .{ .old_start = old_start, .new_start = new_start, .len = len });
+    }
 
     fn hasBlockEditsIn(r: *const Rebuild, start: u32, end: u32) bool {
         return firstEditAtOrAfter(BlockEdit, r.ctx.block_edits.items, start, end);
@@ -59,6 +86,15 @@ const Rebuild = struct {
             const column = slice.items(@field(std.meta.FieldEnum(ast.Block), field.name));
             @memcpy(column[old_len..], column[start .. start + len]);
         }
+        try r.recordRun(&r.block_runs, start, @intCast(old_len), len);
+        if (r.track) {
+            // The copied rows keep their inline ranges, so those inline
+            // nodes survive in place: identity runs.
+            for (slice.items(.inlines)[start .. start + len]) |range| {
+                if (range.isEmpty()) continue;
+                try r.recordRun(&r.inline_runs, range.startRaw(), range.startRaw(), range.len);
+            }
+        }
     }
 
     fn bulkCopyInlines(r: *Rebuild, start: u32, len: u32) FilterError!void {
@@ -70,6 +106,7 @@ const Rebuild = struct {
             const column = slice.items(@field(std.meta.FieldEnum(ast.Inline), field.name));
             @memcpy(column[old_len..], column[start .. start + len]);
         }
+        try r.recordRun(&r.inline_runs, start, @intCast(old_len), len);
     }
 
     const Work = union(enum) {
@@ -191,13 +228,18 @@ const Rebuild = struct {
             .replace_attrs => |attrs| copy.attrs = attrs,
             else => unreachable,
         };
-        if (!copy.inlines.isEmpty() and
-            r.hasInlineEditsIn(copy.inlines.startRaw(), copy.inlines.endRaw()))
-        {
-            copy.inlines = try r.rebuildInlineForest(copy.inlines);
+        if (!copy.inlines.isEmpty()) {
+            if (r.hasInlineEditsIn(copy.inlines.startRaw(), copy.inlines.endRaw())) {
+                copy.inlines = try r.rebuildInlineForest(copy.inlines);
+            } else {
+                // Kept in place: an identity run so inline entity bindings
+                // under this block survive.
+                try r.recordRun(&r.inline_runs, copy.inlines.startRaw(), copy.inlines.startRaw(), copy.inlines.len);
+            }
         }
 
         const out_index: u32 = @intCast(r.store.blocks.len);
+        try r.recordRun(&r.block_runs, node, out_index, 1);
         if (copy.subtree_len > 1) {
             copy.subtree_len = 0;
             try r.store.blocks.append(r.gpa, copy);
@@ -292,6 +334,7 @@ const Rebuild = struct {
         };
 
         const out_index: u32 = @intCast(r.store.inlines.len);
+        try r.recordRun(&r.inline_runs, node, out_index, 1);
         if (copy.subtree_len > 1) {
             copy.subtree_len = 0;
             try r.store.inlines.append(r.gpa, copy);
@@ -325,12 +368,38 @@ pub fn rebuild(ctx: *FilterContext, doc: ast.Document) FilterError!ast.Document 
         .store = store,
         .gpa = ctx.gpa,
         .doc = &doc,
+        .track = doc.block_entities.len > 0 or doc.inline_entities.len > 0,
     };
+    defer r.block_runs.deinit(r.gpa);
+    defer r.inline_runs.deinit(r.gpa);
 
-    const new_body = if (ctx.block_edits.items.len > 0 or ctx.inline_edits.items.len > 0)
+    const body_rebuilt = ctx.block_edits.items.len > 0 or ctx.inline_edits.items.len > 0;
+    const new_body = if (body_rebuilt)
         try r.rebuildBlockForest(doc.body)
     else
         doc.body;
+
+    // Entity rebasing (ZDS 0013, Lemma 2): ordered merge of the old
+    // snapshot's rows against the recorded copy runs. Surviving nodes keep
+    // their entities; dropped nodes' bindings are left behind.
+    var new_block_entities = doc.block_entities;
+    var new_inline_entities = doc.inline_entities;
+    if (body_rebuilt and r.track) {
+        std.mem.sort(Run, r.block_runs.items, {}, runLessThan);
+        std.mem.sort(Run, r.inline_runs.items, {}, runLessThan);
+        new_block_entities = try rebaseEntityRows(
+            ctx.gpa,
+            &store.block_entities,
+            doc.block_entities,
+            r.block_runs.items,
+        );
+        new_inline_entities = try rebaseEntityRows(
+            ctx.gpa,
+            &store.inline_entities,
+            doc.inline_entities,
+            r.inline_runs.items,
+        );
+    }
 
     var new_meta = doc.meta;
     if (ctx.meta_edits.items.len > 0) {
@@ -342,7 +411,55 @@ pub fn rebuild(ctx: *FilterContext, doc: ast.Document) FilterError!ast.Document 
         .body = new_body,
         .meta = new_meta,
         .plugin_data = doc.plugin_data,
+        .block_entities = new_block_entities,
+        .inline_entities = new_inline_entities,
     };
+}
+
+fn runLessThan(_: void, lhs: Run, rhs: Run) bool {
+    return lhs.old_start < rhs.old_start;
+}
+
+/// Appends the rebased entity rows for one node kind and returns the new
+/// snapshot's range. Old rows are read through a scratch copy because the
+/// destination list may reallocate while appending. Cost: O(e + r) for the
+/// merge plus O(e log e) for the final order, only when entities exist.
+fn rebaseEntityRows(
+    gpa: std.mem.Allocator,
+    rows: *std.ArrayList(ast.EntityRow),
+    old_range: ast.EntityRange,
+    runs: []const Run,
+) FilterError!ast.EntityRange {
+    assert(old_range.end() <= rows.items.len);
+    const scratch = try gpa.dupe(ast.EntityRow, rows.items[old_range.start..old_range.end()]);
+    defer gpa.free(scratch);
+
+    const new_start: u32 = @intCast(rows.items.len);
+    var run_index: usize = 0;
+    for (scratch) |row| {
+        while (run_index < runs.len and
+            runs[run_index].old_start + runs[run_index].len <= row.node)
+        {
+            run_index += 1;
+        }
+        if (run_index == runs.len) break;
+        const run = runs[run_index];
+        if (row.node < run.old_start) continue; // Node dropped.
+        assert(row.node < run.old_start + run.len);
+        try rows.append(gpa, .{
+            .node = run.new_start + (row.node - run.old_start),
+            .entity = row.entity,
+        });
+    }
+    // Identity-kept inline positions interleave with rebuilt tail
+    // positions, so the merged rows are not born sorted by node.
+    const appended = rows.items[new_start..];
+    std.mem.sort(ast.EntityRow, appended, {}, rebasedRowLessThan);
+    return .{ .start = new_start, .len = @intCast(appended.len) };
+}
+
+fn rebasedRowLessThan(_: void, lhs: ast.EntityRow, rhs: ast.EntityRow) bool {
+    return lhs.node < rhs.node;
 }
 
 /// A new root map: the old entries with the edits merged in, re-sorted.

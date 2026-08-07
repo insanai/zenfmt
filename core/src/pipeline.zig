@@ -37,7 +37,7 @@ pub const FilterAction = enum {
     replace,
 };
 
-pub const FilterError = error{ OutOfMemory, DepthLimitExceeded };
+pub const FilterError = error{ OutOfMemory, DepthLimitExceeded, LimitExceeded };
 
 pub const FilterDescriptor = struct {
     id: []const u8,

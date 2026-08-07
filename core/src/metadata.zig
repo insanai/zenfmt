@@ -353,6 +353,15 @@ fn writeInlineNode(
                 .inline_forest = .{ .cursor = children.startRaw(), .end = children.endRaw() },
             });
         },
+        .extension => |extension| {
+            try writeAttrsField(doc, w, view.attrs);
+            try contentForest(gpa, tasks, w, .{ .finish_inline = index }, .{
+                .inline_forest = .{
+                    .cursor = extension.fallback.startRaw(),
+                    .end = extension.fallback.endRaw(),
+                },
+            });
+        },
         .quote => |quote| {
             try writeAttrsField(doc, w, view.attrs);
             try contentForest(gpa, tasks, w, .{ .finish_inline = index }, .{
@@ -452,6 +461,15 @@ fn finishInline(
             try w.field("url");
             try w.string(doc.text(target.url));
         },
+        .extension => |extension| {
+            try w.field("extension_name");
+            try w.string(doc.text(extension.name));
+            try w.field("owner");
+            try w.string(doc.text(extension.owner));
+            try typeField(w, "extension");
+            try w.field("version");
+            try w.integer(extension.version);
+        },
         else => unreachable,
     }
     try w.endObject();
@@ -525,6 +543,15 @@ fn writeBlockNode(
             try writeAttrsField(doc, w, view.attrs);
             try contentForest(gpa, tasks, w, .{ .finish_block = index }, .{
                 .block_forest = .{ .cursor = list.items.startRaw(), .end = list.items.endRaw() },
+            });
+        },
+        .extension => |extension| {
+            try writeAttrsField(doc, w, view.attrs);
+            try contentForest(gpa, tasks, w, .{ .finish_block = index }, .{
+                .block_forest = .{
+                    .cursor = extension.fallback.startRaw(),
+                    .end = extension.fallback.endRaw(),
+                },
             });
         },
         .table => |table| {
@@ -607,6 +634,15 @@ fn finishBlock(
             try w.field("row_head_columns");
             try w.integer(body.row_head_columns);
             try typeField(w, "table_body");
+        },
+        .extension => |extension| {
+            try w.field("extension_name");
+            try w.string(doc.text(extension.name));
+            try w.field("owner");
+            try w.string(doc.text(extension.owner));
+            try typeField(w, "extension");
+            try w.field("version");
+            try w.integer(extension.version);
         },
         .table_cell => |cell| {
             try w.field("row_span");

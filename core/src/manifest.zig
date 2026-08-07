@@ -13,12 +13,18 @@ const json = @import("json.zig");
 const report = @import("report.zig");
 const metadata = @import("metadata.zig");
 const ast = @import("ast.zig");
+const facets_mod = @import("facets.zig");
+const lowering = @import("lowering.zig");
 const limits_mod = @import("limits.zig");
 
 pub const schema_name = "ai.insan.zenfmt.artifact-manifest";
-pub const schema_version: i64 = 1;
+/// Version 2 (ZDS 0013): adds the `facets` object carrying, per facet
+/// kind, a digest-and-count summary of carried-but-unused facet tables,
+/// with full rows under `--preserve-facets`.
+pub const schema_version: i64 = 2;
 pub const ast_schema_name = "ai.insan.zenfmt.ast";
-pub const ast_version: i64 = 1;
+/// Version 2 (ZDS 0013): extension nodes, entities, facets, resources.
+pub const ast_version: i64 = 2;
 pub const digest_algorithm = "blake3-256";
 
 pub const digest_length = 32;
@@ -61,6 +67,19 @@ pub const MediaFile = struct {
     digest_hex: DigestHex,
 };
 
+/// One facet kind's manifest entry (ZDS 0013, manifest schema v2). The
+/// default tier is the digest-and-count summary; `rows_json` carries the
+/// full canonical rows only under `--preserve-facets`.
+pub const FacetEntry = struct {
+    kind: []const u8,
+    digest_hex: DigestHex,
+    count: u64,
+    /// True when the selected writer declared no use for this facet kind:
+    /// carried but unused, not lost.
+    unused: bool,
+    rows_json: ?[]const u8 = null,
+};
+
 pub const ArtifactManifest = struct {
     source: ArtifactRef,
     artifact: ArtifactRef,
@@ -71,11 +90,14 @@ pub const ArtifactManifest = struct {
     /// Extracted media files; empty when nothing was extracted, and the
     /// `media` key is then omitted so earlier manifests stay byte-stable.
     media: []const MediaFile = &.{},
+    /// Per-kind facet summaries; the `facets` key is omitted when the
+    /// document carries none.
+    facets: []const FacetEntry = &.{},
 };
 
 // ------------------------------------------------------------- encoding
 
-/// The version 1 envelope, as canonical JSON bytes. Deterministic: no
+/// The version 2 envelope, as canonical JSON bytes. Deterministic: no
 /// timestamps, hostnames, or absolute paths.
 pub fn encode(gpa: std.mem.Allocator, m: ArtifactManifest) error{OutOfMemory}![]u8 {
     assert(m.document_metadata.len > 0);
@@ -94,6 +116,33 @@ pub fn encode(gpa: std.mem.Allocator, m: ArtifactManifest) error{OutOfMemory}![]
     try w.endObject();
     try w.field("document_metadata");
     try w.raw(m.document_metadata);
+    if (m.facets.len > 0) {
+        try w.field("facets");
+        try w.beginObject();
+        // `facetEntries` produces the entries in bytewise kind order; the
+        // canonical writer asserts it.
+        for (m.facets) |entry| {
+            try w.field(entry.kind);
+            try w.beginObject();
+            try w.field("count");
+            try w.integer(@intCast(entry.count));
+            try w.field("digest");
+            try w.beginObject();
+            try w.field("algorithm");
+            try w.string(digest_algorithm);
+            try w.field("value");
+            try w.string(&entry.digest_hex);
+            try w.endObject();
+            if (entry.rows_json) |rows| {
+                try w.field("rows");
+                try w.raw(rows);
+            }
+            try w.field("unused");
+            try w.boolean(entry.unused);
+            try w.endObject();
+        }
+        try w.endObject();
+    }
     if (m.media.len > 0) {
         try w.field("media");
         try w.beginArray();
@@ -158,6 +207,203 @@ fn encodeRef(w: *json.WriteStream, ref: ArtifactRef) error{OutOfMemory}!void {
     try w.field("id");
     try w.string(ref.plugin_id);
     try w.endObject();
+    try w.endObject();
+}
+
+// --------------------------------------------------------------- facets
+
+/// Builds the manifest's facet entries for one snapshot (ZDS 0013): for
+/// each facet kind with rows reachable from the snapshot's entities, the
+/// canonical row serialization is produced once, digested, counted, and
+/// kept in full only when `preserve` is set. `consumed` is the selected
+/// writer's declared facet list; everything else is carried but unused.
+/// Entries come out in bytewise kind order, ready for the encoder.
+pub fn facetEntries(
+    arena: std.mem.Allocator,
+    doc: *const ast.Document,
+    consumed: []const lowering.FacetKind,
+    preserve: bool,
+) error{OutOfMemory}![]const FacetEntry {
+    const reachable = try reachableEntities(arena, doc);
+    if (reachable.len == 0) return &.{};
+
+    var entries: std.ArrayList(FacetEntry) = .empty;
+    // Bytewise order of the kind names: grid, layout, provenance,
+    // revision, style.
+    try appendFacetEntry(&entries, arena, doc, .grid, reachable, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .layout, reachable, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .provenance, reachable, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .revision, reachable, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .style, reachable, consumed, preserve);
+    return entries.items;
+}
+
+/// The snapshot's entity ids, sorted, for reachability filtering.
+fn reachableEntities(
+    arena: std.mem.Allocator,
+    doc: *const ast.Document,
+) error{OutOfMemory}![]const u32 {
+    const store = doc.store;
+    const total = doc.block_entities.len + doc.inline_entities.len;
+    if (total == 0) return &.{};
+    var ids = try arena.alloc(u32, total);
+    var index: usize = 0;
+    const block_rows = store.block_entities.items[doc.block_entities.start..doc.block_entities.end()];
+    for (block_rows) |row| {
+        ids[index] = row.entity.raw();
+        index += 1;
+    }
+    const inline_rows = store.inline_entities.items[doc.inline_entities.start..doc.inline_entities.end()];
+    for (inline_rows) |row| {
+        ids[index] = row.entity.raw();
+        index += 1;
+    }
+    assert(index == total);
+    std.mem.sort(u32, ids, {}, std.sort.asc(u32));
+    return ids;
+}
+
+fn entityReachable(sorted: []const u32, entity: u32) bool {
+    var lo: usize = 0;
+    var hi: usize = sorted.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (sorted[mid] == entity) return true;
+        if (sorted[mid] < entity) lo = mid + 1 else hi = mid;
+    }
+    return false;
+}
+
+fn appendFacetEntry(
+    entries: *std.ArrayList(FacetEntry),
+    arena: std.mem.Allocator,
+    doc: *const ast.Document,
+    comptime kind: lowering.FacetKind,
+    reachable: []const u32,
+    consumed: []const lowering.FacetKind,
+    preserve: bool,
+) error{OutOfMemory}!void {
+    const store = doc.store;
+    const rows = switch (kind) {
+        .provenance => store.provenance_facets.items,
+        .style => store.style_facets.items,
+        .layout => store.layout_facets.items,
+        .grid => store.grid_facets.items,
+        .revision => store.revision_facets.items,
+    };
+    if (rows.len == 0) return;
+
+    var w = json.WriteStream.init(arena);
+    defer w.deinit();
+    var count: u64 = 0;
+    try w.beginArray();
+    for (rows) |row| {
+        if (!entityReachable(reachable, row.entity.raw())) continue;
+        count += 1;
+        try writeFacetRow(&w, store, kind, row);
+    }
+    try w.endArray();
+    if (count == 0) return;
+    const rows_json = try w.toOwnedSlice();
+
+    var unused = true;
+    for (consumed) |declared| {
+        if (declared == kind) unused = false;
+    }
+    try entries.append(arena, .{
+        .kind = @tagName(kind),
+        .digest_hex = digestHex(rows_json),
+        .count = count,
+        .unused = unused,
+        .rows_json = if (preserve) rows_json else null,
+    });
+}
+
+fn writeFacetRow(
+    w: *json.WriteStream,
+    store: *const ast.Store,
+    comptime kind: lowering.FacetKind,
+    row: anytype,
+) error{OutOfMemory}!void {
+    try w.beginObject();
+    switch (kind) {
+        .provenance => {
+            try w.field("byte_len");
+            try w.integer(@intCast(row.byte_len));
+            try w.field("byte_start");
+            try w.integer(@intCast(row.byte_start));
+            try w.field("confidence");
+            try w.string(@tagName(row.confidence));
+            try w.field("entity");
+            try w.integer(row.entity.raw());
+            try w.field("member");
+            try w.string(store.textSlice(row.member));
+            try w.field("plugin");
+            try w.string(store.textSlice(row.plugin));
+        },
+        .style => {
+            try w.field("direction");
+            try w.string(@tagName(row.direction));
+            try w.field("entity");
+            try w.integer(row.entity.raw());
+            try w.field("language");
+            try w.string(store.textSlice(row.language));
+            try w.field("name");
+            try w.string(store.textSlice(row.name));
+            try w.field("role");
+            try w.string(store.textSlice(row.role));
+        },
+        .layout => {
+            try w.field("entity");
+            try w.integer(row.entity.raw());
+            try w.field("height");
+            try w.integer(row.height);
+            try w.field("surface");
+            try w.string(@tagName(row.surface));
+            try w.field("surface_index");
+            try w.integer(row.surface_index);
+            try w.field("width");
+            try w.integer(row.width);
+            try w.field("x");
+            try w.integer(row.x);
+            try w.field("y");
+            try w.integer(row.y);
+            try w.field("z_order");
+            try w.integer(row.z_order);
+        },
+        .grid => {
+            try w.field("cached");
+            try w.string(store.textSlice(row.cached));
+            try w.field("col");
+            try w.integer(row.col);
+            try w.field("entity");
+            try w.integer(row.entity.raw());
+            try w.field("formula");
+            try w.string(store.textSlice(row.formula));
+            try w.field("merge_cols");
+            try w.integer(row.merge_cols);
+            try w.field("merge_rows");
+            try w.integer(row.merge_rows);
+            try w.field("row");
+            try w.integer(row.row);
+            try w.field("sheet");
+            try w.string(store.textSlice(row.sheet));
+            try w.field("value_type");
+            try w.string(@tagName(row.value_type));
+        },
+        .revision => {
+            try w.field("author");
+            try w.string(store.textSlice(row.author));
+            try w.field("entity");
+            try w.integer(row.entity.raw());
+            try w.field("kind");
+            try w.string(@tagName(row.kind));
+            try w.field("note");
+            try w.string(store.textSlice(row.note));
+            try w.field("timestamp");
+            try w.string(store.textSlice(row.timestamp));
+        },
+    }
     try w.endObject();
 }
 
@@ -272,7 +518,7 @@ fn integerField(members: []json.Member, key: []const u8) ?i64 {
 
 const testing = std.testing;
 
-test "encode emits the version 1 envelope canonically" {
+test "encode emits the version 2 envelope canonically" {
     const manifest: ArtifactManifest = .{
         .source = .{
             .name = "report.docx",

@@ -12,6 +12,8 @@ const Io = std.Io;
 
 pub const ast = @import("ast.zig");
 pub const payload = @import("payload.zig");
+pub const schema = @import("schema.zig");
+pub const facets = @import("facets.zig");
 pub const metadata = @import("metadata.zig");
 pub const builder = @import("builder.zig");
 pub const limits = @import("limits.zig");
@@ -21,9 +23,12 @@ pub const manifest = @import("manifest.zig");
 pub const plugin = @import("plugin.zig");
 pub const pipeline = @import("pipeline.zig");
 pub const filters = @import("filters.zig");
+pub const lowering = @import("lowering.zig");
+const detect = @import("detect.zig");
 
 pub const Limits = limits.Limits;
 pub const Document = ast.Document;
+pub const EntityId = ast.EntityId;
 pub const BlockTag = ast.BlockTag;
 pub const InlineTag = ast.InlineTag;
 pub const BlockIndex = ast.BlockIndex;
@@ -41,6 +46,7 @@ pub const ReadContext = plugin.ReadContext;
 pub const WriteContext = plugin.WriteContext;
 pub const ReadError = plugin.ReadError;
 pub const WriteError = plugin.WriteError;
+pub const Strictness = lowering.Strictness;
 pub const Pipeline = pipeline.Pipeline;
 pub const Filter = pipeline.Filter;
 pub const FilterContext = pipeline.FilterContext;
@@ -75,8 +81,13 @@ pub const ConvertOptions = struct {
     limits: Limits = .{},
     /// Replace existing artifact and manifest paths.
     overwrite: bool = false,
-    /// Treat warnings as failure, before any output is committed.
-    strict: bool = false,
+    /// The graded strict predicate (ZDS 0013): refuse the conversion,
+    /// before anything is committed, when the priced loss crosses the
+    /// grade. `.content` is bare `--strict`.
+    strict: lowering.Strictness = .off,
+    /// Serialize full facet rows into the manifest instead of the default
+    /// digest-and-count summaries (ZDS 0013, manifest schema v2).
+    preserve_facets: bool = false,
     /// The filter pipeline to run between reading and writing; stages run
     /// in declaration order and the tree is validated after each.
     pipeline: ?*const Pipeline = null,
@@ -96,7 +107,15 @@ pub const Conversion = struct {
     /// beside the artifact; on stream output this is the only copy.
     manifest_json: ?[]const u8,
     exit_class: report.ExitClass,
+    /// What the caller's stream received (ZDS 0013, Core Contract
+    /// Repairs): `.none` for path output, otherwise whether the stream got
+    /// nothing, a partial prefix, or the complete artifact. A failed
+    /// streamed conversion is thereby distinguishable from an empty
+    /// document.
+    stream: StreamState,
     arena_state: std.heap.ArenaAllocator.State,
+
+    pub const StreamState = enum(u8) { none, untouched, partial, complete };
 
     pub fn deinit(c: *Conversion, gpa: std.mem.Allocator) void {
         var arena = c.arena_state.promote(gpa);
@@ -135,8 +154,12 @@ pub fn Bundle(comptime spec: anytype) type {
             var arena_instance = std.heap.ArenaAllocator.init(gpa);
             const arena = arena_instance.allocator();
             var reports = report.Reports.init(arena, options.limits);
+            var stream: Conversion.StreamState = switch (options.output) {
+                .writer => .untouched,
+                .path => .none,
+            };
 
-            const manifest_json = run(arena, io, options, &reports) catch |err| switch (err) {
+            const manifest_json = run(arena, io, options, &reports, &stream) catch |err| switch (err) {
                 error.OutOfMemory => {
                     arena_instance.deinit();
                     const empty = std.heap.ArenaAllocator.init(gpa);
@@ -145,6 +168,7 @@ pub fn Bundle(comptime spec: anytype) type {
                         .reports = &oom_reports,
                         .manifest_json = null,
                         .exit_class = .conversion,
+                        .stream = stream,
                         .arena_state = empty.state,
                     };
                 },
@@ -156,6 +180,7 @@ pub fn Bundle(comptime spec: anytype) type {
                         .reports = final,
                         .manifest_json = null,
                         .exit_class = reports.worstExitClass(),
+                        .stream = stream,
                         .arena_state = arena_instance.state,
                     };
                 },
@@ -167,6 +192,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 .reports = final,
                 .manifest_json = manifest_json,
                 .exit_class = .conversion,
+                .stream = stream,
                 .arena_state = arena_instance.state,
             };
         }
@@ -176,9 +202,11 @@ pub fn Bundle(comptime spec: anytype) type {
             io: Io,
             options: ConvertOptions,
             reports: *Reports,
+            stream: *Conversion.StreamState,
         ) RunError![]const u8 {
-            const input = try resolveInput(arena, io, options, reports);
-            const from = try resolveFrom(arena, options, input, reports, readers);
+            var input = try resolveInput(arena, io, options, reports);
+            defer input.deinit(io);
+            const from = try resolveFrom(arena, options, &input, reports, readers);
             const to = options.to orelse default_output_format;
 
             inline for (reader_array) |reader_descriptor| {
@@ -191,8 +219,9 @@ pub fn Bundle(comptime spec: anytype) type {
                                 arena,
                                 io,
                                 options,
-                                input,
+                                &input,
                                 reports,
+                                stream,
                             );
                         }
                     }
@@ -210,8 +239,9 @@ pub fn Bundle(comptime spec: anytype) type {
             arena: std.mem.Allocator,
             io: Io,
             options: ConvertOptions,
-            input: ResolvedInput,
+            input: *ResolvedInput,
             reports: *Reports,
+            stream: *Conversion.StreamState,
         ) RunError![]const u8 {
             const loaded = loadAdjacentManifest(arena, io, options, input, reports);
 
@@ -222,7 +252,10 @@ pub fn Bundle(comptime spec: anytype) type {
             var read_context: plugin.ReadContext = .{
                 .gpa = arena,
                 .out = .{ .builder = &tree_builder },
-                .input = .{ .bytes = input.bytes },
+                .input = switch (reader_descriptor.input) {
+                    .seekable => input.source,
+                    .bytes => .{ .bytes = try inputAllBytes(arena, input, reports) },
+                },
                 .input_name = input.name,
                 .reports = reports,
                 .manifest_in = if (loaded) |*value| value else null,
@@ -231,7 +264,7 @@ pub fn Bundle(comptime spec: anytype) type {
             reader_descriptor.read(&read_context) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.Malformed, error.DepthLimitExceeded, error.LimitExceeded => {
-                    try ensureFailureReported(arena, reports, err, input);
+                    try ensureFailureReported(arena, reports, err, input.*);
                     return error.Failed;
                 },
             };
@@ -257,6 +290,10 @@ pub fn Bundle(comptime spec: anytype) type {
                         try reports.add(invalidTreeReport("core.pipeline"));
                         return error.Failed;
                     },
+                    error.LimitExceeded => {
+                        try ensureFailureReported(arena, reports, error.LimitExceeded, input.*);
+                        return error.Failed;
+                    },
                 };
             }
 
@@ -272,6 +309,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 loaded,
                 own_plugin_data,
                 reports,
+                stream,
             );
         }
 
@@ -281,11 +319,12 @@ pub fn Bundle(comptime spec: anytype) type {
             arena: std.mem.Allocator,
             io: Io,
             options: ConvertOptions,
-            input: ResolvedInput,
+            input: *ResolvedInput,
             doc: Document,
             loaded: ?manifest.Loaded,
             own_plugin_data: ?plugin.ReadContext.OwnPluginData,
             reports: *Reports,
+            stream: *Conversion.StreamState,
         ) RunError![]const u8 {
             const Blake3 = std.crypto.hash.Blake3;
 
@@ -293,9 +332,60 @@ pub fn Bundle(comptime spec: anytype) type {
             // the files and rewrites matching image URLs before the writer
             // runs, so the artifact references what will be committed.
             const media_plan: []const MediaPlanFile = switch (options.output) {
-                .path => |path| try planMedia(arena, path, doc),
+                .path => |path| try planResources(arena, path, doc),
                 .writer => &.{},
             };
+
+            const artifact_name = switch (options.output) {
+                .path => |path| std.fs.path.basename(path),
+                .writer => "stdout",
+            };
+
+            // The lowering plan (ZDS 0013): with a capability-declaring
+            // writer, degradations land as priced rule hits. Graded strict
+            // is a plan predicate gated by a dry run into a discarding
+            // writer, so a refused conversion never creates the output.
+            var plan_storage: ?lowering.Plan = null;
+            if (writer_descriptor.capabilities) |caps| {
+                if (lowering.findRefused(caps, &doc)) |tag_name| {
+                    try reports.add(try refusedConstructReport(arena, writer_descriptor.format, tag_name));
+                    return error.Failed;
+                }
+                plan_storage = try lowering.Plan.init(arena, caps.rules);
+                if (options.strict != .off) {
+                    var dry_plan = try lowering.Plan.init(arena, caps.rules);
+                    var discard_buffer: [512]u8 = undefined;
+                    var discarding = Io.Writer.Discarding.init(&discard_buffer);
+                    var dry_context: plugin.WriteContext = .{
+                        .plan = &dry_plan,
+                        .gpa = arena,
+                        .doc = &doc,
+                        .out = &discarding.writer,
+                        .reports = reports,
+                        .limits = options.limits,
+                        .manifest_in = if (loaded) |*value| value else null,
+                    };
+                    writer_descriptor.write(&dry_context) catch |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        error.WriteFailed => {
+                            try reports.add(try pathFailure(arena, "plan the output", artifact_name, err));
+                            return error.Failed;
+                        },
+                    };
+                    const total = lowering.addCost(dry_plan.cost(), lowering.reportedCost(reports));
+                    if (options.strict.refuses(total)) {
+                        dry_plan.flush(reports, options.limits) catch |err| switch (err) {
+                            error.OutOfMemory => return error.OutOfMemory,
+                            error.LimitExceeded => {
+                                try ensureFailureReported(arena, reports, error.LimitExceeded, input.*);
+                                return error.Failed;
+                            },
+                        };
+                        try reports.add(strictReport(input.name, options.strict));
+                        return error.Failed;
+                    }
+                }
+            }
 
             var atomic: ?Io.File.Atomic = null;
             defer if (atomic) |*af| af.deinit(io);
@@ -303,12 +393,8 @@ pub fn Bundle(comptime spec: anytype) type {
             var file_writer: Io.File.Writer = undefined;
             var hash_buffer: [4 * 1024]u8 = undefined;
 
-            const artifact_name = switch (options.output) {
-                .path => |path| std.fs.path.basename(path),
-                .writer => "stdout",
-            };
             const underlying: *Io.Writer = switch (options.output) {
-                .writer => |stream| stream,
+                .writer => |caller_stream| caller_stream,
                 .path => |path| blk: {
                     atomic = Io.Dir.cwd().createFileAtomic(io, path, .{
                         .replace = options.overwrite,
@@ -323,12 +409,15 @@ pub fn Bundle(comptime spec: anytype) type {
 
             var hashed = Io.Writer.Hashed(Blake3).initHasher(underlying, Blake3.init(.{}), &hash_buffer);
             var write_context: plugin.WriteContext = .{
+                .plan = if (plan_storage) |*plan| plan else null,
                 .gpa = arena,
                 .doc = &doc,
                 .out = &hashed.writer,
                 .reports = reports,
                 .limits = options.limits,
+                .manifest_in = if (loaded) |*value| value else null,
             };
+            if (options.output == .writer) stream.* = .partial;
             writer_descriptor.write(&write_context) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
                 error.WriteFailed => {
@@ -340,11 +429,29 @@ pub fn Bundle(comptime spec: anytype) type {
                 try reports.add(try pathFailure(arena, "flush the output", artifact_name, err));
                 return error.Failed;
             };
+            if (options.output == .writer) stream.* = .complete;
             const artifact_digest = manifest.digestHexFromHasher(&hashed.hasher);
 
-            // Strict mode fails before anything is committed.
-            if (options.strict and reports.worst() != null and reports.worst() != .note) {
-                try reports.add(strictReport(input.name));
+            // The plan's aggregated loss reports land before the manifest
+            // encodes, in first-hit order, exactly where the writer's
+            // per-occurrence notes used to.
+            if (plan_storage) |*plan| {
+                plan.flush(reports, options.limits) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.LimitExceeded => {
+                        try ensureFailureReported(arena, reports, error.LimitExceeded, input.*);
+                        return error.Failed;
+                    },
+                };
+            }
+
+            // A writer without a capability declaration falls back to the
+            // pre-plan strict rule: any report above a note refuses before
+            // anything is committed.
+            if (writer_descriptor.capabilities == null and options.strict != .off and
+                reports.worst() != null and reports.worst() != .note)
+            {
+                try reports.add(strictReport(input.name, options.strict));
                 return error.Failed;
             }
 
@@ -356,7 +463,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 .source = .{
                     .name = input.name,
                     .format = reader_descriptor.format,
-                    .digest_hex = manifest.digestHex(input.bytes),
+                    .digest_hex = input.digest_hex,
                     .plugin_id = reader_descriptor.id,
                 },
                 .artifact = .{
@@ -383,6 +490,12 @@ pub fn Bundle(comptime spec: anytype) type {
                     }
                     break :blk entries;
                 },
+                .facets = try manifest.facetEntries(
+                    arena,
+                    &doc,
+                    if (writer_descriptor.capabilities) |caps| caps.facets else &.{},
+                    options.preserve_facets,
+                ),
             });
 
             // Commit: artifact first, then its media, then its manifest.
@@ -402,7 +515,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 };
 
                 materialize(&atomic.?, io, options.overwrite) catch |err| {
-                    try reports.add(try commitFailure(arena, path, input, options, err));
+                    try reports.add(try commitFailure(arena, path, input.*, options, err));
                     return error.Failed;
                 };
                 // Media files belong to the artifact just committed; they
@@ -429,7 +542,7 @@ pub fn Bundle(comptime spec: anytype) type {
                     }
                 }
                 materialize(&manifest_atomic, io, options.overwrite) catch |err| {
-                    try reports.add(try commitFailure(arena, manifest_path, input, options, err));
+                    try reports.add(try commitFailure(arena, manifest_path, input.*, options, err));
                     return error.Failed;
                 };
             }
@@ -456,40 +569,66 @@ pub fn Bundle(comptime spec: anytype) type {
             return &static;
         }
 
+        /// Detection weighs both kinds of evidence (ZDS 0013, Core
+        /// Contract Repairs): when the file extension and the content
+        /// signature disagree, content routes and a note names both
+        /// findings, so `report.docx` holding RTF parses as RTF instead of
+        /// failing confusingly.
         fn resolveFrom(
             arena: std.mem.Allocator,
             options: ConvertOptions,
-            input: ResolvedInput,
+            input: *ResolvedInput,
             reports: *Reports,
             comptime descriptors: []const plugin.ReaderDescriptor,
         ) RunError![]const u8 {
             if (options.from) |from| return from;
 
-            if (extensionOf(input.name)) |extension| {
+            const from_extension: ?[]const u8 = blk: {
+                const extension = extensionOf(input.name) orelse break :blk null;
                 inline for (descriptors) |descriptor| {
                     for (descriptor.extensions) |known| {
-                        if (std.ascii.eqlIgnoreCase(extension, known)) return descriptor.format;
+                        if (std.ascii.eqlIgnoreCase(extension, known)) break :blk descriptor.format;
                     }
                 }
+                break :blk null;
+            };
+            // A file input with a recognized extension routes without
+            // sniffing, so the file is never slurped just to be doubted;
+            // the extension-mismatch note applies to byte inputs and to
+            // files whose extension resolves nothing.
+            if (input.source == .file) {
+                if (from_extension) |by_name| return by_name;
             }
-            switch (sniff(input.bytes)) {
-                .docx => return "docx",
-                .xlsx => return "xlsx",
-                .xlsb => return "xlsb",
-                .pptx => return "pptx",
-                .odt => return "odt",
-                .ods => return "ods",
-                .odp => return "odp",
-                .epub => return "epub",
-                .zip => return "docx",
-                .rtf => return "rtf",
-                .pdf => return "pdf",
-                .doc => return "doc",
-                .xls => return "xls",
-                .ppt => return "ppt",
-                .none => {},
+            const sniff_bytes = try inputAllBytes(arena, input, reports);
+            const from_content: ?[]const u8 = switch (sniff(sniff_bytes)) {
+                .docx => "docx",
+                .xlsx => "xlsx",
+                .xlsb => "xlsb",
+                .pptx => "pptx",
+                .odt => "odt",
+                .ods => "ods",
+                .odp => "odp",
+                .epub => "epub",
+                .zip => "docx",
+                .rtf => "rtf",
+                .pdf => "pdf",
+                .doc => "doc",
+                .xls => "xls",
+                .ppt => "ppt",
+                .none => null,
+            };
+
+            if (from_extension) |by_name| {
+                const by_bytes = from_content orelse return by_name;
+                if (std.mem.eql(u8, by_name, by_bytes)) return by_name;
+                // A bare ZIP signature is a weak hint, not a content
+                // finding: any OOXML extension outranks it.
+                if (sniff(sniff_bytes) == .zip) return by_name;
+                try reports.add(try extensionMismatch(arena, input.name, by_name, by_bytes));
+                return by_bytes;
             }
-            try reportUndetectable(arena, reports, input, readerFormats());
+            if (from_content) |by_bytes| return by_bytes;
+            try reportUndetectable(arena, reports, input.*, readerFormats());
             return error.Failed;
         }
 
@@ -561,52 +700,12 @@ fn validateBundle(
 
 // --------------------------------------------------- engine mechanics
 
-pub const ResolvedInput = struct {
-    bytes: []const u8,
-    /// Display name: a basename, never an absolute path.
-    name: []const u8,
-    path: ?[]const u8,
-};
-
-fn resolveInput(
-    arena: std.mem.Allocator,
-    io: Io,
-    options: ConvertOptions,
-    reports: *Reports,
-) RunError!ResolvedInput {
-    switch (options.input) {
-        .bytes => |input| {
-            if (input.data.len > options.limits.max_input_bytes) {
-                try reports.add(inputTooLarge(input.name, options.limits));
-                return error.Failed;
-            }
-            return .{ .bytes = input.data, .name = input.name, .path = null };
-        },
-        .path => |path| {
-            const bytes = Io.Dir.cwd().readFileAlloc(
-                io,
-                path,
-                arena,
-                .limited(options.limits.max_input_bytes + 1),
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.StreamTooLong => {
-                    try reports.add(inputTooLarge(path, options.limits));
-                    return error.Failed;
-                },
-                else => {
-                    try reports.add(try pathFailure(arena, "read the input file", path, err));
-                    return error.Failed;
-                },
-            };
-            return .{
-                .bytes = bytes,
-                .name = std.fs.path.basename(path),
-                .path = path,
-            };
-        },
-    }
-}
+pub const ResolvedInput = detect.ResolvedInput;
+const resolveInput = detect.resolveInput;
+const inputAllBytes = detect.inputAllBytes;
+const Sniffed = detect.Sniffed;
+const sniff = detect.sniff;
+const extensionOf = detect.extensionOf;
 
 /// Reads and verifies `<input>.zenfmt.json`. Missing is normal; malformed,
 /// oversized, or digest-mismatched is a warning and the data is ignored.
@@ -614,7 +713,7 @@ fn loadAdjacentManifest(
     arena: std.mem.Allocator,
     io: Io,
     options: ConvertOptions,
-    input: ResolvedInput,
+    input: *ResolvedInput,
     reports: *Reports,
 ) ?manifest.Loaded {
     const path = input.path orelse return null;
@@ -636,7 +735,7 @@ fn loadAdjacentManifest(
         reports.add(staleManifest(manifest_path, path)) catch {};
         return null;
     };
-    const actual = manifest.digestHex(input.bytes);
+    const actual = input.digest_hex;
     if (!std.mem.eql(u8, &loaded.artifact_digest_hex, &actual)) {
         reports.add(staleManifest(manifest_path, path)) catch {};
         return null;
@@ -720,7 +819,7 @@ const MediaPlanFile = struct {
 /// URL equals the entry's source to the planned relative path, and returns
 /// the write plan. Runs before the writer so the artifact references the
 /// files the commit step will create.
-fn planMedia(
+fn planResources(
     arena: std.mem.Allocator,
     output_path: []const u8,
     doc: Document,
@@ -729,20 +828,20 @@ fn planMedia(
     // the engine allocated every store a document can reference, and this
     // rewrite is the engine's own commit step.
     const store: *ast.Store = @constCast(doc.store);
-    if (store.media.items.len == 0) return &.{};
+    if (store.resources.items.len == 0) return &.{};
 
     const base = std.fs.path.basename(output_path);
     const stem = if (std.mem.lastIndexOfScalar(u8, base, '.')) |dot| base[0..dot] else base;
     const parent = std.fs.path.dirname(output_path);
 
     var plan: std.ArrayList(MediaPlanFile) = .empty;
-    const media_count = store.media.items.len;
+    const media_count = store.resources.items.len;
     var index: u32 = 0;
     while (index < media_count) : (index += 1) {
-        const entry = store.media.items[index];
+        const entry = store.resources.items[index];
         if (entry.bytes.len == 0) continue;
         const source = store.textSlice(entry.source);
-        const bytes = store.media_bytes.items[entry.bytes.start..][0..entry.bytes.len];
+        const bytes = store.resource_bytes.items[entry.bytes.start..][0..entry.bytes.len];
         const extension = mediaExtension(store.textSlice(entry.mime));
         const rel_path = try std.fmt.allocPrint(
             arena,
@@ -775,7 +874,7 @@ fn planMedia(
             .rel_path = rel_path,
             .disk_path = disk_path,
             .bytes = bytes,
-            .digest_hex = manifest.digestHex(bytes),
+            .digest_hex = entry.digest_hex,
         });
     }
     return plan.items;
@@ -809,78 +908,6 @@ fn materialize(atomic: *Io.File.Atomic, io: Io, overwrite: bool) !void {
     } else {
         try atomic.link(io);
     }
-}
-
-const Sniffed = enum {
-    none,
-    zip,
-    docx,
-    xlsx,
-    xlsb,
-    pptx,
-    odt,
-    ods,
-    odp,
-    epub,
-    rtf,
-    pdf,
-    doc,
-    xls,
-    ppt,
-};
-
-/// Content signatures. A ZIP container's specific format comes from its
-/// characteristic part names, which appear verbatim in the archive's
-/// central directory — no extraction needed to detect. A CFB container's
-/// comes from its directory entry names, stored as UTF-16LE.
-fn sniff(bytes: []const u8) Sniffed {
-    if (std.mem.startsWith(u8, bytes, "PK\x03\x04")) {
-        if (std.mem.indexOf(u8, bytes, "word/document.xml") != null) return .docx;
-        if (std.mem.indexOf(u8, bytes, "xl/workbook.bin") != null) return .xlsb;
-        if (std.mem.indexOf(u8, bytes, "xl/workbook.xml") != null) return .xlsx;
-        if (std.mem.indexOf(u8, bytes, "ppt/presentation.xml") != null) return .pptx;
-        if (std.mem.indexOf(u8, bytes, "application/epub+zip") != null) return .epub;
-        if (std.mem.indexOf(u8, bytes, "application/vnd.oasis.opendocument.text") != null) {
-            return .odt;
-        }
-        if (std.mem.indexOf(u8, bytes, "application/vnd.oasis.opendocument.spreadsheet") != null) {
-            return .ods;
-        }
-        if (std.mem.indexOf(u8, bytes, "application/vnd.oasis.opendocument.presentation") != null) {
-            return .odp;
-        }
-        return .zip;
-    }
-    if (std.mem.startsWith(u8, bytes, "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")) {
-        if (std.mem.indexOf(u8, bytes, comptime utf16le("WordDocument")) != null) return .doc;
-        if (std.mem.indexOf(u8, bytes, comptime utf16le("PowerPoint Document")) != null) {
-            return .ppt;
-        }
-        if (std.mem.indexOf(u8, bytes, comptime utf16le("Workbook")) != null) return .xls;
-        if (std.mem.indexOf(u8, bytes, comptime utf16le("Book")) != null) return .xls;
-        return .doc;
-    }
-    if (std.mem.startsWith(u8, bytes, "{\\rtf")) return .rtf;
-    if (std.mem.startsWith(u8, bytes, "%PDF")) return .pdf;
-    return .none;
-}
-
-/// The UTF-16LE spelling of an ASCII stream name, as it appears in a CFB
-/// directory sector.
-fn utf16le(comptime ascii: []const u8) []const u8 {
-    var expanded: [ascii.len * 2]u8 = undefined;
-    for (ascii, 0..) |byte, i| {
-        expanded[i * 2] = byte;
-        expanded[i * 2 + 1] = 0;
-    }
-    const frozen = expanded;
-    return &frozen;
-}
-
-fn extensionOf(name: []const u8) ?[]const u8 {
-    const index = std.mem.lastIndexOfScalar(u8, name, '.') orelse return null;
-    if (index + 1 >= name.len) return null;
-    return name[index + 1 ..];
 }
 
 /// Bounded Levenshtein distance for did-you-mean suggestions.
@@ -922,6 +949,8 @@ const reportUndetectable = engine_reports.reportUndetectable;
 const inputTooLarge = engine_reports.inputTooLarge;
 const staleManifest = engine_reports.staleManifest;
 const invalidTreeReport = engine_reports.invalidTreeReport;
+const refusedConstructReport = engine_reports.refusedConstructReport;
+const extensionMismatch = engine_reports.extensionMismatch;
 const strictReport = engine_reports.strictReport;
 const pathFailure = engine_reports.pathFailure;
 const commitFailure = engine_reports.commitFailure;
@@ -941,6 +970,10 @@ test {
     _ = plugin;
     _ = pipeline;
     _ = @import("transform.zig");
+    _ = detect;
+    _ = schema;
+    _ = facets;
+    _ = lowering;
     _ = filters;
 }
 
@@ -949,32 +982,4 @@ test "edit distance suggests the nearest format" {
     const known = [_][]const u8{ "docx", "markdown", "text" };
     try std.testing.expectEqualStrings("docx", closestFormat("docs", &known).?);
     try std.testing.expectEqual(@as(?[]const u8, null), closestFormat("zzzzz", &known));
-}
-
-test "sniffing recognizes the container signatures" {
-    try std.testing.expectEqual(Sniffed.zip, sniff("PK\x03\x04rest"));
-    try std.testing.expectEqual(Sniffed.rtf, sniff("{\\rtf1..."));
-    try std.testing.expectEqual(Sniffed.pdf, sniff("%PDF-1.7"));
-    try std.testing.expectEqual(Sniffed.none, sniff("hello"));
-    try std.testing.expectEqual(Sniffed.xlsb, sniff("PK\x03\x04..xl/workbook.bin.."));
-    try std.testing.expectEqual(Sniffed.epub, sniff("PK\x03\x04..application/epub+zip.."));
-    try std.testing.expectEqual(
-        Sniffed.ods,
-        sniff("PK\x03\x04..application/vnd.oasis.opendocument.spreadsheet.."),
-    );
-    try std.testing.expectEqual(
-        Sniffed.odp,
-        sniff("PK\x03\x04..application/vnd.oasis.opendocument.presentation.."),
-    );
-
-    const cfb_magic = "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1";
-    try std.testing.expectEqual(
-        Sniffed.doc,
-        sniff(cfb_magic ++ "..W\x00o\x00r\x00d\x00D\x00o\x00c\x00u\x00m\x00e\x00n\x00t\x00.."),
-    );
-    try std.testing.expectEqual(
-        Sniffed.xls,
-        sniff(cfb_magic ++ "..W\x00o\x00r\x00k\x00b\x00o\x00o\x00k\x00.."),
-    );
-    try std.testing.expectEqual(Sniffed.doc, sniff(cfb_magic ++ "..opaque.."));
 }

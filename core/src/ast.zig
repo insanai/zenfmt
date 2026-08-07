@@ -15,6 +15,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const payload = @import("payload.zig");
+const facets = @import("facets.zig");
+const resources_mod = @import("resources.zig");
 const metadata = @import("metadata.zig");
 const limits_mod = @import("limits.zig");
 
@@ -33,6 +35,9 @@ pub const BlockTag = enum(u8) {
     table,
     figure,
     container,
+    /// A namespaced plugin construct (ZDS 0013, Extension Nodes). Children
+    /// are the mandatory source-neutral fallback subtree.
+    extension,
 
     // Private normalized structure; appears only under its parent tag.
     line,
@@ -75,6 +80,8 @@ pub const InlineTag = enum(u8) {
     note,
     span,
     citation,
+    /// A namespaced plugin construct; children are the fallback inlines.
+    extension,
 };
 
 // ------------------------------------------------------------- indices
@@ -117,6 +124,40 @@ pub const NodeIndex = union(enum) {
     block: BlockIndex,
     // `inline` is a Zig keyword; the escaped identifier is the field name.
     @"inline": InlineIndex,
+};
+
+/// Stable logical identity shared by a kernel node and its facets (ZDS
+/// 0013, Entities). Assigned lazily, on first facet attachment; a document
+/// with no facets has no entities and pays nothing.
+pub const EntityId = enum(u32) {
+    _,
+
+    pub fn raw(id: EntityId) u32 {
+        return @intFromEnum(id);
+    }
+};
+
+/// One row of the entity side table: a node index bound to an entity. Rows
+/// live outside the node arrays, ordered by node index within a snapshot's
+/// range, so binding costs nothing per node and lookup is a binary search.
+pub const EntityRow = struct {
+    node: u32,
+    entity: EntityId,
+};
+
+/// A snapshot's slice of an entity row table. Like `Document.body`, the
+/// range is what makes snapshots over one shared store possible: the
+/// rebuild transform appends rebased rows and hands the new snapshot its
+/// own range (ZDS 0013, Lemma 2).
+pub const EntityRange = struct {
+    start: u32,
+    len: u32,
+
+    pub const empty: EntityRange = .{ .start = 0, .len = 0 };
+
+    pub fn end(range: EntityRange) u32 {
+        return range.start + range.len;
+    }
 };
 
 pub fn Range(comptime Index: type) type {
@@ -277,10 +318,23 @@ pub const Store = struct {
     block_ranges: std.ArrayList(BlockRange) = .empty,
     /// Payload table for `inlines` metadata values.
     inline_ranges: std.ArrayList(InlineRange) = .empty,
-    media: std.ArrayList(payload.Media) = .empty,
-    /// Extracted media bytes; binary, so kept out of the UTF-8 text pool.
-    /// `payload.Media.bytes` ranges index this pool.
-    media_bytes: std.ArrayList(u8) = .empty,
+    /// Payload table for `extension` blocks and inlines.
+    extensions: std.ArrayList(payload.Extension) = .empty,
+    /// Entity bindings for blocks and inlines (ZDS 0013, Entities). Nodes
+    /// carry no entity column; snapshots own ranges of these rows.
+    block_entities: std.ArrayList(EntityRow) = .empty,
+    inline_entities: std.ArrayList(EntityRow) = .empty,
+    /// The five facet tables, sorted by entity (ZDS 0013, Sparse Facets).
+    provenance_facets: std.ArrayList(facets.Provenance) = .empty,
+    style_facets: std.ArrayList(facets.Style) = .empty,
+    layout_facets: std.ArrayList(facets.Layout) = .empty,
+    grid_facets: std.ArrayList(facets.Grid) = .empty,
+    revision_facets: std.ArrayList(facets.Revision) = .empty,
+    /// The resource store (ZDS 0013): extracted binary content, digested
+    /// at registration.
+    resources: std.ArrayList(resources_mod.Resource) = .empty,
+    /// Resource content bytes; binary, kept out of the UTF-8 text pool.
+    resource_bytes: std.ArrayList(u8) = .empty,
     meta_values: std.ArrayList(metadata.MetaValue) = .empty,
     meta_entries: std.ArrayList(metadata.MetaEntry) = .empty,
     meta_maps: std.ArrayList(metadata.MetaEntryRange) = .empty,
@@ -312,6 +366,9 @@ pub const Document = struct {
     body: BlockRange,
     meta: metadata.MetaMapIndex,
     plugin_data: PluginDataRange,
+    /// This snapshot's entity bindings; empty when nothing carries facets.
+    block_entities: EntityRange = .empty,
+    inline_entities: EntityRange = .empty,
 
     pub fn block(doc: *const Document, index: BlockIndex) payload.BlockView {
         return payload.blockView(doc.store, index.raw());
@@ -413,7 +470,52 @@ pub const Document = struct {
         assert(range.start + range.len <= doc.store.plugin_namespaces.items.len);
         return doc.store.plugin_namespaces.items[range.start .. range.start + range.len];
     }
+
+    // ---------------------------------------------------- entities, facets
+
+    /// The entity bound to a block, when one exists. Binary search over
+    /// this snapshot's rows: no per-node cost when nothing carries facets.
+    pub fn blockEntity(doc: *const Document, index: BlockIndex) ?EntityId {
+        return entityLookup(doc.store.block_entities.items, doc.block_entities, index.raw());
+    }
+
+    pub fn inlineEntity(doc: *const Document, index: InlineIndex) ?EntityId {
+        return entityLookup(doc.store.inline_entities.items, doc.inline_entities, index.raw());
+    }
+
+    pub fn provenanceOf(doc: *const Document, entity: EntityId) ?facets.Provenance {
+        return facets.find(facets.Provenance, doc.store.provenance_facets.items, entity);
+    }
+
+    pub fn styleOf(doc: *const Document, entity: EntityId) ?facets.Style {
+        return facets.find(facets.Style, doc.store.style_facets.items, entity);
+    }
+
+    pub fn layoutOf(doc: *const Document, entity: EntityId) ?facets.Layout {
+        return facets.find(facets.Layout, doc.store.layout_facets.items, entity);
+    }
+
+    pub fn gridOf(doc: *const Document, entity: EntityId) ?facets.Grid {
+        return facets.find(facets.Grid, doc.store.grid_facets.items, entity);
+    }
+
+    pub fn revisionsOf(doc: *const Document, entity: EntityId) []const facets.Revision {
+        return facets.findAll(facets.Revision, doc.store.revision_facets.items, entity);
+    }
 };
+
+fn entityLookup(rows: []const EntityRow, range: EntityRange, node: u32) ?EntityId {
+    assert(range.end() <= rows.len);
+    const window = rows[range.start..range.end()];
+    var lo: usize = 0;
+    var hi: usize = window.len;
+    while (lo < hi) {
+        const mid = lo + (hi - lo) / 2;
+        if (window[mid].node == node) return window[mid].entity;
+        if (window[mid].node < node) lo = mid + 1 else hi = mid;
+    }
+    return null;
+}
 
 // ----------------------------------------------------------- traversal
 
@@ -484,11 +586,77 @@ pub fn validate(doc: *const Document, limits: limits_mod.Limits) ValidateError!v
     if (@intFromEnum(doc.meta) >= map_count) return error.InvalidDocument;
     const plugin_count = store.plugin_namespaces.items.len;
     if (doc.plugin_data.start + doc.plugin_data.len > plugin_count) return error.InvalidDocument;
+
+    try validateEntityRows(store.block_entities.items, doc.block_entities, block_count);
+    const inline_count: u32 = @intCast(store.inlines.len);
+    try validateEntityRows(store.inline_entities.items, doc.inline_entities, inline_count);
+    try validateFacets(store);
+}
+
+/// Entity rows of a snapshot are in bounds and strictly increasing by node,
+/// which gives injectivity of the binding for free (ZDS 0013, Definition 6).
+fn validateEntityRows(
+    rows: []const EntityRow,
+    range: EntityRange,
+    node_count: u32,
+) ValidateError!void {
+    if (range.end() > rows.len) return error.InvalidDocument;
+    var previous: ?u32 = null;
+    for (rows[range.start..range.end()]) |row| {
+        if (row.node >= node_count) return error.InvalidDocument;
+        if (previous) |p| {
+            if (row.node <= p) return error.InvalidDocument;
+        }
+        previous = row.node;
+    }
+}
+
+/// Facet tables are sorted by entity and every string range lands in the
+/// text pool. Revision rows may repeat an entity (multi-valued); the
+/// single-valued tables may not.
+fn validateFacets(store: *const Store) ValidateError!void {
+    const text_len = store.text.items.len;
+    try validateFacetTable(facets.Provenance, store.provenance_facets.items, text_len, false);
+    try validateFacetTable(facets.Style, store.style_facets.items, text_len, false);
+    try validateFacetTable(facets.Layout, store.layout_facets.items, text_len, false);
+    try validateFacetTable(facets.Grid, store.grid_facets.items, text_len, false);
+    try validateFacetTable(facets.Revision, store.revision_facets.items, text_len, true);
+    for (store.grid_facets.items) |row| {
+        if (row.merge_rows < 1 or row.merge_cols < 1) return error.InvalidDocument;
+    }
+}
+
+fn validateFacetTable(
+    comptime Row: type,
+    rows: []const Row,
+    text_len: usize,
+    multi_valued: bool,
+) ValidateError!void {
+    var previous: ?u32 = null;
+    for (rows) |row| {
+        if (previous) |p| {
+            const entity = row.entity.raw();
+            if (multi_valued) {
+                if (entity < p) return error.InvalidDocument;
+            } else {
+                if (entity <= p) return error.InvalidDocument;
+            }
+        }
+        previous = row.entity.raw();
+        inline for (@typeInfo(Row).@"struct".fields) |field| {
+            if (field.type == ByteRange) {
+                if (@field(row, field.name).end() > text_len) return error.InvalidDocument;
+            }
+        }
+    }
 }
 
 const BlockFrame = struct {
     end: u32,
     tag: BlockTag,
+    /// Payload index when `tag == .extension`, so owner clashes among open
+    /// extension ancestors are detectable; unused otherwise.
+    extension_payload: u32,
 };
 
 fn validateBlockForest(
@@ -532,11 +700,30 @@ fn validateBlockForest(
             limits,
         );
 
+        if (tag == .extension) {
+            // The fallback subtree is mandatory, and an extension may not
+            // nest inside an open extension of the same owner (ZDS 0013,
+            // Extension Nodes).
+            if (subtree_len < 2) return error.InvalidDocument;
+            const owner = store.extensions.items[payloads[cursor]].owner;
+            for (stack[0..depth]) |frame| {
+                if (frame.tag != .extension) continue;
+                const open = store.extensions.items[frame.extension_payload].owner;
+                if (std.mem.eql(u8, store.textSlice(open), store.textSlice(owner))) {
+                    return error.InvalidDocument;
+                }
+            }
+        }
+
         switch (payload.blockContent(tag)) {
             .blocks => {
                 if (subtree_len > 1) {
                     if (depth >= limits.max_depth) return error.InvalidDocument;
-                    stack[depth] = .{ .end = cursor + subtree_len, .tag = tag };
+                    stack[depth] = .{
+                        .end = cursor + subtree_len,
+                        .tag = tag,
+                        .extension_payload = payloads[cursor],
+                    };
                     depth += 1;
                     cursor += 1;
                 } else {
@@ -576,7 +763,12 @@ fn validateBlockNode(
 const InlineFrame = struct {
     end: u32,
     previous_child: ?InlineTag,
+    /// Payload index when the open container is an `extension`; sentinel
+    /// `maxInt` otherwise.
+    extension_payload: u32,
 };
+
+const no_extension = std.math.maxInt(u32);
 
 fn validateInlineForest(
     store: *const Store,
@@ -629,9 +821,25 @@ fn validateInlineForest(
             };
         }
 
+        if (tag == .extension) {
+            if (subtree_len < 2) return error.InvalidDocument;
+            const owner = store.extensions.items[payloads[cursor]].owner;
+            for (stack[0..depth]) |frame| {
+                if (frame.extension_payload == no_extension) continue;
+                const open = store.extensions.items[frame.extension_payload].owner;
+                if (std.mem.eql(u8, store.textSlice(open), store.textSlice(owner))) {
+                    return error.InvalidDocument;
+                }
+            }
+        }
+
         if (payload.inlineHasChildren(tag) and subtree_len > 1) {
             if (depth >= limits.max_depth) return error.InvalidDocument;
-            stack[depth] = .{ .end = cursor + subtree_len, .previous_child = null };
+            stack[depth] = .{
+                .end = cursor + subtree_len,
+                .previous_child = null,
+                .extension_payload = if (tag == .extension) payloads[cursor] else no_extension,
+            };
             depth += 1;
             cursor += 1;
         } else {

@@ -10,6 +10,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const ast = @import("ast.zig");
+const lowering = @import("lowering.zig");
 const builder = @import("builder.zig");
 const report = @import("report.zig");
 const manifest = @import("manifest.zig");
@@ -24,7 +25,19 @@ pub const InputMode = enum(u8) {
 };
 
 pub const Input = union(enum) {
+    /// The whole input in memory: bytes inputs, and file inputs slurped
+    /// for `.bytes`-mode readers.
     bytes: []const u8,
+    /// A file handle for `.seekable` readers (ZDS 0013, Core Contract
+    /// Repairs): the reader windows what it needs instead of the engine
+    /// holding the whole input.
+    file: InputFile,
+
+    pub const InputFile = struct {
+        io: std.Io,
+        handle: std.Io.File,
+        size: u64,
+    };
 };
 
 pub const ReadError = error{
@@ -58,20 +71,61 @@ pub const ReadContext = struct {
     /// its own plugin id: canonical JSON plus its schema version. The
     /// engine writes it; the reader never touches another namespace.
     own_plugin_data: ?OwnPluginData = null,
+    /// Cache for `inputBytes`: a file-backed input is slurped at most
+    /// once into the arena.
+    slurped: ?[]const u8 = null,
 
     pub const OwnPluginData = struct {
         version: i64,
         /// Canonical JSON bytes, arena-owned.
         data: []const u8,
     };
+
+    /// The whole input as bytes. Bytes inputs return their slice; a
+    /// file-backed input is read once into the arena and cached. Readers
+    /// that genuinely need random access should window through
+    /// `ctx.input.file` instead; this is the shim for parsers that work
+    /// from one slice (CFB, PDF).
+    pub fn inputBytes(ctx: *ReadContext) ReadError![]const u8 {
+        switch (ctx.input) {
+            .bytes => |bytes| return bytes,
+            .file => |file| {
+                if (ctx.slurped) |bytes| return bytes;
+                assert(file.size <= ctx.limits.max_input_bytes);
+                const size = std.math.cast(usize, file.size) orelse return error.LimitExceeded;
+                const bytes = try ctx.gpa.alloc(u8, size);
+                const read = file.handle.readPositionalAll(file.io, bytes, 0) catch
+                    return error.Malformed;
+                if (read != size) return error.Malformed;
+                ctx.slurped = bytes;
+                return bytes;
+            },
+        }
+    }
 };
 
 pub const WriteContext = struct {
+    /// The lowering plan accumulator (ZDS 0013), present when the writer
+    /// declares capabilities; emission sites record rule hits through it.
+    plan: ?*lowering.Plan = null,
     gpa: std.mem.Allocator,
     doc: *const ast.Document,
     out: *std.Io.Writer,
     reports: *report.Reports,
     limits: limits_mod.Limits,
+    /// The input's verified adjacent manifest, when one was loaded, so a
+    /// writer can recover preservation data its own reader saved (ZDS
+    /// 0013, manifest schema v2).
+    manifest_in: ?*const manifest.Loaded = null,
+
+    /// The namespace owned by `id` in the input's manifest, when present.
+    pub fn preservation(ctx: *const WriteContext, id: []const u8) ?manifest.PluginEntry {
+        const loaded = ctx.manifest_in orelse return null;
+        for (loaded.plugins) |entry| {
+            if (std.mem.eql(u8, entry.id, id)) return entry;
+        }
+        return null;
+    }
 };
 
 pub const ReaderDescriptor = struct {
@@ -90,6 +144,10 @@ pub const WriterDescriptor = struct {
     extensions: []const []const u8,
     data_version: u32,
     write: *const fn (ctx: *WriteContext) WriteError!void,
+    /// The writer's declared capabilities (ZDS 0013). When present, the
+    /// engine builds a lowering plan, prices its loss, and gates graded
+    /// strict before anything is committed.
+    capabilities: ?*const lowering.Capabilities = null,
 };
 
 pub const ReaderOptions = struct {
@@ -110,6 +168,7 @@ pub const WriterOptions = struct {
     extensions: []const []const u8,
     data_version: u32 = 0,
     write: *const fn (ctx: *WriteContext) WriteError!void,
+    capabilities: ?*const lowering.Capabilities = null,
 };
 
 pub fn Reader(comptime options: ReaderOptions) ReaderDescriptor {
@@ -132,6 +191,7 @@ pub fn Writer(comptime options: WriterOptions) WriterDescriptor {
         .extensions = options.extensions,
         .data_version = options.data_version,
         .write = options.write,
+        .capabilities = options.capabilities,
     };
 }
 

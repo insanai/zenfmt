@@ -6,6 +6,7 @@ const std = @import("std");
 const root = @import("root.zig");
 const report = @import("report.zig");
 const plugin = @import("plugin.zig");
+const lowering = @import("lowering.zig");
 
 const Reports = report.Reports;
 const Report = report.Report;
@@ -182,20 +183,82 @@ pub fn invalidTreeReport(origin: []const u8) Report {
     };
 }
 
-pub fn strictReport(input_name: []const u8) Report {
+pub fn strictReport(input_name: []const u8, grade: lowering.Strictness) Report {
     _ = input_name;
+    const problem = switch (grade) {
+        .off => unreachable,
+        .content => "The conversion would drop semantic content and " ++
+            "--strict is set.",
+        .structure => "The conversion would drop content or degrade " ++
+            "structure and --strict=structure is set.",
+        .exact => "The conversion is not an exact rendering and " ++
+            "--strict=exact is set.",
+    };
     return .{
         .severity = .err,
-        .code = "core.strict-warnings",
-        .title = "STOPPED ON WARNINGS",
-        .problem = "The conversion produced warnings and --strict is set.",
-        .consequence = "No output file was committed. The warnings above " ++
-            "describe exactly what would have been lost or changed.",
+        .code = "core.strict-refused",
+        .title = "STOPPED ON DECLARED LOSS",
+        .problem = problem,
+        .consequence = "No output was committed. The notes above price " ++
+            "exactly what the selected lowering would have lost.",
         .directions = &.{.{
-            .title = "Review the warnings",
-            .explanation = "Review each warning above. Run without " ++
-                "--strict to accept the stated losses, or fix the source " ++
-                "so the warnings disappear.",
+            .title = "Review the losses",
+            .explanation = "Review each note above. Run without --strict " ++
+                "to accept the stated losses, choose a looser grade, or " ++
+                "fix the source so the losses disappear.",
+        }},
+    };
+}
+
+pub fn extensionMismatch(
+    arena: std.mem.Allocator,
+    input_name: []const u8,
+    by_name: []const u8,
+    by_bytes: []const u8,
+) error{OutOfMemory}!Report {
+    return .{
+        .severity = .note,
+        .code = "core.extension-mismatch",
+        .title = "EXTENSION AND CONTENT DISAGREE",
+        .problem = try std.fmt.allocPrint(
+            arena,
+            "The file name says {s}, but the bytes carry a {s} signature.",
+            .{ by_name, by_bytes },
+        ),
+        .consequence = try std.fmt.allocPrint(
+            arena,
+            "Content evidence wins: the file was read as {s}.",
+            .{by_bytes},
+        ),
+        .context = .{ .logical = try arena.dupe(u8, input_name) },
+        .directions = &.{.{
+            .title = "Name the format explicitly",
+            .explanation = "Pass --from if the routing is wrong; renaming " ++
+                "the file to its real extension silences this note.",
+        }},
+    };
+}
+
+pub fn refusedConstructReport(
+    arena: std.mem.Allocator,
+    format: []const u8,
+    tag_name: []const u8,
+) error{OutOfMemory}!Report {
+    return .{
+        .severity = .err,
+        .code = "core.construct-refused",
+        .title = "CONSTRUCT REFUSED",
+        .problem = try std.fmt.allocPrint(
+            arena,
+            "This document contains a '{s}' construct, and the {s} " ++
+                "writer declares that degrading it would be misleading.",
+            .{ tag_name, format },
+        ),
+        .consequence = "No output was committed.",
+        .directions = &.{.{
+            .title = "Choose another target",
+            .explanation = "Convert to a format that can carry the " ++
+                "construct, or remove it from the source.",
         }},
     };
 }

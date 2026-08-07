@@ -44,9 +44,24 @@ pub const Limits = struct {
     /// remainder instead of listing it.
     max_report_samples: u32 = 4,
     /// Maximum media files a reader may extract from one document.
-    max_media_files: u32 = 256,
+    max_resources: u32 = 256,
     /// Maximum total bytes of extracted media across one document.
-    max_media_bytes: u64 = 128 * 1024 * 1024,
+    max_resource_bytes: u64 = 128 * 1024 * 1024,
+    /// Maximum kernel nodes, blocks plus inlines, per document (ZDS 0013);
+    /// a hostile input cannot grow the arena without bound.
+    max_nodes: u32 = 16 * 1024 * 1024,
+    /// Maximum facet rows across all facet tables; a facet bomb is a
+    /// refusal, not an allocation storm.
+    max_facet_rows: u32 = 1024 * 1024,
+    /// Maximum decoded text pool bytes, distinct from `max_input_bytes`, so
+    /// a small compressed input cannot decode into an unbounded pool.
+    max_decoded_text_bytes: u64 = 256 * 1024 * 1024,
+    /// Maximum lowering alternatives a writer may declare per construct;
+    /// the choice DAG stays a bush, not a thicket (ZDS 0013).
+    max_lowering_alternatives: u32 = 8,
+    /// Maximum lowering rule applications per conversion; the hard
+    /// backstop behind the planner's linear bound.
+    max_lowering_work: u64 = 64 * 1024 * 1024,
 
     /// One row of the `--limit` table: the field name is the public name.
     pub const Field = std.meta.FieldEnum(Limits);

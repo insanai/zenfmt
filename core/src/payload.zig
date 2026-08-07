@@ -1,15 +1,17 @@
-//! Typed payloads and the comptime node schema (ZDS 0002, Attributes).
+//! Typed payloads and views over the node schema (ZDS 0013, The Semantic
+//! Kernel).
 //!
 //! The `payload` column of a stored node is an index into a typed side table
-//! selected by the tag, reached only through the views here. One schema —
-//! `blockContent`, `blockPlacementAllowed`, and the payload validators — is
-//! consulted by the builder, the validator, and the views, so a new tag
-//! produces compile errors in every exhaustive switch rather than five
-//! handwritten tables that can drift.
+//! selected by the tag, reached only through the views here. The facts about
+//! tags — content kind, placement, payload kind — live in one comptime table
+//! in `schema.zig`; this file re-exports the derived predicates, implements
+//! payload validation against the store, and constructs the typed views. A
+//! new tag is one schema row plus compile errors in every exhaustive switch.
 
 const std = @import("std");
 const assert = std.debug.assert;
 const ast = @import("ast.zig");
+const schema = @import("schema.zig");
 
 const BlockTag = ast.BlockTag;
 const InlineTag = ast.InlineTag;
@@ -122,90 +124,32 @@ pub const CitationRange = struct {
     len: u32,
 };
 
-pub const Media = struct {
-    /// Path, URL, or archive entry name; indexes the text pool.
-    source: ByteRange,
-    /// Extracted content; indexes `Store.media_bytes`, not the text pool.
-    bytes: ByteRange,
-    mime: ByteRange,
+pub const Extension = struct {
+    /// Reverse-DNS owner, the same namespace discipline as plugin ids;
+    /// interned in the text pool.
+    owner: ByteRange,
+    /// Extension name within the owner's namespace.
+    name: ByteRange,
+    /// Schema version of the extension's meaning.
+    version: u32,
 };
 
 // -------------------------------------------------------------- schema
 
-pub const ContentKind = enum {
-    /// Leaf in the block tree; children are an inline range.
-    inlines,
-    /// Container in the block tree; descendants follow in preorder.
-    blocks,
-    /// True leaf: no children of either kind.
-    none,
-};
+pub const ContentKind = schema.ContentKind;
 
 pub fn blockContent(tag: BlockTag) ContentKind {
-    return switch (tag) {
-        .plain, .paragraph, .heading, .line, .definition_term => .inlines,
-        .code_block, .raw_block, .thematic_break => .none,
-        .line_block,
-        .quote,
-        .list,
-        .definition_list,
-        .table,
-        .figure,
-        .container,
-        .list_item,
-        .definition_entry,
-        .definition_body,
-        .caption,
-        .table_head,
-        .table_body,
-        .table_foot,
-        .table_row,
-        .table_cell,
-        => .blocks,
-    };
+    return schema.blockContent(tag);
 }
 
 /// Child tags appear only under their parent tag. `null` is a forest root:
 /// the body, a note's blocks, or a metadata block value.
 pub fn blockPlacementAllowed(parent: ?BlockTag, child: BlockTag) bool {
-    const parent_tag = parent orelse return !child.isStructural();
-    return switch (parent_tag) {
-        .list => child == .list_item,
-        .definition_list => child == .definition_entry,
-        .definition_entry => child == .definition_term or child == .definition_body,
-        .line_block => child == .line,
-        .table => switch (child) {
-            .caption, .table_head, .table_body, .table_foot => true,
-            else => false,
-        },
-        .table_head, .table_body, .table_foot => child == .table_row,
-        .table_row => child == .table_cell,
-        .figure => child == .caption or !child.isStructural(),
-        .quote, .container, .list_item, .definition_body, .table_cell, .caption => !child.isStructural(),
-        // Inline-content and childless tags never parent a block; the forest
-        // walkers never push them.
-        .plain, .paragraph, .heading, .line, .definition_term => false,
-        .code_block, .raw_block, .thematic_break => false,
-    };
+    return schema.blockPlacementAllowed(parent, child);
 }
 
 pub fn inlineHasChildren(tag: InlineTag) bool {
-    return switch (tag) {
-        .emphasis,
-        .underline,
-        .strong,
-        .strikethrough,
-        .superscript,
-        .subscript,
-        .small_caps,
-        .quote,
-        .link,
-        .image,
-        .span,
-        .citation,
-        => true,
-        .text, .space, .soft_break, .hard_break, .code, .math, .raw, .note => false,
-    };
+    return schema.inlineHasChildren(tag);
 }
 
 /// The canonical nesting order required of flag-based readers, outermost
@@ -223,16 +167,28 @@ pub const canonical_inline_order = [_]InlineTag{
 };
 
 pub fn blockPayloadValid(store: *const Store, tag: BlockTag, index: u32) bool {
-    switch (tag) {
+    return payloadKindValid(store, schema.blockRowOf(tag).payload, index);
+}
+
+pub fn inlinePayloadValid(store: *const Store, tag: InlineTag, index: u32) bool {
+    return payloadKindValid(store, schema.inlineRowOf(tag).payload, index);
+}
+
+/// One validity rule per payload kind, driven by the schema row, so the
+/// builder, the validator, and the views can never disagree about what a
+/// tag's payload column means.
+fn payloadKindValid(store: *const Store, kind: schema.PayloadKind, index: u32) bool {
+    switch (kind) {
+        .none => return index == 0,
         .heading => {
             if (index >= store.headings.items.len) return false;
             const heading = store.headings.items[index];
             return heading.level >= 1 and heading.level <= 6;
         },
         .list => return index < store.lists.items.len,
-        .code_block => return index < store.literals.items.len and
+        .literal => return index < store.literals.items.len and
             byteRangeValid(store, store.literals.items[index]),
-        .raw_block => return index < store.raws.items.len and
+        .raw => return index < store.raws.items.len and
             rawValid(store, store.raws.items[index]),
         .table => {
             if (index >= store.tables.items.len) return false;
@@ -241,40 +197,28 @@ pub fn blockPayloadValid(store: *const Store, tag: BlockTag, index: u32) bool {
         },
         .table_body => return index < store.table_bodies.items.len,
         .table_cell => return index < store.table_cells.items.len,
-        else => return index == 0,
-    }
-}
-
-pub fn inlinePayloadValid(store: *const Store, tag: InlineTag, index: u32) bool {
-    switch (tag) {
-        .text => return index < store.spans.items.len and
+        .span => return index < store.spans.items.len and
             byteRangeValid(store, store.spans.items[index]),
-        .code => return index < store.literals.items.len and
-            byteRangeValid(store, store.literals.items[index]),
         .math => return index < store.maths.items.len and
             byteRangeValid(store, store.maths.items[index].text),
-        .raw => return index < store.raws.items.len and
-            rawValid(store, store.raws.items[index]),
-        .link, .image => return index < store.targets.items.len and
+        .target => return index < store.targets.items.len and
             byteRangeValid(store, store.targets.items[index].url) and
             byteRangeValid(store, store.targets.items[index].title),
-        .note => return index < store.block_ranges.items.len,
+        .note_blocks => return index < store.block_ranges.items.len,
         .citation => {
             if (index >= store.citation_ranges.items.len) return false;
             const range = store.citation_ranges.items[index];
             return range.start + range.len <= store.citations.items.len;
         },
-        .quote => return index <= @intFromEnum(QuoteKind.double),
-        .space, .soft_break, .hard_break => return index == 0,
-        .emphasis,
-        .underline,
-        .strong,
-        .strikethrough,
-        .superscript,
-        .subscript,
-        .small_caps,
-        .span,
-        => return index == 0,
+        .quote_kind => return index <= @intFromEnum(QuoteKind.double),
+        .extension => {
+            if (index >= store.extensions.items.len) return false;
+            const extension = store.extensions.items[index];
+            return byteRangeValid(store, extension.owner) and
+                extension.owner.len > 0 and
+                byteRangeValid(store, extension.name) and
+                extension.name.len > 0;
+        },
     }
 }
 
@@ -338,6 +282,21 @@ pub const CitationView = struct {
     children: InlineRange,
 };
 
+pub const ExtensionBlockView = struct {
+    owner: ByteRange,
+    name: ByteRange,
+    version: u32,
+    /// The mandatory source-neutral fallback subtree.
+    fallback: BlockRange,
+};
+
+pub const ExtensionInlineView = struct {
+    owner: ByteRange,
+    name: ByteRange,
+    version: u32,
+    fallback: InlineRange,
+};
+
 pub const BlockView = struct {
     attrs: ast.OptionalAttrsIndex,
     content: union(BlockTag) {
@@ -354,6 +313,7 @@ pub const BlockView = struct {
         table: TableView,
         figure: BlockRange,
         container: BlockRange,
+        extension: ExtensionBlockView,
         line: InlineRange,
         list_item: BlockRange,
         definition_entry: BlockRange,
@@ -391,6 +351,7 @@ pub const InlineView = struct {
         note: BlockRange,
         span: InlineRange,
         citation: CitationView,
+        extension: ExtensionInlineView,
     },
 };
 
@@ -450,6 +411,15 @@ pub fn blockView(store: *const Store, index: u32) BlockView {
         } },
         .figure => .{ .figure = blocks },
         .container => .{ .container = blocks },
+        .extension => blk: {
+            const extension = store.extensions.items[payload_index];
+            break :blk .{ .extension = .{
+                .owner = extension.owner,
+                .name = extension.name,
+                .version = extension.version,
+                .fallback = blocks,
+            } };
+        },
         .line => .{ .line = inlines },
         .list_item => .{ .list_item = blocks },
         .definition_entry => .{ .definition_entry = blocks },
@@ -523,6 +493,15 @@ pub fn inlineViewOf(store: *const Store, index: u32) InlineView {
             .citations = store.citation_ranges.items[payload_index],
             .children = children,
         } },
+        .extension => blk: {
+            const extension = store.extensions.items[payload_index];
+            break :blk .{ .extension = .{
+                .owner = extension.owner,
+                .name = extension.name,
+                .version = extension.version,
+                .fallback = children,
+            } };
+        },
     } };
 }
 
