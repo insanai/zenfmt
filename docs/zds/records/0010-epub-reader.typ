@@ -11,6 +11,12 @@
 
 #import "../../shared/zds.typ": zds-document
 
+#let tbl(..args) = table(
+  stroke: 0.5pt + rgb("d7dee8"),
+  inset: 6pt,
+  ..args,
+)
+
 #show: doc => zds-document(
   zds-number,
   zds-title,
@@ -43,22 +49,34 @@ node set; no EPUB-specific nodes exist.
 
 = Mapping
 
-#table(
-  columns: (1fr, 1.4fr),
-  table.header([EPUB construct], [zenfmt nodes]),
+#tbl(
+  columns: (4fr, 5fr, 4fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [`dc:title`, `dc:creator`, `dc:language`, `dc:date` (first of each)],
-  [metadata strings `title`, `author`, `language`, `date`],
-  [spine `itemref` whose manifest item is `application/xhtml+xml` or `text/html`],
-  [chapter content through the HTML reader, concatenated in spine order],
-  [chapter markup (headings, paragraphs, lists, tables, emphasis, links, code)],
-  [exactly the HTML reader's mapping (ZDS 0002, tolerant tag soup)],
+  [Metadata strings `title`, `author`, `language`, `date`.],
+  [None.],
+  [Spine `itemref` whose manifest item is `application/xhtml+xml` or
+    `text/html`],
+  [Chapter content through the HTML reader, concatenated in spine order.],
+  [`ProvenanceFacet` on each chapter's first block: plugin
+    `ai.insan.zenfmt.epub`, member = the spine item's archive entry path,
+    confidence `exact` (ZDS 0013).],
+  [Chapter markup (headings, paragraphs, lists, tables, emphasis, links,
+    code)],
+  [Exactly the HTML reader's mapping (ZDS 0002, tolerant tag soup),
+    including `<details>` as an extension node.],
+  [None beyond the chapter provenance above.],
   [`img` inside a chapter],
   [`image` node; a relative source is rebased to its container entry path
-    (`OEBPS/images/pic.png`), the alt text becomes the description],
-  [relative chapter-to-chapter links],
-  [`link` with the target rebased to the container entry path; fragments kept],
-  [absolute URLs, `mailto:`, pure fragments],
-  [`link` targets passed through unchanged],
+    (`OEBPS/images/pic.png`), the alt text becomes the description.],
+  [None.],
+  [Relative chapter-to-chapter links],
+  [`link` with the target rebased to the container entry path; fragments
+    kept.],
+  [None.],
+  [Absolute URLs, `mailto:`, pure fragments],
+  [`link` targets passed through unchanged.],
+  [None.],
 )
 
 Chapters concatenate without synthetic separators: when a chapter does not begin with a
@@ -67,9 +85,9 @@ order.
 
 = Deliberate omissions
 
-#table(
+#tbl(
   columns: (1.2fr, 1.2fr, 0.8fr),
-  table.header([Construct], [Decision], [Report]),
+  table.header([*Construct*], [*Decision*], [*Report*]),
   [DRM (`META-INF/encryption.xml` present)],
   [refused outright, no override],
   [`epub.drm-refused`],

@@ -69,19 +69,25 @@ sections at most.
 = Mapping
 
 #tbl(
-  columns: (auto, 1fr),
-  table.header([*Source*], [*Tree result*]),
+  columns: (auto, 5fr, 4fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [Shown text (`Tj`, `TJ`, `'`, `"`)],
   [Decoded to UTF-8 and grouped into device-space lines by baseline
    position.],
+  [none at line level; facets attach to the projected blocks below.],
   [Consecutive lines in vertical rhythm],
   [One `paragraph`; a gap exceeding 1.7 × the line's font size, a page
    change, or an upward jump starts a new one. A line ending in `-`
    followed by a lowercase continuation joins without the hyphen.],
+  [`ProvenanceFacet` (plugin `ai.insan.zenfmt.pdf`, member `page-N`,
+   confidence `projected`) and `LayoutFacet` (surface `page`) anchored
+   at the block's first line; coordinates as described under Layout
+   facets below.],
   [Line whose font size ≥ 1.6 × the document's median body size],
   [`heading` level 1; ≥ 1.35 × level 2; ≥ 1.12 × *and* bold-named font,
    level 3. Tightly stacked heading lines of one tier merge into one
    heading.],
+  [The same provenance and layout facets as paragraphs.],
   [Glyph widths (`/FirstChar`+`/Widths`; CID `/W` ranges and lists with
    `/DW`, `/MissingWidth`)],
   [A device-space pen position, advanced per glyph by width/1000 × size
@@ -89,23 +95,30 @@ sections at most.
    one baseline join with no space when the next show starts within
    0.15 × size of the pen, and with exactly one space beyond that — so
    `(Dumm) Tj … (y) Tj` reads `Dummy`, not `Dumm y`.],
+  [none.],
   [`TJ` kerning adjustments],
   [Pen movement of −n/1000 × size when the font has width metrics (the
    gap rule above decides about the space); for width-less fonts, the
    fallback heuristic reads ≤ −180/1000 as a word space.],
+  [none.],
   [Form XObjects (`Do` on `/Subtype /Form`)],
   [Executed inline, own resources honored, bounded depth 8.],
+  [none.],
   [Painted rule lattices (`m`/`l`/`re` painted by `S`/`f`/`B` variants)],
   [A lattice of at least three spanning vertical and three spanning
    horizontal rules on one page becomes a `table`; line fragments are
    assigned to cells by device position. All rows land in `table_body`:
    PDF has no header semantics, and guessing one from typography would be
    wrong more often than right.],
+  [The same provenance and layout facets as paragraphs, anchored at the
+   table's first claimed line.],
   [Whitespace-aligned columns],
   [Three or more consecutive lines whose fragment starts cluster onto the
    same two-plus x positions become a `table` with those columns. Single
    shared columns, short runs, and drifting positions stay paragraphs —
    detection prefers prose when in doubt.],
+  [The same provenance and layout facets, anchored at the run's first
+   line.],
   [Image XObjects (`Do` on `/Subtype /Image`)],
   [Extracted as-is and committed beside the artifact through the media
    pipeline: `DCTDecode` streams verbatim as JPEG, `JPXDecode` as
@@ -113,10 +126,28 @@ sections at most.
    rasters wrapped losslessly as PNG. Each XObject registers once however
    often it is drawn; each drawing anchors an `image` at its position in
    the flow.],
+  [Resource-store entries with BLAKE3 digests, computed at registration.],
   [`/Info` `Title`, `Author`, `Subject`],
   [`metaString` `title`, `author`, `subject`; UTF-16BE with BOM and
    PDFDocEncoding both decoded.],
+  [none.],
 )
+
+== Layout facets
+
+Every projected paragraph, heading, and table carries a `LayoutFacet` in
+EMU with a top-left origin (ZDS 0013, One coordinate system), anchored at
+the block's first line. PDF user space is bottom-up, so the y axis flips
+through the page's height, taken from the page's own or inherited
+`/MediaBox` and recorded per page; a missing or hostile box falls back to
+US Letter (792 pt) rather than poisoning every facet. The stored fields
+are honest about what the projection tracks: `x` is the first line's start
+and `y` its top edge, computed as page height − baseline − font size;
+`height` is the font size; `width` is zero, because fragment extents are
+not measured. Coordinates convert at exactly 12700 EMU per point and
+saturate rather than overflow. The companion `ProvenanceFacet` names the
+plugin, the 1-based `page-N` member, and confidence `projected` — these
+blocks are heuristic projections, and the facet says so.
 
 = Deliberate omissions
 

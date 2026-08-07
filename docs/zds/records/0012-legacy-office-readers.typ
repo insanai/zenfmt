@@ -77,41 +77,74 @@ The readers are text-fidelity subsets, not full decoders:
 
 == DOC
 
+Facets (ZDS 0013): headings carry a `ProvenanceFacet` naming the plugin
+id, the `WordDocument` stream, and the paragraph's byte position in it,
+with confidence `exact`. Any paragraph whose STSH style resolves to a
+named, non-default style carries a `StyleFacet` with that name; the
+default style stays unnamed on purpose.
+
 #tbl(
-  columns: (auto, 1fr),
-  table.header([*Source*], [*Tree result*]),
+  columns: (auto, 1fr, 1fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [Paragraph mark (`0x0D`)], [`paragraph` boundary.],
+  [`StyleFacet` with the resolved STSH style name, for named non-default
+    styles.],
   [Heading 1–9 styled paragraph (STSH + PAPX istd)],
   [`heading` with the style's level, clamped to 6.],
-  [Vertical tab (`0x0B`)], [`hard_break` within the paragraph.],
-  [Tab (`0x09`)], [A space.],
+  [`ProvenanceFacet`: plugin, `WordDocument` member, byte position,
+    confidence `exact`; plus the `StyleFacet` above.],
+  [Vertical tab (`0x0B`)], [`hard_break` within the paragraph.], [none.],
+  [Tab (`0x09`)], [A space.], [none.],
   [HYPERLINK field (`0x13`/`0x14`/`0x15`)],
   [`link` around the field result text; `\l` targets become fragment
     links. Other fields keep their result text and lose their markers.],
-  [Non-breaking hyphen (`0x1E`)], [A hyphen.],
+  [none.],
+  [Non-breaking hyphen (`0x1E`)], [A hyphen.], [none.],
 )
 
 == XLS and XLSB
 
 The same projection as the XLSX reader (ZDS 0005): each sheet becomes a
 level-2 heading with the sheet name followed by one `table`; the first
-present row is the `table_head`; date- and percent-formatted numbers are
-rendered as ISO dates and percentages (both builtin format ids and custom
-format strings); booleans become `TRUE`/`FALSE`; error cells keep their
-`#REF!`-style spelling; formulas are never evaluated — the cached value
-is used. XLS honors the 1904 date epoch (DATEMODE); RK and MULRK integer
-and div-100 encodings are decoded exactly.
+present row is the `table_head`. XLS honors the 1904 date epoch (DATEMODE);
+RK and MULRK integer and div-100 encodings are decoded exactly.
+
+#tbl(
+  columns: (auto, 1fr, 1fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
+  [LABELSST, LABEL, and formula STRING results],
+  [The cell's text, shared strings resolved.],
+  [`GridFacet` with value type `text`, the record's own row and column,
+    and the text cached.],
+  [NUMBER, RK, MULRK records, and cached formula numbers],
+  [ISO dates for date formats (builtin ids and custom format strings),
+    percentages multiplied out, other numbers verbatim.],
+  [`GridFacet` with value type `number` or `date`; the rendered value is
+    cached. BIFF formula source is not decoded, so `formula` stays
+    empty.],
+  [BOOLERR records and cached formula booleans and errors],
+  [`TRUE`/`FALSE`, or the `#REF!`-style error spelling.],
+  [`GridFacet` with value type `boolean` or `error_value`.],
+  [Formulas], [Never evaluated — the cached value is used;
+    `xls.formula-without-cached-value` / `xlsb.formula-without-cached-value`
+    when there is none.],
+  [Facet coordinates are the records' own, so sparse sheets keep exact
+    positions even where the projected table compacts them.],
+)
 
 == PPT
 
 #tbl(
-  columns: (auto, 1fr),
-  table.header([*Source*], [*Tree result*]),
+  columns: (auto, 1fr, 1fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [`TextHeaderAtom` type title or centerTitle], [Level-2 heading per
     `\r`-separated line.],
+  [`ProvenanceFacet` on the heading: plugin, `PowerPoint Document`
+    member, confidence `exact`.],
   [Body and other text atoms], [`paragraph` per `\r`-separated line;
     `0x0B` is a `hard_break`.],
-  [Notes-typed text], [`container` with class `notes`.],
+  [`ProvenanceFacet` as above.],
+  [Notes-typed text], [`container` with class `notes`.], [none.],
 )
 
 = Deliberate omissions

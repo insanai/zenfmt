@@ -43,31 +43,48 @@ that a slide deck loses the most in this projection.
 = Mapping
 
 #tbl(
-  columns: (auto, 1fr),
-  table.header([*Source*], [*Tree result*]),
+  columns: (auto, 5fr, 4fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [`draw:page`], [One slide in document order.],
+  [The zero-based page index is the `surface_index` of every layout
+    facet on that slide.],
   [Frame classed `title` (`presentation:class`)], [Its first paragraph is
     the slide's `heading` (level 2). Slides without a title frame fall
     back to the page's `draw:name`; empty slides still contribute their
     heading.],
+  [`LayoutFacet` (surface `slide`) from the frame's
+    `svg:x`/`svg:y`/`svg:width`/`svg:height`, converted exactly to EMU
+    (cm 360000, mm 36000, in 914400, pt 12700, pc 152400, px 9525) and
+    attached to the heading. Frames without geometry attach none; the
+    synthetic fallback heading has no frame and attaches none.],
   [Other frames' `text:p`], [Paragraphs, in frame order.],
+  [`LayoutFacet` from the frame's geometry, attached to the frame's
+    first emitted block.],
   [`text:span`], [Character styles resolved through
     `office:automatic-styles` and `styles.xml` with
     `style:parent-style-name` chains (16 hops), exactly the ODT rules:
     bold weight → `strong`, italic → `emphasis`, and the rest of the
     canonical nesting order.],
+  [none.],
   [`text:a`], [`link` with the `xlink:href` target.],
+  [none.],
   [`text:list`], [`list`; ordered when the list style's first level is
     `text:list-level-style-number`, as in ODT.],
+  [`LayoutFacet` from the enclosing frame, when the list is the frame's
+    first block.],
   [`table:table` inside a frame], [A `table`, streamed as in the ODT
     reader. Every row lands in `table_body` — presentations have no
     header semantics — unless the deck declares
     `table:table-header-rows`, which maps to `table_head`.
     `table:covered-table-cell` folds into its originating cell and
     `table:number-columns-spanned` carries as the cell's column span.],
+  [`LayoutFacet` from the enclosing frame, when the table is the
+    frame's first block.],
   [`presentation:notes`], [A `container` with class `notes` appended
     after the slide's frames.],
+  [none.],
   [`office:annotation`], [Dropped with `odp.annotations-dropped`.],
+  [none.],
 )
 
 = Deliberate omissions

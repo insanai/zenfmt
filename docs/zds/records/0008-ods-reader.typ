@@ -45,32 +45,50 @@ capped, not trusted.
 
 = Mapping
 
+Every non-empty cell also carries a `GridFacet` (ZDS 0013): sheet name,
+zero-based row and column, value type, the formula source when present, the
+typed value as the source spelled it, and merge extents from the spanned
+attributes.
+
 #tbl(
-  columns: (auto, 1fr),
-  table.header([*Source*], [*Tree result*]),
+  columns: (auto, 1fr, 1fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [`table:table`], [One `heading` (level 2) from `table:name`, then one
     `table`; the first row is `table_head`, the rest `table_body`. Sheets
     with no non-empty cells are skipped entirely.],
+  [`GridFacet` per non-empty cell, naming the sheet.],
   [`office:value-type="float"`], [The `office:value` attribute, verbatim.],
+  [Value type `number`; `office:value` cached.],
   [`office:value-type="percentage"`], [The fraction times one hundred
     with a `%` sign.],
+  [Value type `number`; the raw fraction cached.],
   [`office:value-type="date"`], [`office:date-value` truncated at `T`:
     the ISO date, no arithmetic.],
+  [Value type `date`; `office:date-value` cached in full.],
   [`office:value-type="time"`], [`office:time-value` (`PT13H30M5S`)
     reformatted as `13:30:05`; unparseable durations fall back to the
     displayed text.],
+  [Value type `date`; the raw duration cached.],
   [`office:value-type="boolean"`], [`TRUE` or `FALSE` from
     `office:boolean-value`.],
+  [Value type `boolean`; `office:boolean-value` cached.],
   [String and currency cells], [The displayed `text:p` content,
     paragraphs joined with a space.],
+  [Value type `text` (`number` for currency); the display text cached.],
   [`table:number-columns-repeated`, `table:number-rows-repeated`],
   [Materialized up to the caps below; trailing empty cells and rows are
     grid filler and are trimmed.],
+  [Each materialized repeat is a real cell with its own coordinates.],
   [`table:covered-table-cell`], [Skipped: merged continuations fold into
     their originating cell, as in the ODT reader.],
+  [The originating cell's `GridFacet` carries `merge_rows` and
+    `merge_cols` from the spanned attributes.],
   [`table:formula`], [Never evaluated; the cached typed value is used.
     `ods.formula-without-cached-value` when there is none.],
+  [`GridFacet.formula` carries the formula source verbatim, `of:=` prefix
+    included.],
   [`office:annotation`], [Dropped with `ods.annotations-dropped`.],
+  [none.],
 )
 
 = Deliberate omissions
@@ -86,9 +104,10 @@ capped, not trusted.
     honest, a wrong rendering is not.],
   [Hidden rows, columns, and sheets], [Hiding is presentation; the data
     is the content. Everything converts.],
-  [Merged-cell geometry], [`table:number-columns-spanned` is not carried
-    to the cell payload; the covered cells are simply absent, keeping
-    rows rectangular for GFM.],
+  [Merged-cell geometry in the tree], [`table:number-columns-spanned` is
+    not carried to the cell payload; the covered cells are simply absent,
+    keeping rows rectangular for GFM. The extents survive in the
+    originating cell's `GridFacet`.],
 )
 
 = Round-trip expectations

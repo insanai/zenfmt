@@ -155,6 +155,16 @@ mapping table, its omissions, and its round-trip expectations, and inherits
 everything here about the AST, the contract, and the limits. A change to the
 node set itself amends this record and requires its own.
 
+ZDS 0013, _Layered Document IR and Writer Lowering_, supersedes this record's
+sections on the document AST, the builder, the rebuild transform, and the
+writer's lowering decisions with the IR v2 design: a semantic kernel with
+sparse facets, extension nodes, and a deterministic lowering planner. The
+replacement was a clean break: zenfmt was pre-release with no external
+consumers, so IR v2 replaced IR v1 in place with no staging or
+compatibility layer. That rewrite has landed. The superseded sections here
+are historical; ZDS 0013 is descriptive of the shipped system, and
+everything outside the superseded sections stays normative.
+
 = Terminology and Scope
 
 - *AST*: the abstract syntax tree defined under _The Document AST_. Two node
@@ -460,11 +470,15 @@ it. Code that already knows the tag calls
 views follow the same pattern. Raw storage fields and payload-table indices are
 not public API.
 
-One comptime schema maps each tag to its payload type, child kind, and allowed
-placement. It generates typed accessors, visitor dispatch, validator cases,
-debug names, and JSON metadata codecs. Adding a tag therefore produces compile
-errors in every exhaustive writer and in the schema tests; it does not require
-five handwritten tables that can drift.
+One comptime schema module maps each tag to its payload type, child kind, and
+allowed placement. As implemented, it is a set of coordinated exhaustive
+switch functions in `core/src/payload.zig` rather than a single generating
+table: adding a tag produces compile errors in every switch and in every
+exhaustive writer, so *coverage* cannot drift, but *agreement* between the
+functions (that the content rule and the validator assert the same child kind
+for a tag) is maintained by hand. ZDS 0013 replaces the coordinated switches
+with one comptime table from which accessors, placement predicates, validator
+cases, visitor dispatch, and debug names are all derived.
 
 Three points about this list are deliberate.
 
@@ -2151,7 +2165,13 @@ extraction, where only the extraction is absent.
   [HTML],
   [A tolerant parser. The reason `container`, `span`, and `raw` are in the
     node set, and the format most likely to produce deeply nested input, so it
-    is the primary consumer of `max_depth`.],
+    is the primary consumer of `max_depth`. Under IR v2 (ZDS 0013) it is
+    also the first extension-node producer: `<details>` becomes an
+    `extension` owned by `ai.insan.zenfmt.html`, its summary and content as
+    the fallback subtree, with a same-owner nested `<details>` degrading to
+    a plain `container` so the validator's nesting rule holds by
+    construction. `colspan` and `rowspan` carry into table-cell span
+    properties, where the Markdown writer's span degradation engages.],
   [CSV / TSV],
   [RFC 4180 with quoting, embedded newlines, and doubled quotes. One `table`
     with the first row as `table_head`. Note that the preliminary sketch's
@@ -2746,6 +2766,9 @@ of a node set that needs fixing while fixing it is still cheap.
 
 - ZDS 0001, The Zen Discussion Process — lifecycle, numbering, and the
   format-record obligations this document's successors inherit.
+- ZDS 0013, Layered Document IR and Writer Lowering — supersedes the AST,
+  builder, transform, and writer-lowering sections of this record with the
+  IR v2 design.
 - Pandoc's AST and filter documentation — historical inspiration for using a
   shared block/inline representation and transforms; not a compatibility or
   serialization contract.

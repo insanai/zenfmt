@@ -44,39 +44,55 @@ fidelity.
 = Mapping
 
 #tbl(
-  columns: (auto, 1fr),
-  table.header([*Source*], [*Tree result*]),
+  columns: (auto, 5fr, 4fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [`p:sldIdLst`], [Slides in presentation order, resolved through the
     presentation relationships.],
+  [The zero-based slide index is the `surface_index` of every layout
+    facet on that slide.],
   [Title placeholders (`type="title"`, `"ctrTitle"`)],
   [`heading`, level 2, one per slide with a title.],
+  [`LayoutFacet` (surface `slide`) from the shape's `a:xfrm`, EMU
+    top-left, attached to the heading.],
   [Other text bodies], [`paragraph` per `a:p`; empty paragraphs vanish.],
+  [`LayoutFacet` from the shape's `a:xfrm`, attached to the shape's
+    first emitted block; shapes without `a:xfrm` attach none.],
   [`a:pPr` bullets (`lvl`, `buChar`, `buAutoNum`, `buNone`)],
   [Nested `list`/`list_item` structure: an explicit bullet or a level
     above zero enters a list at `lvl + 1`; `buAutoNum` makes the target
     level ordered; `buNone` (and level zero without an explicit bullet)
     stays a paragraph. Level jumps open intervening levels as empty
     items, mirroring the DOCX numbering machine.],
+  [none.],
   [`a:tbl` in a `p:graphicFrame`],
   [`table`: `a:tblGrid` counts the columns, `firstRow="1"` on `a:tblPr`
     routes the first row into `table_head`, everything else lands in
     `table_body`. `gridSpan`/`rowSpan` carry through the cell payload;
     `hMerge`/`vMerge` continuation cells fold into their origin with one
     `pptx.merged-cells` note per table.],
+  [`LayoutFacet` from the graphic frame's `p:xfrm`, attached to the
+    `table`.],
   [`a:hlinkClick` in `a:rPr`],
   [`link`, resolved through the slide relationships. Only external
     targets (a URL scheme) become links; a jump to another slide has no
     Markdown counterpart and degrades to plain text.],
+  [none.],
   [`a:rPr` with `b="1"`, `i="1"`], [`strong`, `emphasis`; identical
     consecutive runs share one styled span.],
+  [none.],
   [`p:pic`], [`image` in its own paragraph: the source is the `a:blip`
     embed target resolved through the slide relationships, the
     description comes from `p:cNvPr` `descr` (falling back to `name`).
     A picture with neither source nor description is skipped.],
+  [The picture's archive bytes register in the resource store under the
+    part name, MIME by extension; past the media limits, one
+    `pptx.media-limit` note and the rest keep path references.],
   [`a:br`], [`hard_break`.],
+  [none.],
   [Speaker notes], [The slide's notes part, appended after the slide as a
     `container` with class `notes`, read with the same machinery and its
     own relationships.],
+  [none: notes shapes attach no layout.],
 )
 
 = Deliberate omissions

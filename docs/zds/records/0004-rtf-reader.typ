@@ -42,43 +42,57 @@ unknown control word is skipped with a note, never a failure.
 = Mapping
 
 #tbl(
-  columns: (auto, 1fr),
-  table.header([*Source*], [*Tree result*]),
+  columns: (4fr, 6fr, 3fr),
+  table.header([*Source*], [*Tree result*], [*Facets*]),
   [Document text], [`paragraph` runs, closed by `\par`.],
+  [`StyleFacet` when the paragraph declares `\sN` and the stylesheet
+    names it (ZDS 0013): the style's name.],
   [`\b`, `\i`, `\strike`, `\super`, `\sub`, `\scaps`, `\ul`/`\ulnone`],
   [Nested style containers in the canonical order, inherited into nested
     groups, cleared by `\plain`, with the common prefix of consecutive
     text shared. Toggle values of zero clear.],
-  [`\line`], [`hard_break`.],
-  [`\tab`, `\~`], [A space.],
+  [None.],
+  [`\line`], [`hard_break`.], [None.],
+  [`\tab`, `\~`], [A space.], [None.],
   [`\'hh`], [The byte decoded in the `\ansicpg` code page; Windows-1252
     is the default and the fallback for pages zenfmt does not carry.],
+  [None.],
   [`\uN`], [The Unicode scalar, with the `\uc` skip-count convention for
     the fallback characters that follow.],
+  [None.],
   [`\emdash`, `\endash`, quotes, `\bullet`], [Their Unicode characters.],
+  [None.],
   [`{\*\...}` and known destinations],
-  [Skipped wholesale: `fonttbl`, `colortbl`, `stylesheet`, `info`,
-    headers and footers, list tables, revision tables.],
+  [Skipped wholesale: `fonttbl`, `colortbl`, `info`, headers and
+    footers, list tables, revision tables. The `stylesheet` group's
+    content is likewise skipped, but its `\sN` style names are harvested
+    first (bounded at 256 entries).],
+  [The harvested names feed the paragraph `StyleFacet` above.],
   [`\trowd` / `\cellx` / `\cell` / `\row`],
   [`table` with one column per `\cellx` of the first row definition;
     `\trhdr` rows open `table_head`, the rest `table_body`. Cells open
     lazily when their content arrives and close at `\cell`. A paragraph
     without `\intbl` closes the table.],
+  [None.],
   [`\ls` + `\ilvl`, `{\*\pn}`],
   [`list`/`list_item` synthesized by the same inference machine as the
     DOCX reader: open on rising level, close on falling level or a
     changed kind. `\pnlvlblt` is a bullet, `\pndec`/`\pnlvlbody`
     ordered; a bare `\ls` decides by its `\listtext` marker — a digit
     means ordered. Marker fallback text never reaches the output.],
+  [None.],
   [`\outlinelevelN`], [`heading` at level N+1 (clamped to six), the
     producing word processor's own outline signal.],
+  [`StyleFacet` as for paragraphs, when `\sN` applies.],
   [`{\field{\*\fldinst HYPERLINK ...}{\fldrslt ...}}`],
   [`link` around the field result, with the quoted or bare URL from the
     instruction. Non-hyperlink fields keep their cached result as plain
     text.],
+  [None.],
   [`{\footnote ...}`],
   [`note` reference at the site; the group's raw RTF is replayed after
     the body as the note's block content.],
+  [None.],
 )
 
 = Deliberate omissions

@@ -165,3 +165,16 @@
 #document("pdf/zds-0012-legacy-office-readers.pdf")[
   #include "records/0012-legacy-office-readers.typ"
 ]
+
+#document(
+  "zds/0013-layered-document-ir.html",
+  title: [ZDS 0013: Layered Document IR and Writer Lowering],
+  author: ("Zen Contributors",),
+  description: [A layered semantic IR with sparse facets and provably deterministic writer lowering, superseding the AST and writer sections of ZDS 0002],
+)[
+  #include "records/0013-layered-document-ir.typ"
+]
+
+#document("pdf/zds-0013-layered-document-ir.pdf")[
+  #include "records/0013-layered-document-ir.typ"
+]
