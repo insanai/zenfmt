@@ -6,11 +6,15 @@
 // `zig build benchmark` writes; recompile the book after a run and the
 // numbers, bars, and headline ratios below all move together.
 #let bench = json("/benchmarks/results/latest.json")
-#let tool_names = ("zenfmt", "pandoc", "anydoc")
+#let tool_names = ("zenfmt", "pandoc", "anydoc", "zenfmt-python-wheel")
 // Categorical palette validated for color-vision deficiency and contrast
 // against the paper surface; bar order and direct labels carry identity
-// as the secondary encoding.
-#let tool_fill = (blue, rgb("b03a72"), amber)
+// as the secondary encoding. The wheel row reuses a distinct teal.
+#let tool_fill = (blue, rgb("b03a72"), amber, rgb("2a7f62"))
+// Older result files carry three tools; everything below adapts to the
+// count actually present so the chapter compiles before and after a
+// four-tool run.
+#let tool_count = bench.files.at(0).tools.len()
 
 #let head_to_head(files, other) = {
   let n = 0
@@ -54,7 +58,8 @@
 /// one bar per tool. `metric` picks the field; `lmax` is the top decade.
 #let log_bars(files, metric, unit, lmax, marker: none, marker_label: none) = cetz.canvas(length: 1cm, {
   import cetz.draw: *
-  let row_h = 0.72
+  let nt = files.at(0).tools.len()
+  let row_h = if nt > 3 { 0.95 } else { 0.72 }
   let bar_h = 0.155
   let x0 = 2.9
   let xw = 11.4
@@ -81,7 +86,7 @@
     let y = -(i + 0.5) * row_h
     content((x0 - 0.18, y), anchor: "east", text(size: 8pt, raw(f.name)))
     for (j, t) in f.tools.enumerate() {
-      let yy = y + (1 - j) * (bar_h + 0.06)
+      let yy = y + ((nt - 1) / 2 - j) * (bar_h + 0.06)
       if t.ok {
         let value = t.at(metric)
         rect(
@@ -111,9 +116,10 @@
 #let legend = {
   set text(size: 8.5pt)
   grid(
-    columns: 6,
+    columns: 2 * tool_count,
     gutter: 7pt,
     ..tool_names
+      .slice(0, tool_count)
       .enumerate()
       .map(((i, name)) => (
         box(width: 9pt, height: 9pt, fill: tool_fill.at(i), radius: 2pt),
@@ -502,6 +508,97 @@ Markdown writer is nearly free. The 633 KiB CSV now spends 63 ms reading,
 found the previous writer regression: a hard-cap-sized inline-close stack
 was being safety-initialized for every cell. Reusing one stack sized to
 `max_depth` made the table path faster and reduced its working memory.
+
+== The Python wheel
+
+The same engine ships to Python as the `zenfmt` wheel (ZDS 0014), and the
+benchmark measures what users actually install: `zig build
+benchmark-python` builds the wheel, installs it into a clean isolated
+environment, verifies artifact parity against the same-revision CLI, and
+only then times it. The detailed results land in
+`benchmarks/results/python.json`; the process harness adds a cold
+`zenfmt-python-wheel` row beside the CLI. Cold and warm numbers answer
+different questions and are never merged into one headline.
+
+#let pybench = json("/benchmarks/results/python.json")
+#let py_profiles = pybench.profiles
+#let warm_values = py_profiles.warm_path_memory.values().map(v => v.median_ms)
+#let warm_median = if warm_values.len() > 0 {
+  warm_values.sorted().at(int(warm_values.len() / 2))
+} else { 0 }
+
+#grid(
+  columns: (1fr, 1fr, 1fr, 1fr),
+  gutter: 8pt,
+  stat_tile(
+    [#calc.round(py_profiles.cold_import.median_ms, digits: 1) ms],
+    [cold import],
+    [fresh interpreter, `import zenfmt`],
+  ),
+  stat_tile(
+    [#calc.round(py_profiles.cold_first_conversion.median_ms, digits: 1) ms],
+    [cold first conversion],
+    [import, load, verify, convert],
+  ),
+  stat_tile(
+    [#warm_median ms],
+    [warm memory call],
+    [median corpus file, in-process],
+  ),
+  stat_tile(
+    [#calc.round(py_profiles.micro.tiny_text_to_markdown.median_ms, digits: 2) ms],
+    [boundary microbenchmark],
+    [tiny text; FFI + copies + models],
+  ),
+)
+
+The boundary microbenchmark is reported separately and never used to claim
+corpus throughput: it exists so native loading, validation, copying, and
+model construction stay visible when parsing work is negligible. Parity ran
+before timing: #pybench.parity.files.len() corpus files compared for format
+ids, artifact digests, resource digests, and report codes
+#if pybench.parity.ok [ — all agreed.] else [ — *with recorded mismatches
+excluded from every aggregate above.*]
+
+#figure(
+  placement: auto,
+  kind: table,
+  table(
+    columns: (1fr, 1fr, 1fr, 1fr),
+    align: (right, right, right, right),
+    table.header(
+      [*Threads*], [*Documents*], [*Wall (ms)*], [*Docs / s*],
+    ),
+    ..{
+      let rows = ()
+      for entry in pybench.concurrency {
+        rows += (
+          [#entry.threads],
+          [#entry.documents],
+          [#entry.wall_ms],
+          [#entry.docs_per_s],
+        )
+      }
+      rows
+    },
+  ),
+  caption: [
+    One immutable `Converter` shared across worker threads over
+    independent corpus documents. The GIL is released for every native
+    call, so throughput scales with cores until conversion saturates
+    memory bandwidth.
+  ],
+)
+
+#if tool_count > 3 {
+  let h = head_to_head(bench.files, 3)
+  [Head to head on the shared corpus, the wheel's cold child-process row —
+  a fresh interpreter per document, directly comparable to the CLI row —
+  runs at #calc.round(h.wall, digits: 1)x the CLI's wall time (geometric
+  mean over #h.files files; above 1.0 means the CLI is faster). The
+  difference is interpreter start plus one-time bridge verification;
+  the warm rows above are what a long-running service pays.]
+}
 
 == Reading it honestly
 

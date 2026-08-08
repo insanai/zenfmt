@@ -165,6 +165,9 @@ notes and warnings, which fail a conversion only under `--strict`.
     prefix had already been delivered.],
   [`core.input-too-large`], [error], [limit], [The input exceeds
     `max_input_bytes`.],
+  [`core.output-too-large`], [error], [limit], [Writer emission reached
+    `max_output_bytes` before finishing, in any output mode. Nothing was
+    published.],
   [`core.invalid-limit-configuration`], [error], [limit], [A library caller
     supplied a zero limit or exceeded a fixed hard cap.],
   [`core.invalid-document-tree`], [error], [conversion], [A plugin or
@@ -482,6 +485,8 @@ walker stacks, and no input is worth an unbounded stack.
     declare per construct.],
   [`max_lowering_work`], [64 Mi], [Lowering rule applications per
     conversion.],
+  [`max_output_bytes`], [512 MiB], [Artifact bytes a writer may emit,
+    checked at the shared sink in every output mode (ZDS 0014).],
 )
 
 == Environment

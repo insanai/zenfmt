@@ -49,15 +49,17 @@ dependency, lock, build, and publish workflows, Hatchling as the PEP 517 backend
 needed for platform wheels, Ruff for linting and formatting, and pytest for
 tests. The root `zig build` graph remains the repository's orchestration layer
 and owns native compilation. Releases publish prebuilt wheels and a buildable
-source distribution to PyPI under the same version as the Zig release.
+source distribution to PyPI under the same version as the Zig release; the
+first public release is version `0.1.0`, shared by the engine, CLI, native
+bridge, and Python distribution.
 
 This record is the normative implementation blueprint for that library. Its
 scope includes the engine changes, native bridge, Python package, root build
 integration, tests, documentation, platform artifacts, and release workflow
-needed to deliver it. The initial prediscussion change contains the record
-rather than those implementations; that staging fact does not place
-implementation outside the record's scope. Once accepted, the delivery phases
-and acceptance gates below define the work required to move it to `committed`.
+needed to deliver it. The record entered discussion before any of those
+implementations existed; that staging fact does not place implementation
+outside the record's scope. Once accepted, the delivery phases and acceptance
+gates below define the work required to move it to `committed`.
 
 = Introduction
 
@@ -159,24 +161,30 @@ when every deliverable and acceptance gate in this record is satisfied.
   stroke: 0.5pt + rgb("d7dee8"),
   inset: 6pt,
   table.header([*Deliverable*], [*Required implementation outcome*]),
-  [`core/`], [Bounded memory publication with embedded resources and the
-    `max_output_bytes` limit shared by memory and path output.],
+  [`core/`], [Bounded memory publication with embedded resources, the
+    `max_output_bytes` limit enforced in every output mode, bridge-facing
+    report serialization carrying `exit_class`, and the writer text/binary
+    emission declaration.],
   [`bindings/python/`], [A versioned, fuzzed Zig C ABI over the default bundle,
     with opaque result ownership and no Python callbacks.],
   [`python/src/zenfmt/`], [The typed public API, immutable models, validation,
     exceptions, capability discovery, and secure private loader specified
     here.],
   [root build and Python project], [`pyproject.toml`, `uv.lock`, the Hatchling
-    adapter, and named `zig build python-*` orchestration steps.],
+    adapter, named `zig build python-*` orchestration steps, and the canonical
+    `build.zig.zon` version plumbed into the CLI, bridge, and Python
+    metadata.],
   [tests], [Native ABI tests, pytest unit/integration tests, parity tests,
     adversarial tests, and installed wheel/sdist tests.],
   [benchmarks], [The existing corpus benchmark extended with the clean-installed
     wheel, plus cold-start, warm in-process, memory/path, and concurrent Python
     API measurements.],
-  [documentation], [A quickstart, security guidance, and generated public API
-    reference whose examples are exercised by tests.],
-  [release], [The required platform wheels, standalone sdist, version parity,
-    attestations, and protected TestPyPI/PyPI publication.],
+  [documentation], [A quickstart, security guidance, a generated public API
+    reference whose examples are exercised by tests, and the updated reference
+    and benchmark chapters of the book.],
+  [release], [The new wheel and release workflows, the required platform
+    wheels, standalone sdist, version parity, attestations, and protected
+    TestPyPI/PyPI publication.],
 )
 
 = Problem Statement
@@ -226,8 +234,8 @@ checkout.
   parse terminal text.
 - Apply the Elm-style diagnostic contract from ZDS 0002 to every
   Python-facing failure. Each message states what happened, where it happened,
-  what was or was not produced, and at least one concrete `Hint:` describing
-  the next action.
+  what was or was not produced, and at least one concrete direction rendered
+  under `What you can do:`, matching the engine's text renderer.
 - Keep conversion semantics identical across Python, the Zig library, and the
   CLI for the same source, formats, limits, strictness, and release.
 - Keep the runtime package dependency-free beyond the Python standard library
@@ -239,7 +247,7 @@ checkout.
 - Preserve zenfmt's bounded-resource, no-network, no-reference-following, and
   atomic path-output guarantees.
 - Add a native `max_output_bytes` limit, defaulting to 512 MiB, checked while a
-  writer emits in both memory and path modes. The current input, decoded-text,
+  writer emits in every output mode. The current input, decoded-text,
   lowering-work, and resource limits do not bound artifact bytes themselves.
 - Provide precise annotations, a `py.typed` marker, stable public exports, and
   copy-pasteable documentation.
@@ -487,9 +495,11 @@ characters are rejected before native entry.
 `output=None` is deliberately side-effect-free with respect to output files.
 The conversion stages the artifact and all embedded resources in native-owned
 memory, computes their digests and canonical manifest, then copies the complete
-ensemble into the result. The artifact name is derived from the source display
-name and writer's primary extension; when no usable stem exists it is
-`artifact.<extension>`.
+ensemble into the result. The Python layer derives the artifact name from the
+source display name and the writer's primary extension taken from capability
+metadata — `artifact.<extension>` when no usable stem exists — and passes that
+basename across the ABI, where the engine uses it for deterministic resource
+naming and the manifest.
 
 An output path delegates to the engine's transactional publication. Success
 means the artifact, its embedded media tree, and `<output>.zenfmt.json` were
@@ -564,9 +574,14 @@ Adding a native limit is an additive Python change only when the same change
 adds its typed Python field and the native/Python parity test agrees on name,
 width, default, and hard cap. Removing, renaming, or changing the meaning of a
 limit is a breaking API change and an amendment to the engine record. This
-record adds `max_output_bytes` because neither memory nor path artifact output
-is otherwise directly bounded; its 512 MiB default matches `max_input_bytes`
-and is checked during writer emission, before another byte is accepted.
+record adds `max_output_bytes` because artifact output is not otherwise
+directly bounded; its 512 MiB default matches `max_input_bytes` and is checked
+at the shared artifact sink during writer emission, before another byte is
+accepted, in every output mode. A breach fails the conversion with the new
+limit-class report `core.output-too-large`. This record is the design record
+documenting that limit; the book's reference chapter gains matching limit and
+report rows as part of delivery, and ZDS 0013's limits table remains
+authoritative for the limits it lists.
 
 `Strictness` is a `str` enum with `OFF`, `CONTENT`, `STRUCTURE`, and `EXACT`.
 Successful reports are not promoted by Python; the selected grade is passed to
@@ -627,9 +642,13 @@ user input remains a conversion report, not a bridge error.
 
 `Report`, `Direction`, and the context variants are frozen, slotted Python
 models mirroring the native report schema. Stable machine fields remain exact:
-`code`, `severity`, `loss`, `exit_class`, `count`, contexts, samples, commands,
-and replacements. Human prose may improve between releases, so applications
-switch on codes and enums rather than matching `str(report)`.
+`code`, `severity`, `loss`, `exit_class`, `count`, contexts, samples, and each
+direction's optional command and replacement. The engine's canonical manifest
+and CLI report JSON do not carry `exit_class`; the bridge serializes reports
+with `exit_class` included through a serializer option, leaving canonical
+manifest bytes unchanged, and the result-level worst class also crosses the
+ABI through a dedicated accessor. Human prose may improve between releases, so
+applications switch on codes and enums rather than matching `str(report)`.
 
 Successful warnings and notes remain in `Conversion.reports`; the library
 does not print them and does not emit Python warnings. Failed conversion raises
@@ -695,12 +714,13 @@ Every `ZenfmtError` exposes these common details:
 )
 
 `str(error)` is a compact, color-free Elm-style renderer containing title,
-problem, context when useful, consequence, and a final line beginning exactly
-with `Hint:`. Additional directions render as `More hints:`. Conversion errors
-derive these fields and text from the primary native report; the wrapper does
-not rewrite its facts. Python-originated failures come from a tested diagnostic
-catalog with stable codes and direction templates, rather than ad hoc strings
-at each `raise` site.
+problem, context when useful, consequence, and a final `What you can do:`
+section listing every direction — the same rendering contract as the engine's
+text renderer, so one failure reads the same through the CLI and Python.
+Conversion errors derive these fields and text from the primary native report;
+the wrapper does not rewrite its facts. Python-originated failures come from a
+tested diagnostic catalog with stable codes and direction templates, rather
+than ad hoc strings at each `raise` site.
 
 An invalid argument therefore looks like:
 
@@ -711,15 +731,17 @@ INVALID SOURCE TYPE
 
 The conversion did not start, and no output or manifest was created.
 
-Hint: Pass a path such as `Path("report.docx")` or document bytes.
+What you can do:
+
+    Pass a path such as `Path("report.docx")` or document bytes.
 ```
 
 A bridge mismatch names both versions, says that conversion did not start, and
-provides a complete reinstall command as its hint. A destination failure names
-the exact destination operation, states that no manifest was published, and
-uses the native report's safe overwrite or alternate-path direction. "Try
-again," "invalid value," and "native error" without an actionable hint are
-test failures, not acceptable messages.
+provides a complete reinstall command as its first direction. A destination
+failure names the exact destination operation, states that no manifest was
+published, and uses the native report's safe overwrite or alternate-path
+direction. "Try again," "invalid value," and "native error" without an
+actionable direction are test failures, not acceptable messages.
 
 Programmer argument mistakes remain catchable as ordinary `TypeError` or
 `ValueError`. They carry the same five-part rendered message but are not given
@@ -770,8 +792,8 @@ The bridge exposes only these categories of operation:
 - query ABI and zenfmt release versions;
 - retrieve canonical capability JSON;
 - convert a path input or byte input to a memory ensemble or path ensemble;
-- read status, selected formats, reports JSON, manifest JSON, artifact bytes,
-  and resource descriptors from an opaque result;
+- read status, exit class, selected formats, reports JSON, manifest JSON,
+  artifact bytes, and resource descriptors from an opaque result;
 - release exactly one opaque result.
 
 Options cross the boundary as a small versioned UTF-8 JSON object with a
@@ -798,23 +820,36 @@ the call graph one-directional.
 == Memory artifact ensemble
 
 The existing writer-stream result is insufficient for a complete Python memory
-result because embedded resources are projected only for path output. The
-bridge therefore requires a narrow engine addition: a memory publication sink
-that performs the same deterministic resource naming, target rewriting,
-digests, manifest construction, and all-or-nothing completion as path
-publication, but returns artifact and resource bytes instead of opening final
-paths.
+result. Stream output already returns the canonical manifest, but embedded
+resources are projected only for path output: the media plan never runs, so
+the manifest carries no media entries and image targets keep reader-internal
+names. The bridge therefore requires a narrow engine addition: a memory
+publication sink that performs the same deterministic resource naming, target
+rewriting, digests, and manifest construction as path publication, but returns
+artifact and resource bytes instead of opening final paths, and populates the
+result only after the manifest is complete.
+
+Concretely, the engine's output specification gains a memory variant carrying
+the artifact basename supplied by the wrapper, and the conversion result gains
+an optional memory ensemble — artifact bytes plus embedded resource files —
+and the selected canonical reader and writer ids. Failure paths never populate
+the ensemble. Writer descriptors additionally declare whether they emit UTF-8
+text or arbitrary bytes so capability metadata can report it.
 
 This is an engine capability, not Python-specific document logic. Its native
 tests compare memory and path publication: artifact bytes, relative resource
 names, digests, reports, and manifest semantic content must match, with only
-the intentionally different destination representation allowed.
+the intentionally different destination representation allowed. Allocation
+exhaustion during a bridge conversion follows the engine's canonical contract:
+a failed conversion carrying exactly one `core.out-of-memory` report, as
+pinned by the repository's allocation-failure suite.
 
 == Loading and version checks
 
 The wheel stores one bridge under a private package resource directory. The
-loader selects the exact filename for the running platform and opens its
-absolute package path. It never searches the current directory, `PATH`, a
+canonical bridge filenames are `libzenfmt_py.so`, `libzenfmt_py.dylib`, and
+`zenfmt_py.dll`. The loader selects the exact filename for the running
+platform and opens its absolute package path. It never searches the current directory, `PATH`, a
 system library directory, a user configuration location, or an environment
 override. This prevents library preloading and version-confusion surprises.
 
@@ -829,8 +864,10 @@ Before the first real operation the loader verifies:
 
 Failure names the detected platform, installed Python version, wheel version,
 native version when readable, and a safe reinstall command. It does not fall
-back to another library. For development installs, the uv/Hatchling build step
-stages the exact host bridge from `zig-out` into the environment's private
+back to another library. For development installs, the Hatchling hook is a
+no-op for editable builds; `zig build python-sync` builds the host bridge and
+stages it from `zig-out` into the source-layout package's private resource
+directory, which the editable install exposes as the environment's
 package-resource location. The runtime loader uses the same resource rule as a
 wheel and never searches `zig-out` itself.
 
@@ -952,15 +989,43 @@ aggregates:
 `zig build test` depends on `python-test`; `zig build fmt-check` depends on
 `python-lint` and `python-format-check`; the existing `benchmark` step depends
 on `benchmark-python`; and the release gate depends on `python-check` plus a
-recorded benchmark run. Missing uv is a clear prerequisite failure, never a
-silent skip. Direct uv/Ruff/pytest commands remain documented for
-Python-focused contributors, but CI calls the root Zig steps so the monorepo
-has one graph.
+recorded benchmark run. No aggregate check or release gate exists before this
+record; the `python-check` aggregate, the wheel workflow, and the tag-driven
+release workflow are new constructs delivered here, not extensions of existing
+ones. `python-native` honors the standard `--prefix` flag so one host can
+cross-compile the bridge for every wheel target into per-target directories
+without artifact collisions. Missing uv is a clear prerequisite failure,
+never a silent skip.
+Direct uv/Ruff/pytest commands remain documented for Python-focused
+contributors, but CI calls the root Zig steps so the monorepo has one graph.
 
 The build hook does not duplicate target selection or run arbitrary shell
 strings. It invokes a named root Zig step with explicit arguments, requires the
 expected output at an exact path, and then gives that artifact to Hatchling.
 Wheel metadata derives its platform tag from the same validated target tuple.
+
+== Repository integration obligations
+
+Integrating a new language and a bridge into the monorepo touches several
+existing contracts that are easy to miss:
+
+- `build.zig.zon` gains `.paths` entries for `bindings`, `python`,
+  `pyproject.toml`, `hatch_build.py`, and `uv.lock`, and its `.version`
+  becomes the canonical `0.1.0`; `build.zig` reads and validates that version
+  and embeds it in the CLI and the bridge.
+- The root format check and end-to-end test lists are explicit arrays; the
+  bridge sources join the format list and the new engine test files join the
+  test list.
+- The documentation-drift gate requires every new engine report code and every
+  new limit to appear in the book's reference chapter; `core.output-too-large`
+  and `max_output_bytes` therefore make that chapter a deliverable. Bridge
+  `bridge.*` codes and Python `python.*` codes live outside the scanned engine
+  roots and are deliberately absent from that catalog because the ABI is
+  private.
+- The allocation-failure suite pins the default bundle at nineteen readers and
+  the single `core.out-of-memory` report; the bridge must preserve both.
+- The benchmark harness's tool set and the book's benchmark chapter hard-code
+  the compared tools; both are named deliverables of the benchmark phase.
 
 == Python configuration
 
@@ -986,8 +1051,11 @@ the configuration.
 
 == One release version
 
-`build.zig.zon` remains the canonical SemVer version for the monorepo. The
-Python metadata hook translates it deterministically to PEP 440, and
+`build.zig.zon` remains the canonical SemVer version for the monorepo, and it
+becomes `0.1.0` with this record's delivery. `build.zig` reads the value,
+validates it, and embeds it in the CLI's `--version` output and the bridge's
+version query — none of which existed before this record. The Python metadata
+hook translates the same value deterministically to PEP 440, and
 `zenfmt.__version__` reads installed distribution metadata. Stable versions map
 unchanged; prerelease identifiers use the corresponding PEP 440 spelling;
 development or local build identifiers are never uploaded as a stable public
@@ -1019,8 +1087,9 @@ The initial required matrix is:
 
 The Python layer targets Python 3.10 and later and uses only standard-library
 APIs available at that floor. Release CI tests every supported CPython minor
-from the declared floor through the latest stable release, plus PyPy where its
-`ctypes` and platform tags satisfy the same contract. A platform is listed as
+from the declared floor through the latest stable release. PyPy support is a
+deferred post-`0.1.0` additive gate rather than a first-release requirement,
+subject to the same `ctypes` and platform-tag contract. A platform is listed as
 supported only while its wheel is built, inspected, installed, loaded, and
 exercised on that platform. Additional platforms are additive releases after
 the same gate.
@@ -1067,7 +1136,9 @@ long-lived PyPI upload token.
 The workflow uses PyPI Trusted Publishing with short-lived OIDC credentials,
 produces PEP 740 attestations for every artifact, downloads the artifacts into
 one final job, checks that filenames and embedded versions form one complete
-matrix, and publishes the exact checked bytes through uv. TestPyPI receives a
+matrix, and publishes the exact checked bytes through the PyPA publish action
+with attestation generation enabled; uv may replace that step once it
+produces PEP 740 attestations. TestPyPI receives a
 release candidate before the first stable release and whenever packaging
 machinery changes materially.
 
@@ -1093,8 +1164,8 @@ result, report, manifest, and resource payloads. Tests cover:
 - manifest unknown-field preservation and exact `.raw` bytes;
 - exception selection, attributes, messages, and chaining;
 - the Elm-style four-question contract, stable Python diagnostic codes,
-  non-empty `Hint:` rendering, and concrete directions for every cataloged
-  failure;
+  non-empty `What you can do:` rendering, and concrete directions for every
+  cataloged failure;
 - proof that no expected path leaks raw FFI, decoder, lookup, or filesystem
   exceptions through the public API;
 - result-handle release on success and on every Python exception path;
@@ -1195,7 +1266,7 @@ one headline number:
     publication. Cleanup occurs after timing.], [Does the Python entry point
     preserve CLI-grade end-to-end path performance?],
   [diagnostic failure], [Representative unknown-format, limit, and destination
-    failures build structured exceptions and render their Elm-style `Hint:`.],
+    failures build structured exceptions and render their Elm-style text.],
     [What does the complete Python error experience cost?],
   [concurrent throughput], [One immutable `Converter` processes independent
     corpus documents with 1, 2, 4, and 8 worker threads.], [Does GIL release
@@ -1275,11 +1346,16 @@ parity status, and concurrency throughput. The existing
 and a reference to the detailed Python result schema.
 
 `benchmarks/results/results.md` remains generated human-readable output and
-gains a *Python wheel API* section showing cold import, first call, warm memory,
-path publication, error rendering, concurrency, and native comparison ratios.
-The benchmark chapter reads these JSON results, so published documentation
-describes the installed wheel automatically. Result files are produced by the
-harness and never edited by hand.
+gains a *Python wheel API* section, rendered by the harness from the detailed
+Python results, showing cold import, first call, warm memory, path
+publication, error rendering, concurrency, and native comparison ratios.
+The benchmark harness and the book's benchmark chapter both enumerate the
+compared tools explicitly, so adding the wheel is a code change in each: the
+harness gains a fourth tool and the chapter gains the fourth tool name,
+palette entry, adjusted bar layout, and a *Python wheel API* section reading
+the detailed Python results. Once extended, the chapter reads generated JSON
+only, so published documentation stays generated. Result files are produced by
+the harness and never edited by hand.
 
 The initial implementation records measurements rather than inventing a
 performance budget. After representative baselines exist, a regression budget
@@ -1294,10 +1370,11 @@ This ZDS may move to `committed` only when:
 - the documented public surface exists with no undocumented public aliases;
 - all root Zig and Python quality steps pass;
 - every Python and native failure exposed by the public API satisfies the
-  Elm-style contract and provides at least one actionable hint;
+  Elm-style contract and provides at least one actionable direction rendered
+  under `What you can do:`;
 - the ABI is versioned, documented privately, fuzzed, and checked at load;
 - memory output returns resources and is parity-tested with path output;
-- `max_output_bytes` is enforced during memory and path writer emission;
+- `max_output_bytes` is enforced during writer emission in every output mode;
 - the default format table comes only from native capability metadata;
 - failure paths leak no result handle and publish no path manifest;
 - a wheel for every required target passes inspection and clean-install tests;
@@ -1422,9 +1499,16 @@ corruption.
 
 == Phase 1: native contract
 
+- Add and enforce `max_output_bytes` at the shared artifact sink for every
+  output mode, with the `core.output-too-large` report and matching reference
+  chapter rows.
+- Add memory artifact/resource publication to the engine, with the memory
+  output variant, result ensemble, and selected-format ids.
+- Add the bridge-facing report serializer option carrying `exit_class` and the
+  writer text/binary emission declaration.
+- Plumb the canonical `build.zig.zon` version, bumped to `0.1.0`, into the
+  build graph, CLI, and bridge.
 - Specify the private ABI schema and symbol contract in the bridge directory.
-- Add memory artifact/resource publication to the engine.
-- Add and enforce `max_output_bytes` for memory and path writer emission.
 - Build the bridge through a root Zig step.
 - Add native ABI, ownership, adversarial, and memory/path parity tests.
 
@@ -1447,15 +1531,18 @@ corruption.
 - Extend the existing benchmark harness with the installed-wheel worker,
   equivalent in-process Zig memory baseline, parity checks, result schemas, and
   generated report section specified above.
+- Extend the benchmark harness's tool set and the book's benchmark chapter
+  with the wheel row and the *Python wheel API* section.
 - Record a full ReleaseSafe corpus run from the clean-installed wheel and review
   cold, warm, path, error, memory, and concurrency results before publication.
 
 == Phase 4: publication
 
 - Reserve the PyPI project and configure a protected trusted publisher.
-- Publish and verify a TestPyPI candidate.
-- Generate attestations, publish the complete matrix, and run post-publish
-  install tests against PyPI.
+- Add the wheel-matrix and tag-driven release workflows.
+- Tag and publish a `v0.1.0` release candidate, and verify it on TestPyPI.
+- Generate attestations, publish the complete `0.1.0` matrix, and run
+  post-publish install tests against PyPI.
 - Move this record through accepted, published, and committed states only as
   the corresponding lifecycle conditions are met.
 
@@ -1537,12 +1624,13 @@ ambient state.
 
 = Open Questions
 
-No semantic or API question is intentionally left open in this draft. Before
-promotion to discussion, maintainers must verify two external facts that do not
-change the design: that the `zenfmt` PyPI project can be placed under project
-control, and that CI capacity exists to test every required wheel target. If
-either fact is false, the distribution name or initial support matrix must be
-amended explicitly rather than weakened silently during implementation.
+No semantic or API question is intentionally left open. Two external facts
+gate the release phase rather than this record's lifecycle: that the `zenfmt`
+PyPI project can be placed under project control, and that continuous
+integration capacity exists — including an arm64 Linux runner with a musl
+container — to test every required wheel target. If either fact is false, the
+distribution name or initial support matrix must be amended explicitly rather
+than weakened silently during implementation.
 
 = Acknowledgements
 
