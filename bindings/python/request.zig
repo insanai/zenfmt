@@ -9,6 +9,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const core = @import("zenfmt_core");
 const abi = @import("abi.zig");
+const names = @import("zenfmt_names");
 
 pub const schema_version = 1;
 
@@ -98,7 +99,7 @@ fn decodeInput(
     }
     if (std.mem.eql(u8, parsed.input.kind, "bytes")) {
         const name = parsed.input.name orelse return error.InvalidRequest;
-        if (!validDisplayName(name)) return error.InvalidRequest;
+        if (!names.validDisplayName(name)) return error.InvalidRequest;
         const len = std.math.cast(usize, request.input_bytes.len) orelse
             return error.InvalidRequest;
         const data: []const u8 = if (request.input_bytes.ptr) |ptr|
@@ -123,7 +124,7 @@ fn decodeOutput(
     if (std.mem.eql(u8, parsed.output.kind, "memory")) {
         const name = parsed.output.artifact_name orelse
             return error.InvalidRequest;
-        if (!validDisplayName(name)) return error.InvalidRequest;
+        if (!names.validDisplayName(name)) return error.InvalidRequest;
         return .{ .memory = .{
             .artifact_name = try arena.dupe(u8, name),
         } };
@@ -132,18 +133,6 @@ fn decodeOutput(
         return .{ .path = try decodePath(arena, request.output_path) };
     }
     return error.InvalidRequest;
-}
-
-/// A display basename: non-empty, no directory separator, no NUL or other
-/// control character. Prevents an in-memory caller from steering resource
-/// naming or diagnostics through path syntax.
-fn validDisplayName(name: []const u8) bool {
-    if (name.len == 0 or name.len > 1024) return false;
-    for (name) |byte| switch (byte) {
-        0...0x1f, 0x7f, '/', '\\' => return false,
-        else => {},
-    };
-    return true;
 }
 
 /// Native path decoding: raw bytes on POSIX, UTF-16LE code units on
@@ -206,14 +195,4 @@ fn decodeLimits(
         limit_values.override(text) catch return error.InvalidRequest;
     }
     return limit_values;
-}
-
-test "display names refuse separators and control bytes" {
-    try std.testing.expect(validDisplayName("report.docx"));
-    try std.testing.expect(validDisplayName("übersicht.md"));
-    try std.testing.expect(!validDisplayName(""));
-    try std.testing.expect(!validDisplayName("a/b.md"));
-    try std.testing.expect(!validDisplayName("a\\b.md"));
-    try std.testing.expect(!validDisplayName("a\x00b"));
-    try std.testing.expect(!validDisplayName("a\nb"));
 }
