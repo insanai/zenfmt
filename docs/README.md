@@ -31,11 +31,20 @@ The process defines itself: it is record 0001. The architecture and
 implementation plan is 0002. If you want to know why something is the way it
 is, the answer is in a record.
 
-**The book.** `book.typ` and `book/` hold the skeleton of the zenfmt manual:
-the page frame, the cover, the callout and figure helpers, and the planned
-chapter list. No chapter is written yet and no build step compiles it. The
-records describe the decisions; the book will describe the system those
-decisions produced.
+**The book.** `book.typ` and `book/` hold the zenfmt manual: a preface and
+nine chapters, plus the page frame, the callouts, and the figure helpers.
+`book.typ` builds the archival PDF; `book/site.typ` builds one HTML document
+per chapter. They are two separate Typst invocations on purpose — emitting the
+same chapters twice from one bundle collides the labels the outline, figures,
+and cross-references depend on. The records describe the decisions; the book
+describes the system those decisions produced.
+
+**Determinism.** Every Typst invocation runs with system fonts ignored, the
+vendored `packages/` tree as its package path, and an explicit creation
+timestamp, so two builds of the same revision produce byte-identical output.
+This is load-bearing rather than tidy: HTML figure export embeds glyph
+outlines, so a differing installed font changes the generated *HTML*, not just
+the PDF. Pass `-Dsource-date-epoch=<unix time>` to stamp a specific date.
 
 ## Read them
 
@@ -46,7 +55,9 @@ HTML bundle on each change, and publishes both:
 
 ## Build them yourself
 
-You need [Typst](https://typst.app/) 0.15 or later on the path. The build steps
+You need [Typst](https://typst.app/) 0.15.1 exactly on the path — the version
+is pinned rather than a floor, because HTML export is experimental and its
+output is compared against checked-in expectations. The build steps
 are wired into `zig build` from the repository root:
 
 ```sh

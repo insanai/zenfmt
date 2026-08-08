@@ -2,12 +2,12 @@
 #let zds-title = "Browser WebAssembly and the zenfmt Project Site"
 #let zds-state = "prediscussion"
 #let zds-created = "2026-08-08"
-#let zds-discussion = "The implementation blueprint for the 0.1.2 browser WASM release, conversion playground, project website, HTML book and ZDS, and public benchmark dashboard"
+#let zds-discussion = "The implementation blueprint for the 0.2.0 browser WASM release, conversion playground, project website, HTML book and ZDS, and public benchmark dashboard"
 #let zds-labels = ("wasm", "browser", "website", "documentation", "benchmark", "release",)
 #let zds-authors = ("Vikrant Rathore", "Ronak Rathore (assistance)",)
 #let zds-category = "Implementation Specification"
 #let zds-status = "Prediscussion"
-#let zds-last-updated = "2026-08-08"
+#let zds-last-updated = "2026-08-09"
 
 #import "../../shared/zds.typ": zds-document
 #import "@preview/cetz:0.5.2" as cetz
@@ -122,7 +122,7 @@
   content((0.55, 2.72), anchor: "west", box-label([DESIGN RECORDS], size: 6.1pt, weight: "bold", fill: muted))
   content((0.55, 2.27), anchor: "west", box-label([Browse all ZDS]))
   content((0.55, 1.83), anchor: "west", box-label([Download book PDF]))
-  content((0.55, 0.62), anchor: "west", box-label([v0.1.2 · Edit this page], size: 6.2pt, fill: muted))
+  content((0.55, 0.62), anchor: "west", box-label([v0.2.0 · Edit this page], size: 6.2pt, fill: muted))
 
   content((3.75, 7.85), anchor: "west", box-label([CHAPTER 1], size: 6.2pt, weight: "bold", fill: blue))
   content((3.75, 7.22), anchor: "west", box-label([A first conversion], size: 18pt, weight: "bold"))
@@ -192,7 +192,7 @@
   content((15.42, 9.67), anchor: "east", box-label([Convert  Book  ZDS  GitHub  Light ▾], size: 6.7pt))
 
   content((0.55, 8.73), anchor: "west", box-label([DOWNLOAD ZENFMT], size: 6.3pt, weight: "bold", fill: blue))
-  content((0.55, 8.14), anchor: "west", box-label([zenfmt 0.1.2], size: 20pt, weight: "bold"))
+  content((0.55, 8.14), anchor: "west", box-label([zenfmt 0.2.0], size: 20pt, weight: "bold"))
   content((0.55, 7.66), anchor: "west", box-label([Released August 2026 · Release notes · Checksums · Provenance], size: 7.3pt, fill: muted))
 
   rect((0.55, 5.72), (15.45, 7.25), fill: blue-light, stroke: 0.7pt + rgb("b8c9fb"), radius: 0.14)
@@ -252,7 +252,7 @@
 
 zenfmt 0.1.0 delivered the native command-line application and the Python
 library specified by ZDS 0014. The next public surface is the browser. Release
-0.1.2 will compile the same Zig conversion engine directly to WebAssembly,
+0.2.0 will compile the same Zig conversion engine directly to WebAssembly,
 publish a small versioned browser adapter, and load that module on the zenfmt
 GitHub Pages site. A visitor drops a supported document, the bytes move to a
 dedicated Web Worker, zenfmt converts them locally, and an adjacent read-only
@@ -277,7 +277,7 @@ also contextual help. A visitor can move from a failed conversion to the
 relevant quick explanation, then to the book chapter, then to the governing
 design record without guessing where documentation lives.
 
-This record is the normative implementation blueprint for release 0.1.2. It
+This record is the normative implementation blueprint for release 0.2.0. It
 defines the WASM target and ABI, browser API, worker and memory model, site
 information architecture, interaction and visual systems, HTML/PDF publishing,
 benchmark methodology, accessibility, security, build graph, CI, release
@@ -335,7 +335,7 @@ presents those semantics.
 
 *Must* and *required* identify binding release requirements. *Should* identifies
 a default that can change only with recorded evidence. *May* identifies an
-allowed choice. References to future work are explicitly outside 0.1.2.
+allowed choice. References to future work are explicitly outside 0.2.0.
 
 The ZDS is a record of intended implementation. “No implementation in this
 document” means the change is not being implemented in this authoring task; it
@@ -386,8 +386,8 @@ In scope:
 - browser, accessibility, security, performance, documentation, and release
   tests;
 - GitHub Pages build and deployment through GitHub Actions;
-- a checksummed WASM browser bundle in the unified 0.1.2 GitHub release;
-- regenerated 0.1.2 CLI, Python, source, documentation, and WASM artifacts so
+- a checksummed WASM browser bundle in the unified 0.2.0 GitHub release;
+- regenerated 0.2.0 CLI, Python, source, documentation, and WASM artifacts so
   every public surface reports one version.
 
 Out of scope:
@@ -397,12 +397,12 @@ Out of scope:
 - rendering converted Markdown as active HTML on the playground;
 - editing Markdown in the output window;
 - OCR, password entry, remote resource fetching, or network-backed filters;
-- a service worker or promised offline application in 0.1.2;
+- a service worker or promised offline application in 0.2.0;
 - WebAssembly threads, `SharedArrayBuffer`, COOP/COEP headers, or SIMD-gated
   correctness;
 - filesystem-shaped WASI emulation in the browser;
 - a Node, npm, TypeScript, React, Vue, Svelte, or other JavaScript build system;
-- an npm package publication in 0.1.2;
+- an npm package publication in 0.2.0;
 - replacing Typst as the source of the book or ZDS;
 - hand-maintained copies of book chapters, ZDS metadata, capability tables, or
   benchmark numbers;
@@ -504,9 +504,13 @@ site's marks, wording, exact layout, illustrations, or component styling.
 
 The normative design tokens are semantic rather than page-specific:
 
-- display headings use a locally bundled open variable sans face at 800–900
-  weight, tight tracking, and fluid sizing; body copy uses the same family at
-  400–500; code uses a locally bundled open monospace face;
+- display headings use Inter, bundled locally as a Latin-subset variable
+  `woff2`, at 800–900 weight with tight tracking and fluid sizing; body copy
+  uses the same family at 400–500; code uses JetBrains Mono, bundled the same
+  way. Both are licensed under the SIL Open Font License 1.1, and both licence
+  texts ship beside the fonts;
+- fonts load with `font-display: swap` and are budgeted separately from the
+  script and stylesheet budget below, at no more than 120 KiB in total;
 - the light theme starts with warm off-white paper, near-black ink, soft gray
   panels, a saturated zen blue action color, and green/amber/red reserved for
   status;
@@ -529,7 +533,7 @@ agree with the active theme.
 
 = Design Overview
 
-Release 0.1.2 has five connected deliverables:
+Release 0.2.0 has five connected deliverables:
 
 + *Pure byte conversion.* Engine entry points needed by the browser accept
   caller-owned bytes and emit the complete memory artifact ensemble without
@@ -583,7 +587,7 @@ Release 0.1.2 has five connected deliverables:
   columns: (auto, 1fr),
   stroke: 0.5pt + rule,
   inset: 6pt,
-  table.header([*Area*], [*Required 0.1.2 outcome*]),
+  table.header([*Area*], [*Required 0.2.0 outcome*]),
   [engine], [A filesystem-free, thread-free, deterministic byte conversion
     path whose artifacts and reports match native memory conversion.],
   [`bindings/wasm/`], [Versioned WASM ABI, allocator boundary, capabilities,
@@ -601,7 +605,7 @@ Release 0.1.2 has five connected deliverables:
     generated dashboard summaries.],
   [build and CI], [Named root build steps, uv locks, browser/accessibility/link
     tests, preview artifact, protected Pages deployment, and release gates.],
-  [release], [One 0.1.2 tag and source revision across CLI, Python, WASM,
+  [release], [One 0.2.0 tag and source revision across CLI, Python, WASM,
     website, book, ZDS, checksums, attestations, and post-publication smoke
     tests.],
 )
@@ -614,17 +618,48 @@ The browser module must be compiled directly by Zig 0.16.0 for
 `wasm32-freestanding`. Zig's language reference states that it supports
 WebAssembly out of the box and names the freestanding target for browser
 hosts. The artifact is an executable with no `_start` entry point; only the
-versioned ABI functions and linear memory are exported. `ReleaseSmall` is the
-shipping optimization mode, with a separate `ReleaseSafe` artifact used by
-tests to retain safety checks while failures are diagnosed.
+versioned ABI functions and linear memory are exported. The wasm32 CPU model
+is pinned to Zig's `generic` feature set — `bulk_memory`, `multivalue`,
+`mutable_globals`, `nontrapping_fptoint`, `reference_types`, and `sign_ext` —
+so the shipped module carries neither SIMD nor atomics and every supported
+browser can instantiate it.
+
+`ReleaseSafe` is the shipping optimization mode, consistent with the coding
+standard in ZDS 0002: the released binary keeps its safety checks. The browser
+is the most hostile input environment zenfmt has, WebAssembly provides no
+stack guard page, and the engine's bounded validation frames are sized to
+`max_depth_hard_cap`; disabling integer-overflow, bounds, and `unreachable`
+checks there would trade a diagnosable refusal for silent corruption. A
+`ReleaseSmall` artifact may be produced for size attribution, and may be
+published in place of `ReleaseSafe` only if `ReleaseSafe` misses the size
+budget below, which requires a recorded measurement and an amendment.
+
+The module reserves an 8 MiB stack. Because WebAssembly has no guard page, the
+section auditor asserts that the stack region lies below the first data
+segment, so a stack overflow traps at low addresses instead of overwriting
+static data.
 
 WASI is not used for the browser distribution. zenfmt already has a natural
 byte-in/byte-out boundary, and a filesystem or environment shim would enlarge
 the authority, bundle, and test surface without improving the public API. The
 freestanding module must import no filesystem, network, clock, randomness,
-thread, process, terminal, or host allocation function. A Zig-authored WASM
-section auditor verifies the import and export allowlists in CI; a textual
-tool dump is not the security boundary.
+thread, process, terminal, or host allocation function. The 0.2.0 import
+allowlist is therefore the empty set: any import at all is an audit failure.
+A Zig-authored WASM section auditor parses the binary's import, export,
+memory, global, and custom sections and verifies both allowlists in CI; a
+textual tool dump is not the security boundary. `Stripped` means the module is
+built with `strip` enabled and carries no `name` custom section and no
+`.debug_*` section, which the auditor also verifies.
+
+== 32-bit portability
+
+`usize` is 32 bits on `wasm32`, while every native and Python target zenfmt
+ships is 64-bit. Size arithmetic that is merely large on a native host can
+therefore fail to compile, or overflow, in the browser module. Every engine,
+support, and format library must compile and pass its parity fixtures with a
+32-bit `usize`, and byte counts derived from document-controlled dimensions
+must be computed in a width-explicit type and range-checked before they are
+used as a length. This is a release gate, not a porting note.
 
 == Engine separation required for WASM
 
@@ -663,72 +698,127 @@ operations by role:
   table.header([*Role*], [*Contract*]),
   [identity], [Return ABI version, zenfmt semantic version, build revision, and
     canonical capability JSON.],
-  [allocation], [Allocate an aligned caller buffer and free only buffers
-    returned by that allocator; zero length has one documented representation.],
+  [allocation], [Allocate a 16-byte-aligned caller buffer and free only buffers
+    returned by that allocator.],
   [conversion], [Accept request JSON offset/length plus input bytes
-    offset/length; synchronously return an opaque nonzero result handle or a
+    offset/length; synchronously return an opaque nonzero result handle or the
     reserved allocation-failure value.],
-  [status], [Return success, conversion failure, or malformed request plus the
-    stable exit class.],
+  [status], [Return success, conversion failure, malformed request, or invalid
+    handle, plus the stable exit class.],
   [borrowed result views], [Return offset/length pairs for artifact, artifact
     name, source/output format, report JSON, manifest JSON, and each embedded
-    resource record. Views remain valid until result free.],
+    resource record.],
   [destruction], [Free a result exactly once, releasing every arena allocation
     owned by that conversion.],
+  [accounting], [Report current and high-water linear-memory pages, live bytes,
+    and live result count, so the host can recycle deliberately rather than
+    guess.],
 )
 
+Every offset and length in the ABI is a `u32`. Linear memory on `wasm32` is
+32-bit, so a wider type would only force `BigInt` conversions across the
+boundary for values that cannot exceed `2^32`.
+
+Offset zero means allocation failure and nothing else. A zero-length
+allocation and every zero-length view instead return a fixed, nonzero,
+module-owned address with length zero, so a caller never has to distinguish
+"empty" from "failed" by inspecting a length first.
+
+Result handles are not pointers. The module owns a fixed table of result
+slots, and a handle carries a generation counter alongside its slot index. A
+stale, already-freed, or fabricated handle is therefore detected
+deterministically and answered with the invalid-handle status — never
+undefined behavior and never a trap. This is what makes double-free and
+use-after-free defense testable rather than merely asserted.
+
+Result view offsets remain valid until the result is freed. The bytes they
+address do not move. Host typed-array views over linear memory are a different
+matter: any call that can grow memory detaches every existing view, so a host
+must recreate its view after each such call rather than caching one.
+
 The request JSON schema parallels the Python bridge but includes only browser
-authority: schema, source display name, optional `from`, `to`, strictness,
-`preserve_facets`, artifact name, and limit overrides. Unknown fields and
-unknown schema versions are usage errors with structured reports. All lengths
-are validated before slicing; offset plus length uses checked arithmetic; the
-module never retains a pointer to request or input memory after conversion
-returns.
+authority: schema, source display name, artifact name, optional `from`, `to`,
+strictness, `preserve_facets`, and limit overrides. It carries no path and no
+overwrite flag, and memory is the only output mode, so no output union is
+exposed. Unknown fields and unknown schema versions are usage errors with
+structured reports. All lengths are validated before slicing; offset plus
+length uses checked arithmetic against the current memory size; the module
+never retains a pointer to request or input memory after conversion returns. A
+test proves that last property by overwriting the request and input buffers
+immediately after conversion returns and then reading every result view.
 
 The module exports no C ABI intended for native linking. The WASM ABI and
 Python ABI may use analogous result concepts but have separate version
-numbers, because their pointer widths and host lifecycles differ.
+numbers, because their pointer widths and host lifecycles differ. The build
+revision reported by the identity role comes from a build option supplied by
+the release workflow; absent that option it reads `unknown` rather than
+fabricating a value.
 
 == Browser profile and memory limits
 
 Browser memory is constrained differently from a native process. The module
-uses the Zig WebAssembly allocator and one arena per conversion. All temporary
-and result allocations are owned either by the request buffer or the result
-handle, and tests prove that alloc/free/convert/free cycles return allocator
-accounting to baseline even when parsing fails.
+uses the Zig WebAssembly allocator, wrapped in a counting allocator, with one
+arena per conversion above it. The wrapper exists because the Zig WebAssembly
+allocator keeps size-class free lists over grown pages and exposes no
+accounting of its own; without a wrapper there would be nothing to assert. All
+temporary and result allocations are owned either by the request buffer or the
+result handle, and tests prove that alloc/free/convert/free cycles return the
+wrapper's accounting to baseline even when parsing fails.
 
-Release 0.1.2 defines a browser profile with conservative defaults:
+Release 0.2.0 defines a browser profile whose defaults are derived from the
+engine defaults rather than restated, so a limit added to the engine later
+inherits its engine value here until this record lowers it:
 
 #table(
   columns: (1.2fr, auto, 1.8fr),
   stroke: 0.5pt + rule,
   inset: 6pt,
   table.header([*Limit*], [*Browser default*], [*Reason*]),
-  [`max_input_bytes`], [64 MiB], [Avoid duplicating a native 512 MiB input
-    through browser, worker, and WASM memory.],
-  [`max_total_uncompressed`], [256 MiB], [Bound archive expansion within the
+  [`max_input_bytes`], [32 MiB], [The input exists at least twice — the page's
+    copy and the module's — before conversion allocates anything.],
+  [`max_total_uncompressed`], [128 MiB], [Bound archive expansion within the
     browser worker.],
-  [`max_entry_uncompressed`], [128 MiB], [Prevent one archive member from
+  [`max_entry_uncompressed`], [64 MiB], [Prevent one archive member from
     consuming the entire worker budget.],
-  [`max_decoded_text_bytes`], [128 MiB], [Bound decoded pools independently of
+  [`max_decoded_text_bytes`], [64 MiB], [Bound decoded pools independently of
     compressed bytes.],
-  [`max_resource_bytes`], [64 MiB], [Bound embedded media returned to the page.],
-  [`max_output_bytes`], [128 MiB], [Bound Markdown and other future writer
+  [`max_resource_bytes`], [32 MiB], [Bound embedded media returned to the page.],
+  [`max_output_bytes`], [64 MiB], [Bound Markdown and other future writer
     output before another byte is accepted.],
   [`max_nodes`], [2,000,000], [Keep validation and lowering stacks practical on
     mobile browsers.],
+  [`max_facet_rows`], [131,072], [At the engine default a facet table can rival
+    the node arrays; the browser bounds both together.],
+  [`max_lowering_work`], [8,388,608], [Bound planner work so a legal but
+    pathological document is refused rather than silently occupying the worker
+    for the full site timeout.],
 )
 
 All other engine defaults remain as defined by the release capability data.
-The public adapter may lower limits. It must not raise browser-profile limits;
-larger conversions direct the user to the CLI or Python library. A change to a
-browser default requires a ZDS amendment and recorded memory measurements.
+The public adapter may lower limits. An override *above* a browser-profile
+value is refused with a structured report rather than silently clamped: the
+visitor is told the browser profile is the boundary and directed to the CLI or
+Python library, which is a truthful answer rather than a surprising one. A
+change to a browser default requires a ZDS amendment and recorded memory
+measurements.
+
+These per-limit bounds compose, so the record also states the total. Summing
+the live regions a single worst-case conversion can hold at once — the input
+copy, the decoded text pool, the node and facet tables, retained resources, the
+accumulating artifact, and the manifest and report data — and allowing for
+arena growth and allocator size-class rounding, the worst case is bounded at
+*1 GiB*. That bound is not advisory: the module is linked with a maximum
+memory of 1 GiB (16,384 pages), so exhaustion makes memory growth fail, which
+the allocator reports as out-of-memory, which the engine turns into its
+canonical structured report. A browser tab is never killed to enforce this
+limit; the conversion is refused with an explanation.
 
 WebAssembly linear memory cannot shrink. The site therefore recycles its
-worker after a configurable high-water mark, after an out-of-memory/trap, and
-after a bounded number of conversions. The public adapter exposes `dispose()`;
-using a disposed converter is a deterministic usage error. The site discards
-all references to input, output, reports, manifests, and resources on reset.
+worker at a 512 MiB high-water mark — half the ceiling, so a recycle always
+precedes a memory refusal — and also after an out-of-memory or trap and after a
+bounded number of conversions. The public adapter exposes `dispose()`; using a
+disposed converter is a deterministic usage error. The site discards all
+references to input, output, reports, manifests, and resources on reset.
 
 == Determinism and artifact parity
 
@@ -736,18 +826,37 @@ For identical input bytes, display name, options, and limits, WASM output must
 match the native memory API for:
 
 - detected source and selected output format;
-- artifact bytes and SHA-256 digest;
+- artifact bytes and their BLAKE3-256 digest;
 - ordered resource paths, media types, bytes, and digests;
 - report severity, code, problem, consequence, context, direction titles, and
   direction explanations;
-- manifest JSON after excluding only explicitly documented host provenance
-  fields.
+- manifest JSON after excluding only the host provenance fields enumerated in
+  the parity test itself, which is the single place that list may live.
+
+Document and resource digests are BLAKE3-256 throughout, matching the engine's
+manifest algorithm. SHA-256 appears in this record only as the checksum
+algorithm for published release assets, which is a different concern with a
+different threat model.
 
 Capability JSON declares target, version, ABI version, supported formats,
-writer formats, limits, and unavailable host features. The website renders its
-format list and advanced controls from this data. A capability disagreement
-between the site shell and loaded module is fatal and offers reload/download
-directions; it never guesses.
+writer formats, engine limits, the browser profile, the pinned CPU feature
+set, and unavailable host features. The website renders its format list and
+advanced controls from this data. A capability disagreement between the site
+shell and loaded module is fatal and offers reload/download directions; it
+never guesses.
+
+The browser capability document and the Python bridge's capability document
+are separate schemas with independent version numbers: the browser document
+carries a target, an ABI version, and a browser profile that have no meaning
+for an in-process native bridge. What the two share is their *generators* —
+the comptime code that walks the default bundle's descriptor tables and the
+engine limit fields — so neither document can drift from the compiled bundle
+and neither is hand-maintained.
+
+`zig build capabilities` writes the canonical capability document from the
+compiled default bundle. The homepage, the input window's accepted-extension
+list, the download page, and the book's format tables all consume that file;
+no capability list is authored by hand anywhere in the repository.
 
 = Public Browser API and Worker Model
 
@@ -756,14 +865,15 @@ directions; it never guesses.
 WASM is a first-class release target named `wasm32-freestanding`, parallel to
 the native CLI targets rather than an incidental website build output. The
 release publishes both
-`zenfmt-0.1.2-wasm32-freestanding.tar.gz`, the complete browser distribution,
-and `zenfmt-0.1.2-wasm32-freestanding.wasm`, the identical stripped module for
+`zenfmt-0.2.0-wasm32-freestanding.tar.gz`, the complete browser distribution,
+and `zenfmt-0.2.0-wasm32-freestanding.wasm`, the identical stripped module for
 low-level consumers. The archive contains:
 
-- `zenfmt.wasm`, the stripped `ReleaseSmall` module;
+- `zenfmt.wasm`, the stripped `ReleaseSafe` module;
 - `zenfmt.js`, the public standards-based ES module;
 - `zenfmt.worker.js`, the optional dedicated-worker adapter used by the site;
-- `zenfmt.d.ts`, handwritten declarations checked against API tests;
+- `zenfmt.d.ts`, handwritten declarations checked structurally against the
+  adapter and the API tests;
 - `README.md`, `LICENSE`, third-party font/package notices when applicable,
   and an internal artifact manifest carrying sizes and SHA-256 digests.
 
@@ -774,6 +884,17 @@ The GitHub Pages site copies these same files from the release build output and
 adds content hashes to deployed filenames; it does not compile a second WASM
 variant. CI extracts the archive and proves that its module digest equals the
 standalone release asset and the module deployed to Pages.
+
+The declarations are validated *structurally*, not type-checked. A TypeScript
+compiler would require the Node toolchain this record excludes, and buying a
+type check at the price of a second package ecosystem is a bad trade for one
+declaration file. Instead a repository-owned checker parses `zenfmt.d.ts`,
+`zenfmt.js`, and the browser API tests and asserts a three-way agreement: every
+declared export and member is implemented, every implemented export and member
+is declared, and both are exercised by a test. It also asserts that every ABI
+constant appearing in the declarations equals the value the Zig ABI defines.
+The record claims exactly that much and no more: drift in names and constants
+is caught, drift in types is not.
 
 == Ergonomic API
 
@@ -811,7 +932,7 @@ public boundary so later WASM memory growth cannot invalidate or mutate them.
 The adapter rejects a detached input buffer with an actionable usage error.
 The worker API accepts an `AbortSignal`; cancellation terminates and replaces
 the worker, which is the only reliable way to stop synchronous untrusted
-parsing in 0.1.2.
+parsing in 0.2.0.
 
 == State machine
 
@@ -884,7 +1005,7 @@ accessible names. Technical exceptions are never presented alone as
   [`/zenfmt/zds/NNNN-<slug>.html`], [Stable record URL preserved from the
     current site.],
   [`/zenfmt/pdf/zenfmt-book.pdf`], [Stable latest book PDF; metadata identifies
-    release 0.1.2.],
+    release 0.2.0.],
   [`/zenfmt/pdf/zds-NNNN-<slug>.pdf`], [Existing stable per-ZDS PDF URLs.],
   [`/zenfmt/download/`], [Current version/date/changelog plus first-class
     Browser/WASM, macOS, Linux, Windows, Python, and source targets with
@@ -894,10 +1015,23 @@ accessible names. Technical exceptions are never presented alone as
 )
 
 All generated URLs are aware of the repository base path and also work under a
-local root. Internal links are relative or generated from one configured base;
-no source file hardcodes `/zenfmt/`. The current individual ZDS and PDF URLs
-remain valid. The root's former ZDS index moves to `/zds/`, with a clear link
-from the new homepage rather than an ambiguous redirect loop.
+local root. Internal links are computed as relative paths between routes, so
+the same output tree serves correctly from a local root and from the repository
+sub-path with no configuration; no source file hardcodes `/zenfmt/`.
+
+The not-found document is the one exception, and it is a platform constraint
+rather than a choice. GitHub Pages serves that document for a request of
+unknown depth, so a relative asset reference in it would resolve against the
+wrong directory. It alone emits base-absolute references, with the base
+supplied by the build flag rather than written into a source file.
+
+GitHub Pages also cannot issue an HTTP redirect. A stable alias is therefore
+either a duplicated file at the alias path or a small document carrying a
+refresh and a canonical link — never a claimed redirect.
+
+Record URLs keep their existing `.html` form so published links stay valid;
+new routes are directory-style. The root's former ZDS index moves to `/zds/`,
+with a clear link from the new homepage rather than an ambiguous redirect loop.
 
 == Homepage content order
 
@@ -932,13 +1066,13 @@ single opaque `Download` button.
 to action. The dedicated page borrows the useful information hierarchy of
 Zed's download page—current version and date first, changelog next, then clear
 platform choices—without copying Zed's visual components or wording. zenfmt
-has no preview channel in 0.1.2, so the page shows `Stable 0.1.2` and does not
+has no preview channel in 0.2.0, so the page shows `Stable 0.2.0` and does not
 display a disabled or fictional channel switcher.
 
 The top of the page contains release version, release date, release notes,
 source revision, checksums, attestations, and browser/security notes. The
 Browser/WebAssembly target is a full-width first-class card because it is the
-new 0.1.2 surface. Native CLI, Python, and source targets follow in a stable
+new 0.2.0 surface. Native CLI, Python, and source targets follow in a stable
 grid:
 
 #table(
@@ -974,7 +1108,7 @@ select a binary silently.
 Every primary action names the artifact, version, target, archive type,
 download size, and minimum runtime requirement before activation. SHA-256 and
 attestation links are beside the artifact rather than buried in release notes.
-All URLs are generated from the 0.1.2 release manifest and point to immutable,
+All URLs are generated from the 0.2.0 release manifest and point to immutable,
 tag-specific GitHub release assets or the immutable PyPI version page. A
 missing asset, size/digest disagreement, unsupported target label, or link to
 `latest` fails `site-check`.
@@ -1036,7 +1170,7 @@ detection is authoritative. It displays name and human-readable size before
 conversion and asks before replacing a running selection.
 
 The browser reads one file only. Directory upload, multiple conversion, paste
-of filesystem paths, and remote URLs are absent in 0.1.2. Byte contents are not
+of filesystem paths, and remote URLs are absent in 0.2.0. Byte contents are not
 logged. The document name is used only for detection fallback, reports,
 manifest provenance, and suggested output filename.
 
@@ -1076,7 +1210,7 @@ to their explanations.
 == Progress, status, and focus
 
 File reading may report byte progress when the browser supplies it. Native
-conversion is indeterminate in 0.1.2 and uses honest status text, not a fake
+conversion is indeterminate in 0.2.0 and uses honest status text, not a fake
 percentage or animated timeline. `prefers-reduced-motion` removes nonessential
 transitions. Completion does not steal focus; an `aria-live=polite` region
 announces status and the user can move to output with one explicit shortcut.
@@ -1106,18 +1240,56 @@ the navigable, accessible web edition. No generator converts PDF back into
 HTML and no chapter is manually duplicated.
 
 The implementation adds a book bundle entry point that emits one HTML document
-per chapter plus the stable PDF. Existing chapter files gain target-aware
-presentation only where paged layout cannot map semantically to the web.
-Figures that communicate structure receive captions and useful text
-alternatives; decorative visuals are hidden from assistive technology.
-Equations use semantic MathML where Typst supports it. Tables retain headers
-and captions.
+per chapter. The archival PDF continues to come from its own separate Typst
+invocation. The two must not share one compilation: a bundle that emits the
+same content as both HTML and PDF compiles that content twice in a single pass,
+which collides the labels the book relies on for its outline, figure
+references, and cross-chapter links. The ZDS records already live with that
+constraint by cross-referencing in prose; the book, which cannot, gets two
+invocations instead. For the same reason a reference that crosses chapters is
+resolved through the checked-in content map rather than a Typst reference: in
+bundle mode such a reference resolves and then emits a fragment pointing into a
+different output file, which the exporter cannot express.
 
-Typst 0.15's HTML and bundle export is still documented as experimental.
-Therefore the release pins the exact Typst version, snapshots the semantic DOM
-for representative pages, and treats an upgrade as a reviewed toolchain
-change. The Python assembler wraps and indexes Typst output but does not repair
-unknown semantic breakage silently.
+Existing chapter files gain target-aware presentation only where paged layout
+cannot map semantically to the web. Equations use semantic MathML where Typst
+supports it. Tables retain headers and captions.
+
+Figures need more than a caption, because of how Typst renders them. A diagram
+exported to HTML becomes vector artwork in which *every character of text is a
+glyph outline* — there is no text content in the output at all. Such a figure
+is unreadable to a screen reader, unsearchable, and unselectable no matter how
+good the drawing is. Therefore every figure that communicates structure
+declares a text alternative, and the complex ones additionally declare a long
+description that conveys what the diagram shows in prose; a figure that
+declares neither, and is not marked decorative, fails the build. Decorative
+visuals are hidden from assistive technology.
+
+The same rendering has a size consequence. Inline diagram artwork can exceed
+the surrounding prose by an order of magnitude, so the assembler extracts each
+one into a separate fingerprinted image file, references it with its declared
+alternative text, and loads it lazily. This keeps documentation pages within
+the page-weight budget, lets diagrams cache independently, and removes another
+source of inline styling.
+
+Typst 0.15's HTML and bundle export is still documented as experimental, and
+its failure mode is silent: constructs it cannot map are dropped without an
+error naming them. The release therefore pins the exact Typst patch version,
+snapshots the semantic DOM for representative pages, and treats an upgrade as a
+reviewed toolchain change. The Python assembler wraps and indexes Typst output
+but does not repair unknown semantic breakage silently. It enforces that
+promise with an explicit contract check before wrapping: an element or
+attribute outside the allowed set, a style value outside the closed map, a
+figure count that disagrees with the content map, an empty figure body, a
+missing figure alternative, or a Typst warning outside the reviewed allowlist
+each fail the build with the offending fragment quoted.
+
+Typst identifies headings by their position in the document, so those
+identifiers renumber whenever any earlier content changes and cannot serve as
+stable anchors. The assembler generates anchors by slugging heading text within
+each chapter or record, rewrites every internal fragment to match, and retains
+the previous identifier as a secondary identifier for one release so existing
+links keep working.
 
 == Sphinx-quality documentation ergonomics
 
@@ -1177,7 +1349,7 @@ generated indexes.
 
 == PDF publication
 
-`zig build book` continues to produce the complete PDF. Release 0.1.2 adds
+`zig build book` continues to produce the complete PDF. Release 0.2.0 adds
 version metadata, outline/bookmarks, document language, author names without
 email, descriptive title, link annotations, alt text where Typst supports it,
 and a reproducible creation policy. The build targets PDF/UA-1 when the pinned
@@ -1265,7 +1437,7 @@ Every timed output first passes:
 
 The fixture oracle records document facts rather than zenfmt's preferred
 Markdown spelling. Quality scores are reported per feature and format with the
-scorable document count. Adding an LLM judge is outside 0.1.2 unless a later
+scorable document count. Adding an LLM judge is outside 0.2.0 unless a later
 record defines model/version, images, prompts, blindness, position-bias
 control, cost, raw verdict publication, and rerun policy.
 
@@ -1276,7 +1448,18 @@ control, cost, raw verdict publication, and rerun policy.
 corpus manifest, environment, and tool manifests by SHA-256 digest. Schema
 version, zenfmt version, and git revision are mandatory. Python generation
 calculates aggregates from raw samples; the Typst book benchmark chapter and
-HTML dashboard consume those aggregates from the same file.
+HTML dashboard consume those aggregates from the same file and recompute
+nothing. `site.json` is checked in, so a documentation build from a clean
+checkout needs no benchmark run.
+
+Raw data means raw timing samples and per-file measurements. The corpus is
+assembled from third-party documents whose licences differ and are in several
+cases unstated, and a conversion of such a document is a derivative work.
+Neither the corpus documents nor their conversions are published. The corpus
+manifest publishes each file's identifier, declared format, byte size,
+SHA-256 digest, source URL, and licence, which is what a reader needs to
+reproduce the run; the fetch script verifies those digests and fails rather
+than silently benchmarking a file that changed underneath it.
 
 The homepage shows a small dashboard: coverage, one shared-corpus latency
 comparison for the selected lens, and provenance/reproduction links. The full
@@ -1287,9 +1470,15 @@ state. Tool order is stable: zenfmt, AnyDoc, Pandoc.
 
 Reference results are regenerated deliberately on the designated host for a
 release candidate. Ordinary Pages builds validate but do not rewrite them.
-Results older than the displayed version/commit make the dashboard fail closed
-with `Benchmark pending for this release`; stale 0.1.0 numbers cannot appear
-under a 0.1.2 heading.
+Results whose version or revision does not match the build make the dashboard
+fail closed with `Benchmark pending for this release`, everywhere including the
+homepage headline; stale 0.1.0 numbers cannot appear under a 0.2.0 heading.
+
+That mismatch is a hard failure on the default branch and on a tag, where the
+reference data is expected to match the release candidate's revision. On any
+other branch it is a recorded warning, because otherwise every commit that did
+not regenerate the benchmark would block a documentation change on a benchmark
+run — a gate that would be disabled within a week rather than obeyed.
 
 = Security and Privacy
 
@@ -1329,18 +1518,50 @@ reports, recent-file list, or benchmark behavior.
 
 == Browser isolation and policy
 
-Conversion runs in a dedicated worker. The production CSP is restrictive:
-default, script, style, worker, connect, image, font, object, base, frame,
-form, and frame-ancestor policies are explicitly set. WASM execution receives
-only the narrow CSP allowance required by supported browsers. GitHub Pages
-does not provide arbitrary response-header control, so 0.1.2 uses a document
-CSP where supported and does not claim header-only protections it cannot set.
+Conversion runs in a dedicated worker. GitHub Pages serves static files and
+gives no control over response headers, so the policy is a document policy
+carried in a meta element. That is a real constraint, and this record states
+what it costs rather than implying protection the platform cannot provide.
+
+A document policy enforces the fetch directives: default, script, style,
+worker, connect, image, font, object, base, and form. The site sets all of
+them, and `object-src 'none'`, no `eval`, no inline event handlers, and no
+third-party origin. It also sets `require-trusted-types-for 'script'` with an
+empty `trusted-types` list, which a document policy does honor where supported
+and which turns an accidental `innerHTML` assignment — the one mistake that
+would undo the read-only output guarantee — into a runtime failure rather than
+an injection.
+
+A document policy does *not* enforce `frame-ancestors`, `sandbox`, or violation
+reporting, and GitHub Pages sets no framing header of its own. Release 0.2.0
+therefore has *no clickjacking protection*: the site can be embedded in a
+third-party frame. That is recorded here as an accepted gap and stated on the
+security page. It is tolerable only because the site holds no credential, no
+session, and no server-side action a framing attacker could induce; it would
+not be tolerable for a site that did. Response headers, and with them framing
+protection and violation reporting, require a hosting change and a later
+record.
+
+WASM execution receives one narrow allowance: `script-src` carries
+`'wasm-unsafe-eval'` alongside `'self'`, which Chromium requires to instantiate
+a module under a restrictive policy and which the other supported engines
+ignore. No other `eval`-class token appears.
+
+Typst's HTML export emits a stylesheet element and a large number of inline
+style attributes, chiefly for syntax highlighting. A policy cannot cover style
+attributes by hash without weakening it further, so the assembler removes them
+instead: it extracts every emitted stylesheet element into a fingerprinted
+external stylesheet and rewrites every inline style attribute through a closed
+map of semantic classes. A style value not in that map fails the build rather
+than being allowed through. The published site therefore contains no style
+element and no style attribute at all, and `style-src 'self'` holds with no
+exception.
 
 No feature requires cross-origin isolation. WASM threads and
 `SharedArrayBuffer` are excluded, which avoids dependence on COOP/COEP headers.
-The site must work with `object-src 'none'`, no `eval`, no inline event
-handlers, and no third-party origins. A generated policy test inventories every
-deployed URL and fails on an undeclared external request.
+A generated policy test inventories every deployed URL, asserts the policy text
+is identical on every page, and fails on an undeclared external request, on any
+style element or style attribute, and on any inline event handler.
 
 == Resource exhaustion and recovery
 
@@ -1377,7 +1598,7 @@ Required properties include:
 - status announcements that do not repeat on every render;
 - logical DOM order matching visual order at all breakpoints;
 - charts paired with data tables and prose summaries;
-- locale-independent machine data and English human copy in 0.1.2, with
+- locale-independent machine data and English human copy in 0.2.0, with
   language declared;
 - 200% text zoom and 400% page zoom checks without loss of actions or content.
 
@@ -1396,12 +1617,18 @@ The implementation adds these responsibilities without adopting a JavaScript
 project manager:
 
 ```text
-bindings/wasm/             Zig ABI, request/result ownership, import audit
+bindings/shared/           comptime capability and name generators
+bindings/wasm/             Zig ABI, request/result ownership, browser profile
+build/                     the split build graph: modules, wasm, python, zds
 site/                      authored shell assets and homepage content
   assets/                  CSS, ES modules, worker, local fonts, icons
-  pages/                   small Typst/HTML site pages outside book and ZDS
+  templates/               the shared HTML shell and page templates
+  pages/                   body partials and microcopy for generated pages
 docs/book/site.typ         multi-document Typst book bundle entry point
+docs/fonts/                vendored Typst text fonts
+docs/packages/             vendored Typst preview packages
 docs/site/                 uv-managed Python assembler and validators
+tools/wasm_audit.zig       WASM section auditor
 tests/wasm/                Zig parity, ABI, limit, leak, and adversarial tests
 tests/site/                Python and browser interaction/accessibility tests
 benchmarks/browser/        browser adapters and uv-managed benchmark runner
@@ -1410,17 +1637,41 @@ benchmarks/results/        native, Python, WASM, quality, and site JSON
 
 This tree is an implementation map, not code added by this ZDS.
 
+The pages outside the book and the ZDS records — the homepage, download,
+benchmark, security, and not-found routes — are authored as HTML templates
+rendered by the Python assembler, not as Typst. Every one of them is
+data-driven: it must inject the release manifest, benchmark aggregates, and
+capability metadata, and it must express file inputs, live regions,
+disclosures, and a no-script fallback. Typst's HTML export is experimental,
+cannot emit into the document head, and drops constructs it cannot map without
+failing; the product surface should not depend on it. Typst therefore retains
+authority over exactly what it is the canonical source for: the book and the
+records.
+
 == Division of tool authority
 
 - Zig 0.16.0 compiles native and WASM artifacts, runs Zig tests/audits, and
   owns the repository build DAG.
-- Typst 0.15 produces semantic bundle HTML and PDFs from the book/ZDS sources.
+- Typst 0.15.1 — pinned to that exact patch version, with its `@preview`
+  packages and text fonts vendored in the repository — produces semantic bundle
+  HTML and PDFs from the book/ZDS sources.
 - uv manages locked Python environments for site assembly, indexing,
-  validation, benchmark aggregation, and browser tests.
+  validation, benchmark aggregation, and browser tests. The site tooling is its
+  own uv project with its own lockfile, kept separate from the published Python
+  library so its development dependencies never enter that distribution.
 - Ruff formats/lints all new Python tooling; pytest tests it.
 - Small browser ES modules and CSS are checked-in runtime assets. They use web
-  standards directly and require no transpiler, bundler, Node, npm, or
-  package-manager lock.
+  standards directly and require no transpiler, bundler, or package-manager
+  lock.
+- The exclusion of Node and npm is an exclusion of adopting a JavaScript
+  package manager, build system, or shipped runtime dependency. It is not a
+  claim that no such runtime exists anywhere in development: test tools
+  distributed as locked Python wheels may embed their own private runtimes, and
+  npm may be used to fetch a pinned third-party benchmark competitor into a
+  gitignored directory. The binding rules are that the repository contains no
+  `package.json`, lockfile, or `node_modules`; that no build, generation, or
+  release step depends on one; and that nothing of the sort is served to a
+  visitor.
 - Ruby is not part of authoring, generation, testing, serving, benchmarking,
   release, or deployment.
 
@@ -1431,16 +1682,20 @@ This tree is an implementation map, not code added by this ZDS.
   stroke: 0.5pt + rule,
   inset: 6pt,
   table.header([*Step*], [*Required behavior*]),
-  [`zig build wasm`], [Build the host-independent ReleaseSmall module and
+  [`zig build capabilities`], [Write the canonical capability document from the
+    compiled default bundle; every other surface consumes it.],
+  [`zig build wasm`], [Build the host-independent ReleaseSafe module and
     browser distribution into `zig-out/wasm`.],
-  [`zig build wasm-check`], [Run ABI/import/export audit, ReleaseSafe WASM
-    tests, native parity fixtures, leak cycles, and adapter contract tests.],
-  [`zig build book-site`], [Build chapter HTML plus the versioned book PDF from
-    the same Typst sources.],
+  [`zig build wasm-check`], [Run the ABI/import/export audit, the freestanding
+    WASM tests, native parity fixtures, leak cycles, declaration checks, and
+    adapter contract tests.],
+  [`zig build book-site`], [Build chapter HTML from the book sources; the
+    versioned book PDF stays on its own invocation so the two never share one
+    Typst compilation.],
   [`zig build zds-site`], [Build registry, per-ZDS HTML, and PDFs under the
     shared site contract; existing command name remains valid.],
   [`zig build site`], [Build WASM, book, ZDS, homepage, download and benchmark
-    pages, search, fingerprints, redirects, `.nojekyll`, and the final deploy
+    pages, search, fingerprints, aliases, `.nojekyll`, and the final deploy
     directory.],
   [`zig build site-check`], [Validate HTML semantics, internal/external links,
     base paths, CSP inventory, search map, version/digest parity, performance
@@ -1449,14 +1704,30 @@ This tree is an implementation map, not code added by this ZDS.
     Python on localhost with the correct WASM MIME type; no production server.],
   [`zig build benchmark-browser`], [Run pinned browser comparison and write raw
     `wasm.json`; never run automatically for visitors.],
+  [`zig build benchmark-quality`], [Check every tool's output against the
+    fixture oracle and write the quality result file the dashboard requires.],
+  [`zig build benchmark-aggregate`], [Compute dashboard aggregates once from the
+    raw result files and write `site.json`.],
   [`zig build docs`], [Build book/ZDS PDF and HTML plus site documentation; it
     remains usable without building release artifacts unrelated to docs.],
 )
 
 `zig build test` depends on deterministic unit/parity tests but not the long
-reference benchmark. `zig build fmt-check` includes Zig formatting and Ruff
-format/lint checks for site Python. `site-check` builds into a clean directory
-twice where reproducibility is asserted and rejects source-tree leakage.
+reference benchmark, and not on any WebAssembly compilation: the browser bundle
+is a host-independent conversion bundle, so its parity, limit, and reachability
+tests run natively and cheaply. `zig build fmt-check` includes Zig formatting
+and Ruff format/lint checks for site Python. `site-check` builds into a clean
+directory twice where reproducibility is asserted and rejects source-tree
+leakage.
+
+Reproducibility across those two builds is not automatic and depends on
+mechanisms this record requires rather than hopes for. Every Typst invocation
+passes an explicit creation timestamp drawn from `SOURCE_DATE_EPOCH`, ignores
+system fonts, and names an explicit font path and package path. Vendoring the
+fonts is not a nicety: Typst's HTML figure export embeds glyph outlines, so an
+installed-font difference changes the generated HTML byte-for-byte and not only
+the PDF. Generated archives are written with fixed modification times, sorted
+entries, and zeroed ownership.
 
 == Static assembly
 
@@ -1479,8 +1750,7 @@ or GitHub token.
 - Compile the complete default bundle for `wasm32-freestanding` in CI.
 - Validate exact import/export lists and ABI/version/capability schema.
 - Exercise every reader family through the low-level ABI in a real WASM
-  runtime and through the public browser adapter in Chromium, Firefox, and
-  WebKit.
+  runtime and through the public browser adapter.
 - Compare every committed parity fixture with native memory conversion.
 - Test allocation failure, invalid handles, overflowed offset/length, malformed
   JSON/UTF-8, double-dispose defense, empty input, large input refusal, traps,
@@ -1490,6 +1760,41 @@ or GitHub token.
 - Test `File`, `Blob`, `ArrayBuffer`, `Uint8Array`, detached buffer, missing
   source name, explicit format, strictness, lowered limits, resources,
   warnings, and Elm-style errors.
+
+Most of that runs natively and costs milliseconds, because the browser bundle
+differs from the native bundle only in host authority, not in target: it is a
+conversion bundle with the filesystem compiled out, so parity, limits, and
+reachability are ordinary Zig tests. What genuinely needs a runtime is narrow —
+that the compiled module instantiates, that the reserved stack survives a
+maximally nested document, and that the adapter behaves in a browser.
+
+Zig's default test runner cannot be compiled for `wasm32-freestanding`: it
+requires process arguments, threaded I/O, and standard input. The freestanding
+tests therefore run through a small repository-owned test runner that exports a
+result function and a failure log, instantiated by a same-origin harness page
+under browser automation.
+
+== Browser coverage
+
+The supported-browser statement below describes what the site is built to work
+in, determined by capability detection. It is not a claim about what is
+continuously tested, and this record keeps the two separate.
+
+Release 0.2.0 gates on Chromium. The interaction, adapter, accessibility, and
+harness suites run there on every change, and a failure blocks the release.
+Firefox and WebKit are exercised on a best-effort basis and their failures are
+recorded rather than blocking, because standing up and stabilising three
+engines is more work than this release can absorb without displacing the
+correctness gates that matter more. That is a deliberate reduction from the
+original intent and is recorded as such; widening the gate is a later change,
+not a silent one.
+
+Automated WebKit coverage, when it arrives, is also not Safari: the automation
+stack ships its own WebKit build, which differs from the shipping browser in
+areas — WebAssembly tiering, worker lifecycle, policy enforcement — that are
+exactly where a converter defect would hide. Release acceptance therefore
+includes one manual pass on current stable Safari on macOS and one on iOS, and
+the site never claims tested support it does not have.
 
 == Site and documentation tests
 
@@ -1523,9 +1828,19 @@ or GitHub token.
 Budgets are measured in a pinned cold browser profile and recorded by release:
 
 - non-WASM homepage shell is interactive without waiting for the engine;
-- critical CSS plus initial JavaScript is at most 150 KiB compressed;
-- the complete `zenfmt.wasm` is at most 25 MiB raw and 10 MiB compressed; any
-  exception requires an amendment with format-level size attribution;
+- critical CSS plus initial JavaScript is at most 150 KiB compressed, with
+  bundled fonts budgeted separately as stated earlier;
+- each documentation route is at most 200 KiB uncompressed and 60 KiB
+  compressed, excluding referenced images, which is what makes the figure
+  extraction above a requirement rather than an optimisation;
+- the complete `zenfmt.wasm` is at most 2 MiB raw and 512 KiB compressed. The
+  first `ReleaseSafe` build of the full nineteen-reader bundle measured
+  1,728,110 bytes raw, 561,321 gzipped, and 388,066 Brotli-compressed, so the
+  budget is that measurement plus about fifteen percent rather than the 25 MiB
+  ceiling this record originally carried. The original figure was a guess made
+  before the module existed and was fifteen times the real size; a regression
+  that doubled the module would have passed it silently. Any exception requires
+  an amendment with format-level size attribution;
 - desktop reference engine instantiate median is at most 1 second and the
   mobile-emulation p75 is at most 2.5 seconds on the designated profiles;
 - no long task over 50 ms is caused by conversion on the main thread;
@@ -1534,7 +1849,7 @@ Budgets are measured in a pinned cold browser profile and recorded by release:
 - documentation pages do not fetch the WASM module until the visitor activates
   a converter entry point;
 - asset-size, parse/startup, and representative conversion regressions over
-  10% from the accepted 0.1.2 baseline fail the comparison gate unless the
+  10% from the accepted 0.2.0 baseline fail the comparison gate unless the
   change records the reason.
 
 These are delivery budgets, not hand-entered dashboard claims.
@@ -1546,17 +1861,21 @@ These are delivery budgets, not hand-entered dashboard claims.
   stroke: 0.5pt + rule,
   inset: 6pt,
   table.header([*Gate*], [*Pass condition*]),
-  [compile], [Zig 0.16.0 builds ReleaseSmall and ReleaseSafe
-    `wasm32-freestanding` artifacts from a clean checkout.],
-  [authority], [Import audit proves the capability-minimal module; CSP/network
-    inventory is clean.],
+  [compile], [Zig 0.16.0 builds the `wasm32-freestanding` artifacts from a
+    clean checkout, and every engine, support, and format library compiles and
+    passes its parity fixtures with a 32-bit `usize`.],
+  [authority], [Import audit proves the capability-minimal module — an empty
+    import set, the exact export set, no debug or name sections, a bounded
+    memory maximum, and a stack below the data segment; CSP/network inventory
+    is clean.],
   [parity], [All representative formats agree with native artifact/resource/
     report/manifest expectations.],
   [interaction], [All first-run, keyboard, worker lifecycle, and error recovery
-    tasks pass in supported browsers.],
+    tasks pass in the gating browser, and the manual Safari passes are
+    recorded.],
   [documentation], [Homepage, Book, ZDS, benchmark, download, and security
     routes exist with valid HTML, links, search, PDF, and source mapping.],
-  [benchmark], [0.1.2 reference data is pinned, reproducible, correctness-gated,
+  [benchmark], [0.2.0 reference data is pinned, reproducible, correctness-gated,
     current, and clearly separates native/browser lenses.],
   [accessibility], [Automated and manual WCAG 2.2 AA review passes with no
     critical or serious issue.],
@@ -1567,13 +1886,13 @@ These are delivery budgets, not hand-entered dashboard claims.
     conversion/download/help/PDF smoke tests pass.],
 )
 
-= GitHub Pages and Release 0.1.2
+= GitHub Pages and Release 0.2.0
 
 == Pages workflow
 
 Pull requests build and test the complete site, upload a review artifact, and
 never deploy. Pushes to `main` may deploy documentation only after site gates
-pass. The 0.1.2 tag workflow builds immutable release artifacts first; Pages
+pass. The 0.2.0 tag workflow builds immutable release artifacts first; Pages
 for the release must consume the same commit and WASM digest rather than
 rebuilding an untracked variant.
 
@@ -1597,14 +1916,14 @@ Post-deploy smoke tests use the public Pages URL and verify:
 
 == Unified release artifacts
 
-Release 0.1.2 advances the monorepo version once. The existing supported CLI
+Release 0.2.0 advances the monorepo version once. The existing supported CLI
 archives, seven Python wheels, Python source distribution, and source archive
-are rebuilt at 0.1.2 alongside:
+are rebuilt at 0.2.0 alongside:
 
-- `zenfmt-0.1.2-wasm32-freestanding.tar.gz`, the complete browser bundle;
-- `zenfmt-0.1.2-wasm32-freestanding.wasm`, byte-for-byte identical to the
+- `zenfmt-0.2.0-wasm32-freestanding.tar.gz`, the complete browser bundle;
+- `zenfmt-0.2.0-wasm32-freestanding.wasm`, byte-for-byte identical to the
   module inside that bundle and available as its own release target asset;
-- `zenfmt-book-0.1.2.pdf` plus stable Pages alias;
+- `zenfmt-book-0.2.0.pdf` plus stable Pages alias;
 - the full versioned ZDS PDF set including ZDS 0015;
 - `SHA256SUMS`, provenance attestations, SBOM/artifact manifest, and release
   notes that state browser limits and support.
@@ -1631,7 +1950,7 @@ review, benchmark freshness, link health, and rollback.
   file APIs, and transferable buffers. Capability detection produces a useful
   fallback rather than browser-name sniffing.
 - A Pages rollback redeploys a previously successful artifact and does not
-  mutate the 0.1.2 release. Stable docs URLs continue to work.
+  mutate the 0.2.0 release. Stable docs URLs continue to work.
 - A severe WASM issue can disable the converter with a checked-in site flag
   while leaving Book, ZDS, downloads, and security guidance available. The
   flag must explain the reason and point to a safe released CLI/Python version.
@@ -1646,12 +1965,28 @@ review, benchmark freshness, link health, and rollback.
 
 = Delivery Plan
 
+== Phase 0: toolchain determinism
+
+- Vendor the Typst text fonts and `@preview` packages, pin the exact Typst
+  patch version, and pass explicit creation timestamp, font path, and package
+  path on every invocation.
+- Prove a documentation build is byte-identical across two runs and across the
+  supported development platforms, before any HTML work depends on it.
+- Add the build revision option and the corpus digest manifest.
+
+Exit: `zig build docs` is reproducible, and every later gate can be believed.
+
 == Phase 1: pure WASM boundary
 
-- Refactor byte/memory conversion away from host path/thread construction.
+- Refactor byte/memory conversion away from host path/thread construction, with
+  the host arms eliminated at compile time rather than skipped at run time, so
+  the absence of filesystem authority is a property the compiler enforces and
+  the import audit can prove.
+- Fix 32-bit size arithmetic and keep it fixed with a compile gate.
 - Add the WASM ABI, allocator/result ownership, capability data, and import
   audit.
-- Build ReleaseSafe/ReleaseSmall targets and establish native parity fixtures.
+- Build the shipping and diagnostic artifacts, and establish native parity
+  fixtures covering every reader in the default bundle.
 - Record actual size/startup/memory baseline and address unsupported standard
   library calls without changing document semantics.
 
@@ -1688,7 +2023,7 @@ generated route passes under both local and GitHub Pages base paths.
 - Generate current native/browser/quality data, full dashboard, book chapter,
   and homepage summary from one schema.
 - Integrate protected Pages workflow and unified release artifacts.
-- Rehearse 0.1.2 from a clean tag candidate, publish, deploy, and run public
+- Rehearse 0.2.0 from a clean tag candidate, publish, deploy, and run public
   smoke tests.
 
 Exit: all acceptance gates pass and ZDS 0015 can move to `committed`.
@@ -1697,7 +2032,7 @@ Exit: all acceptance gates pass and ZDS 0015 can move to `committed`.
 
 == WASI in the browser
 
-Rejected for 0.1.2. A WASI shim supplies filesystem-shaped capabilities the
+Rejected for 0.2.0. A WASI shim supplies filesystem-shaped capabilities the
 browser API neither needs nor wants. `wasm32-freestanding` is directly
 supported by Zig and makes the import audit small.
 
@@ -1716,7 +2051,7 @@ a worker.
 
 == WebAssembly threads
 
-Rejected for 0.1.2. They require cross-origin isolation and increase browser,
+Rejected for 0.2.0. They require cross-origin isolation and increase browser,
 allocator, determinism, and deployment complexity. One conversion worker
 provides responsiveness; parallel parsing must be benchmark-justified later.
 
@@ -1776,15 +2111,35 @@ Rejected. A raw module without a version-checked adapter, declarations,
 ownership contract, examples, checksum, and clean-browser tests is not a
 complete developer release.
 
+= Known Gaps Outside This Release
+
+Implementing this record does not close every gap it touches, and listing the
+ones it leaves open is part of not overclaiming.
+
+- Six readers — HTML, Markdown, AsciiDoc, reStructuredText, CSV, and plain text
+  — have no format record of their own and are covered only by a section of ZDS
+  0002. The same six emit no facets, and most declare no preservation data
+  version, which ZDS 0013's delivery plan requires of every reader. Closing
+  that needs its own records, one per format.
+- The HTML reader silently discards script, style, embedded-graphic, form, and
+  frame content. Release 0.2.0 gives it a diagnostic, because the browser
+  playground makes web input the most likely first document a visitor tries;
+  the reader's wider omissions still belong in a format record.
+- Markdown remains the only writer, so the lowering and capability machinery is
+  still validated against one implementation, and the binary-emission path
+  declared by the plugin contract remains unreachable.
+
+None of these blocks the browser target or the site. They are recorded here so
+this record's `committed` state is not mistaken for their completion.
+
 = Open Questions
 
-There are no implementation-blocking open questions. Font family selection,
-exact microcopy, and final illustration details may be refined during visual
-review if they preserve the semantic tokens, original identity, accessibility,
-performance budgets, wireframe hierarchy, and interaction contracts in this
-record. A change to target, browser authority, routes, output safety, benchmark
-method, theme behavior, artifact set, or acceptance gates requires an
-amendment.
+There are no implementation-blocking open questions. Exact microcopy and final
+illustration details may be refined during visual review if they preserve the
+semantic tokens, original identity, accessibility, performance budgets,
+wireframe hierarchy, and interaction contracts in this record. A change to
+target, browser authority, routes, output safety, benchmark method, theme
+behavior, artifact set, or acceptance gates requires an amendment.
 
 = Acknowledgements
 

@@ -496,7 +496,7 @@ a:hover {
   #block(inset: 0.9em, stroke: 0.7pt + rgb("9ca3af"), fill: luma(98%))[
     *Status of This Memo*
 
-    This document is an internal Zen discussion record authored in Typst and tracked in git. It intentionally follows RFC-style structure so the design scope, rationale, trade-offs, and operational constraints remain explicit. Documents that still use the placeholder number #text(font: "Libertinus Mono", size: 10pt)[#zds-placeholder-number] are provisional drafts. Numbered ZDS documents are part of the project record.
+    This document is an internal Zen discussion record authored in Typst and tracked in git. It intentionally follows RFC-style structure so the design scope, rationale, trade-offs, and operational constraints remain explicit. Documents that still use the placeholder number #text(font: "DejaVu Sans Mono", size: 10pt)[#zds-placeholder-number] are provisional drafts. Numbered ZDS documents are part of the project record.
   ]
 
   #v(1em)
