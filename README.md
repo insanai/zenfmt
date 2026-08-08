@@ -165,8 +165,9 @@ zig build zds-new -- <slug>      # start a record from the template
 zig build zds-promote -- <slug>  # assign it the next number
 ```
 
-Building the records needs [Typst](https://typst.app/) 0.15 or later on the
-path. Everything else needs only Zig 0.16.
+Building the records needs [Typst](https://typst.app/) 0.15.1 on the path —
+pinned exactly, because its HTML export is experimental. Everything else needs
+only Zig 0.16.
 
 ```sh
 zig build test        # the test suite
