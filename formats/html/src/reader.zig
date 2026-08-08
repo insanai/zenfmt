@@ -663,7 +663,22 @@ const Parser = struct {
         p.depth += 1;
     }
 
+    /// Whether skipping this element loses something a reader wanted.
+    ///
+    /// `script`, `style`, `template`, `noscript`, and `head` hold program
+    /// text, presentation, and metadata rather than document content, so
+    /// dropping them is the correct reading of the page and not a loss worth
+    /// reporting. `svg` and `iframe` are different: one is a graphic and the
+    /// other is embedded content, and a reader who sees neither them nor a
+    /// report would have no way to know the page had more in it.
+    fn skipLosesContent(tag: []const u8) bool {
+        return std.mem.eql(u8, tag, "svg") or std.mem.eql(u8, tag, "iframe");
+    }
+
     fn skipRawText(p: *Parser, tag: []const u8) core.ReadError!void {
+        if (skipLosesContent(tag)) {
+            try p.ctx.reports.add(skippedContentReport(tag));
+        }
         var needle_buffer: [32]u8 = undefined;
         const needle = std.fmt.bufPrint(&needle_buffer, "</{s}", .{tag}) catch return;
         const close = indexOfIgnoreCasePos(p.bytes, p.pos, needle) orelse {
@@ -933,6 +948,55 @@ fn invalidUtf8Report() core.Report {
         }},
     };
 }
+
+/// Embedded content the reader does not represent. Aggregated by the report
+/// system, so a page with forty inline graphics produces one grouped warning
+/// with a count rather than forty warnings.
+///
+/// The two cases are separate constants rather than one report with a
+/// selected direction. That is not style: a direction chosen at run time
+/// cannot live in an anonymous array literal, because the array is a stack
+/// temporary and the slice would dangle the moment this function returns.
+/// Keeping both fully constant lets the compiler place them in static data.
+fn skippedContentReport(tag: []const u8) core.Report {
+    return if (std.mem.eql(u8, tag, "svg")) svg_skipped else frame_skipped;
+}
+
+const svg_skipped: core.Report = .{
+    .severity = .warning,
+    .code = "html.skipped-embedded-content",
+    .title = "EMBEDDED CONTENT WAS NOT CONVERTED",
+    .problem = "This page draws an inline SVG graphic. zenfmt reads " ++
+        "documents, not vector drawings, so the graphic's contents were " ++
+        "not converted.",
+    .consequence = "The Markdown has no trace of it. Everything around it " ++
+        "converted normally.",
+    .loss = .dropped,
+    .context = .{ .logical = "svg" },
+    .directions = &.{.{
+        .title = "Convert the graphic separately if it carries text",
+        .explanation = "Export the drawing and convert that file on its " ++
+            "own; a graphic that only decorates the page needs nothing.",
+    }},
+};
+
+const frame_skipped: core.Report = .{
+    .severity = .warning,
+    .code = "html.skipped-embedded-content",
+    .title = "EMBEDDED CONTENT WAS NOT CONVERTED",
+    .problem = "This page embeds another document in a frame. zenfmt " ++
+        "converts the page it was given and never fetches what a frame " ++
+        "points at.",
+    .consequence = "The Markdown has no trace of it. Everything around it " ++
+        "converted normally.",
+    .loss = .dropped,
+    .context = .{ .logical = "iframe" },
+    .directions = &.{.{
+        .title = "Convert the framed document separately",
+        .explanation = "Fetch the page the frame points at yourself and " ++
+            "run zenfmt on it.",
+    }},
+};
 
 fn tooDeepReport() core.Report {
     return .{

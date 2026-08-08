@@ -413,6 +413,10 @@ the writer degraded it deliberately, and the manifest says so.
     UTF-8.],
   [`html.too-deep`], [error], [limit], [Element nesting beyond
     `max_depth`.],
+  [`html.skipped-embedded-content`], [warning], [none], [An inline SVG
+    graphic or a framed document was not converted. Script, style,
+    template, and metadata elements are not reported: they are not
+    document content.],
 )
 
 === Lightweight markup (`text.*`, `csv.*`, `rtf.*`, `asciidoc.*`, `rst.*`)

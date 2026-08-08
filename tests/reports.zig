@@ -94,3 +94,55 @@ test "every direction of every report survives being rendered twice" {
     defer gpa.free(second);
     try testing.expectEqualStrings(first, second);
 }
+
+test "a page with embedded content reports it, and the report renders" {
+    // Both memory bugs this file exists for were reports that were correct
+    // as objects and unprintable as text. Every reader that gained a report
+    // should therefore be exercised through rendering, not just through its
+    // code.
+    const gpa = testing.allocator;
+    const page =
+        "<html><body><p>Before</p><svg><circle r=\"1\"/></svg>" ++
+        "<iframe src=\"x\"></iframe><p>After</p></body></html>";
+    var conversion = zenfmt.Default.convert(gpa, testing.io, .{
+        .input = .{ .bytes = .{ .name = "page.html", .data = page } },
+        .output = .{ .memory = .{ .artifact_name = "page.md" } },
+    });
+    defer conversion.deinit(gpa);
+
+    try testing.expectEqual(core.Status.success, conversion.status);
+    const rendered = try renderAll(gpa, &conversion);
+    defer gpa.free(rendered);
+    try testing.expect(
+        std.mem.indexOf(u8, rendered, "EMBEDDED CONTENT WAS NOT CONVERTED") != null,
+    );
+    try testing.expect(std.mem.indexOf(u8, rendered, "What you can do") != null);
+
+    // The surrounding document still converted, which is the point of a
+    // warning rather than a refusal.
+    const artifact = conversion.ensemble.?.artifact;
+    try testing.expect(std.mem.indexOf(u8, artifact, "Before") != null);
+    try testing.expect(std.mem.indexOf(u8, artifact, "After") != null);
+}
+
+test "script and style are dropped silently, because they are not content" {
+    // The rule is that a dropped *construct* is reported. Program text and
+    // presentation are not document constructs, and reporting them would
+    // make the common case noisy enough that the real warnings get ignored.
+    const gpa = testing.allocator;
+    const page =
+        "<html><head><style>p{color:red}</style></head>" ++
+        "<body><p>Text</p><script>var x = 1;</script></body></html>";
+    var conversion = zenfmt.Default.convert(gpa, testing.io, .{
+        .input = .{ .bytes = .{ .name = "page.html", .data = page } },
+        .output = .{ .memory = .{ .artifact_name = "page.md" } },
+    });
+    defer conversion.deinit(gpa);
+
+    try testing.expectEqual(core.Status.success, conversion.status);
+    for (conversion.reports) |value| {
+        try testing.expect(
+            !std.mem.eql(u8, value.code, "html.skipped-embedded-content"),
+        );
+    }
+}
