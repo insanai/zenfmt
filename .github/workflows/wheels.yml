@@ -1,0 +1,184 @@
+# Wheel matrix for the zenfmt Python distribution (ZDS 0014).
+#
+# One Ubuntu runner cross-compiles the native bridge for all seven wheel
+# targets through `zig build python-native -Dtarget=...`; wheel *testing*
+# cannot be cross-compiled, so a native-runner matrix clean-installs each
+# wheel and runs the public smoke suite on CPython 3.10 through 3.14.
+# The source distribution is built once and rebuilt from its own archive
+# outside the checkout. No job in this workflow holds publish authority.
+name: Wheels
+
+on:
+  pull_request:
+    paths:
+      - "python/**"
+      - "bindings/**"
+      - "core/**"
+      - "support/**"
+      - "formats/**"
+      - "src/**"
+      - "pyproject.toml"
+      - "hatch_build.py"
+      - "uv.lock"
+      - "build.zig"
+      - "build.zig.zon"
+      - ".github/workflows/wheels.yml"
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  ZIG_VERSION: "0.16.0"
+  UV_VERSION: "0.11.6"
+
+jobs:
+  build-wheels:
+    name: Cross-build all wheels
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-linux-gnu.2.17
+          - aarch64-linux-gnu.2.17
+          - x86_64-linux-musl
+          - aarch64-linux-musl
+          - x86_64-macos.12.0
+          - aarch64-macos.12.0
+          - x86_64-windows-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build the wheel
+        env:
+          ZENFMT_WHEEL_TARGET: ${{ matrix.target }}
+        run: uv build --wheel --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-sdist:
+    name: Build the source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build the sdist
+        run: uv build --sdist --out-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  test-wheels:
+    name: Test ${{ matrix.name }}
+    needs: build-wheels
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: manylinux x86_64
+            runner: ubuntu-latest
+            artifact: wheel-x86_64-linux-gnu.2.17
+            container: ""
+          - name: manylinux aarch64
+            runner: ubuntu-24.04-arm
+            artifact: wheel-aarch64-linux-gnu.2.17
+            container: ""
+          - name: musllinux x86_64
+            runner: ubuntu-latest
+            artifact: wheel-x86_64-linux-musl
+            container: "alpine:3.20"
+          - name: musllinux aarch64
+            runner: ubuntu-24.04-arm
+            artifact: wheel-aarch64-linux-musl
+            container: "alpine:3.20"
+          - name: macOS x86_64
+            runner: macos-13
+            artifact: wheel-x86_64-macos.12.0
+            container: ""
+          - name: macOS arm64
+            runner: macos-14
+            artifact: wheel-aarch64-macos.12.0
+            container: ""
+          - name: Windows x86_64
+            runner: windows-latest
+            artifact: wheel-x86_64-windows-gnu
+            container: ""
+    container: ${{ matrix.container }}
+    steps:
+      # Node-based actions need glibc compatibility inside the musl
+      # container; plain `run:` steps do not, so this runs first.
+      - name: Prepare Alpine container
+        if: ${{ matrix.container != '' }}
+        run: apk add --no-cache bash gcompat libstdc++ tar
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Clean-install and smoke every supported CPython
+        shell: bash
+        run: |
+          set -eux
+          for python_version in 3.10 3.11 3.12 3.13 3.14; do
+            uv venv --clear --python "$python_version" "$RUNNER_TEMP/smoke-venv"
+            uv pip install --python "$RUNNER_TEMP/smoke-venv" \
+              --no-index --find-links dist zenfmt
+            if [ -x "$RUNNER_TEMP/smoke-venv/bin/python" ]; then
+              venv_python="$RUNNER_TEMP/smoke-venv/bin/python"
+            else
+              venv_python="$RUNNER_TEMP/smoke-venv/Scripts/python.exe"
+            fi
+            (cd "$RUNNER_TEMP" && "$venv_python" -I \
+              "$GITHUB_WORKSPACE/python/tests/release/smoke.py")
+          done
+
+  test-sdist:
+    name: Rebuild from the sdist
+    needs: build-sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: Build a wheel from the unpacked archive, outside the checkout
+        run: |
+          set -eux
+          mkdir -p "$RUNNER_TEMP/standalone"
+          tar -xzf dist/zenfmt-*.tar.gz -C "$RUNNER_TEMP/standalone"
+          cd "$RUNNER_TEMP/standalone"/zenfmt-*
+          uv build --wheel --no-sources --out-dir "$RUNNER_TEMP/standalone/dist"
+          uv venv "$RUNNER_TEMP/standalone/venv"
+          uv pip install --python "$RUNNER_TEMP/standalone/venv" \
+            --no-index --find-links "$RUNNER_TEMP/standalone/dist" zenfmt
+          (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/standalone/venv/bin/python" -I \
+            "$GITHUB_WORKSPACE/python/tests/release/smoke.py")

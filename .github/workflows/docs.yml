@@ -37,6 +37,15 @@ jobs:
         with:
           typst-version: "0.15"
 
+      # `zig build test` and `zig build fmt-check` include the Python
+      # suite and Ruff gates through uv (ZDS 0014); missing uv is a hard
+      # prerequisite failure by design.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.6"
+          enable-cache: true
+
       # Catches a record file with no registry.typ entry, and a registry entry
       # with no record file, before either reaches the published index.
       - name: Check the registry against the record files
