@@ -164,8 +164,18 @@ jobs:
                 uv venv --clear --python "$python_version" /runner-temp/smoke-venv
                 uv pip install --python /runner-temp/smoke-venv \
                   --no-index --find-links /workspace/dist zenfmt
-                /runner-temp/smoke-venv/bin/python -u -X faulthandler -I \
-                  /workspace/python/tests/release/smoke.py
+                if ! /runner-temp/smoke-venv/bin/python \
+                  -u -X faulthandler -I \
+                  /workspace/python/tests/release/smoke.py; then
+                  apk add --no-cache gdb
+                  gdb --batch \
+                    -ex run \
+                    -ex "thread apply all backtrace" \
+                    --args /runner-temp/smoke-venv/bin/python \
+                    -u -X faulthandler -I \
+                    /workspace/python/tests/release/smoke.py
+                  exit 1
+                fi
               done
             '
 
