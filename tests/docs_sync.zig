@@ -131,3 +131,28 @@ test "every named limit is documented in chapter 8" {
     }
     try testing.expectEqual(@as(usize, 0), missing);
 }
+
+test "the README's release claim matches build.zig.zon" {
+    // The version appears in one hand-written place. Every other surface
+    // derives it, so this is the only one that can drift — and a README
+    // announcing the wrong release is the first thing a visitor reads.
+    const gpa = testing.allocator;
+    const readme = try std.Io.Dir.cwd().readFileAlloc(
+        testing.io,
+        "README.md",
+        gpa,
+        .limited(1 << 20),
+    );
+    defer gpa.free(readme);
+
+    const version = @import("zenfmt").version;
+    const claim = try std.fmt.allocPrint(gpa, "Current release: {s}.", .{version});
+    defer gpa.free(claim);
+    if (std.mem.indexOf(u8, readme, claim) == null) {
+        std.debug.print(
+            "README.md does not state \"{s}\"; build.zig.zon says {s}\n",
+            .{ claim, version },
+        );
+        return error.ReadmeVersionDrift;
+    }
+}

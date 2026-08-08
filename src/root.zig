@@ -7,6 +7,9 @@
 
 const core = @import("zenfmt_core");
 
+/// The release version, from the one canonical value in `build.zig.zon`.
+pub const version: []const u8 = @import("zenfmt_build").version;
+
 pub const Default = @import("default_bundle.zig").Default;
 
 /// The same formats with no filesystem authority compiled in, for the browser
