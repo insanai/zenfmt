@@ -55,9 +55,17 @@ test "promote-first-heading drops the title into metadata" {
     try testing.expectEqual(zenfmt.Status.success, conversion.status);
     try testing.expectEqualStrings("Body text.\n", out.buffered());
     const manifest_json = conversion.manifest_json.?;
-    try testing.expect(std.mem.indexOf(u8, manifest_json, "\"title\":{\"$type\":\"inlines\"") != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        manifest_json,
+        "\"title\":{\"$type\":\"inlines\"",
+    ) != null);
     // The promoted inlines are structured nodes, not one flat string.
-    try testing.expect(std.mem.indexOf(u8, manifest_json, "{\"text\":\"Title\",\"type\":\"text\"}") != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        manifest_json,
+        "{\"text\":\"Title\",\"type\":\"text\"}",
+    ) != null);
 }
 
 test "drop-empty-containers unwraps spans and flatten replaces nested tables" {
@@ -101,14 +109,16 @@ test "an identity pipeline appends no AST storage" {
     pipeline.add(zenfmt.filters.shift_headings, .{ .by = 1 });
     pipeline.add(zenfmt.filters.drop_empty_containers, .{});
 
-    var reports = zenfmt.report.Reports.init(arena, .{});
-    const out = try pipeline.run(arena, doc, &reports, .{});
+    var failing = testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    var reports = zenfmt.report.Reports.init(failing.allocator(), .{});
+    const out = try pipeline.run(failing.allocator(), doc, &reports, .{});
 
     // No candidate matched: the same snapshot comes back and the node
     // arrays did not grow. An identity filter costs a tag scan, not a copy.
     try testing.expectEqual(doc.body, out.body);
     try testing.expectEqual(blocks_before, store.blocks.len);
     try testing.expectEqual(inlines_before, store.inlines.len);
+    try testing.expect(!failing.has_induced_failure);
 }
 
 test "idempotent filters produce the same output twice" {

@@ -76,3 +76,25 @@ test "fuzz the csv reader" {
         "x\ty\n1\t2\n",
     } });
 }
+
+const remaining_formats = [_][]const u8{
+    "docx", "rtf", "xlsx", "odt", "pptx", "html", "asciidoc", "rst",
+    "ods",  "odp", "epub", "pdf", "doc",  "xls",  "ppt",      "xlsb",
+};
+
+fn fuzzRegisteredReader(format: []const u8, smith: *std.testing.Smith) anyerror!void {
+    var buffer: [2048]u8 = undefined;
+    const len = smith.slice(&buffer);
+    try convertFuzzInput(format, buffer[0..len]);
+}
+
+test "fuzz every remaining registered reader" {
+    inline for (remaining_formats) |format| {
+        try std.testing.fuzz(format, fuzzRegisteredReader, .{ .corpus = &.{
+            "",
+            "not a document",
+            "PK\x03\x04truncated",
+            "{\\rtf1 malformed",
+        } });
+    }
+}

@@ -165,6 +165,86 @@ test "a stale adjacent manifest warns and is ignored" {
     try testing.expect(found);
 }
 
+test "an oversized adjacent manifest names the exact safe override" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const cwd = std.Io.Dir.cwd();
+    const directory = test_dir ++ "-large-manifest";
+    cwd.deleteTree(io, directory) catch {};
+    try cwd.createDirPath(io, directory);
+    defer cwd.deleteTree(io, directory) catch {};
+
+    const input_path = directory ++ "/edited.txt";
+    try cwd.writeFile(io, .{ .sub_path = input_path, .data = "body\n" });
+    try cwd.writeFile(io, .{
+        .sub_path = input_path ++ ".zenfmt.json",
+        .data = "{bad",
+    });
+    var buffer: [64]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = zenfmt.convert(gpa, io, .{
+        .input = .{ .path = input_path },
+        .output = .{ .writer = &out },
+        .limits = .{ .max_manifest_bytes = 4 },
+    });
+    defer conversion.deinit(gpa);
+
+    try testing.expectEqual(zenfmt.Status.success, conversion.status);
+    const diagnostic = conversion.reports[0];
+    try testing.expectEqualStrings(
+        "core.stale-or-invalid-manifest",
+        diagnostic.code,
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        diagnostic.directions[0].explanation,
+        "--limit max_manifest_bytes=8",
+    ) != null);
+}
+
+test "invalid programmatic limits explain the exact correction" {
+    var buffer: [64]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = zenfmt.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{ .name = "note.txt", .data = "hello" } },
+        .output = .{ .writer = &out },
+        .limits = .{ .max_depth = 0 },
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(zenfmt.Status.failed, conversion.status);
+    try testing.expectEqualStrings(
+        "core.invalid-limit-configuration",
+        conversion.reports[0].code,
+    );
+    try testing.expect(std.mem.indexOf(
+        u8,
+        conversion.reports[0].directions[0].explanation,
+        "ConvertOptions.limits.max_depth",
+    ) != null);
+}
+
+test "input size diagnostics name the measured size and exact override" {
+    var buffer: [64]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = zenfmt.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{ .name = "large.txt", .data = "12345" } },
+        .output = .{ .writer = &out },
+        .limits = .{ .max_input_bytes = 4 },
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(zenfmt.Status.failed, conversion.status);
+    const diagnostic = conversion.reports[0];
+    try testing.expectEqualStrings("core.input-too-large", diagnostic.code);
+    try testing.expect(std.mem.indexOf(u8, diagnostic.problem, "5 bytes") != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        diagnostic.directions[0].explanation,
+        "--limit max_input_bytes=5",
+    ) != null);
+}
+
 test "allocation failure at every site still returns the reserved report" {
     var buffer: [4096]u8 = undefined;
 

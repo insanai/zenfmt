@@ -42,6 +42,10 @@ test "facets bind through lazy entities and survive validation" {
     try testing.expectEqual(@as(u32, 1), doc.block_entities.len);
     const entity = doc.blockEntity(@enumFromInt(0)).?;
     try testing.expectEqual(@as(?ast.EntityId, null), doc.blockEntity(@enumFromInt(1)));
+    try testing.expectEqual(
+        ast.NodeIndex{ .block = @enumFromInt(0) },
+        doc.entityNode(entity).?,
+    );
 
     const style = doc.styleOf(entity).?;
     try testing.expectEqualStrings("Heading 2", store.textSlice(style.name));
@@ -53,6 +57,10 @@ test "facets bind through lazy entities and survive validation" {
     try testing.expectEqual(facets.RevisionKind.comment, revisions[1].kind);
 
     try testing.expectEqual(@as(?facets.Grid, null), doc.gridOf(entity));
+
+    var broken = doc;
+    broken.entity_index = .empty;
+    try testing.expectError(error.InvalidDocument, ast.validate(&broken, .{}));
 }
 
 test "entity bindings follow nodes through a rebuild and die with them" {
@@ -85,6 +93,7 @@ test "entity bindings follow nodes through a rebuild and die with them" {
     const doc = try tree.finish();
     try ast.validate(&doc, .{});
     try testing.expectEqual(@as(u32, 3), doc.block_entities.len);
+    const doomed_entity = doc.blockEntity(@enumFromInt(1)).?;
 
     var pipeline: core.Pipeline = .empty;
     pipeline.add(core.filters.drop_empty_containers, .{});
@@ -95,12 +104,14 @@ test "entity bindings follow nodes through a rebuild and die with them" {
     // Two survivors, rebased to the new indices: heading 0, paragraph 1.
     try testing.expectEqual(@as(u32, 2), rebuilt.block_entities.len);
     const heading_entity = rebuilt.blockEntity(@enumFromInt(rebuilt.body.startRaw())).?;
-    try testing.expectEqualStrings("Title", store.textSlice(rebuilt.styleOf(heading_entity).?.name));
+    const heading_style = rebuilt.styleOf(heading_entity).?;
+    try testing.expectEqualStrings("Title", store.textSlice(heading_style.name));
     const paragraph_entity = rebuilt.blockEntity(@enumFromInt(rebuilt.body.startRaw() + 1)).?;
     try testing.expectEqual(
         facets.RevisionKind.insertion,
         rebuilt.revisionsOf(paragraph_entity)[0].kind,
     );
+    try testing.expectEqual(@as(?ast.NodeIndex, null), rebuilt.entityNode(doomed_entity));
 
     // The dropped container's entity is bound to no node in the new
     // snapshot: its facet became unreachable, exactly per Lemma 2.
@@ -288,7 +299,11 @@ test "the manifest summarizes carried-but-unused facets and preserves on request
     defer summary.deinit(gpa);
     try testing.expectEqual(core.Status.success, summary.status);
     const summary_manifest = summary.manifest_json.?;
-    try testing.expect(std.mem.indexOf(u8, summary_manifest, "\"facets\":{\"grid\":{\"count\":1") != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        summary_manifest,
+        "\"facets\":{\"grid\":{\"count\":1",
+    ) != null);
     try testing.expect(std.mem.indexOf(u8, summary_manifest, "\"unused\":true") != null);
     try testing.expect(std.mem.indexOf(u8, summary_manifest, "\"rows\"") == null);
 
@@ -313,7 +328,10 @@ fn readPreserving(ctx: *core.ReadContext) core.ReadError!void {
     const paragraph = try ctx.out.beginParagraph();
     try ctx.out.text("body");
     ctx.out.endBlock(paragraph);
-    ctx.own_plugin_data = .{ .version = 1, .data = "{\"styles\":[\"Body\"]}" };
+    ctx.own_plugin_data = .{
+        .version = 1,
+        .data = "{ \"z\": 0, \"styles\": [\"Body\"] }",
+    };
 }
 
 const preserving_reader = core.Reader(.{
@@ -325,7 +343,7 @@ const preserving_reader = core.Reader(.{
 });
 
 fn writeRecovering(ctx: *core.WriteContext) core.WriteError!void {
-    if (ctx.preservation("ai.insan.zenfmt.test-pres")) |entry| {
+    if (ctx.preservation()) |entry| {
         try ctx.out.writeAll("recovered:");
         try ctx.out.writeAll(entry.data);
     } else {
@@ -335,9 +353,18 @@ fn writeRecovering(ctx: *core.WriteContext) core.WriteError!void {
 }
 
 const recovering_writer = core.Writer(.{
-    .id = "ai.insan.zenfmt.test-recover",
+    .id = "ai.insan.zenfmt.test-pres",
     .format = "recover",
     .extensions = &.{"rec"},
+    .data_version = 1,
+    .write = writeRecovering,
+});
+
+const incompatible_writer = core.Writer(.{
+    .id = "ai.insan.zenfmt.test-pres",
+    .format = "incompatible",
+    .extensions = &.{"incompatible"},
+    .data_version = 2,
     .write = writeRecovering,
 });
 
@@ -382,7 +409,86 @@ test "a writer recovers preservation data through the input manifest" {
 
     const recovered = try cwd.readFileAlloc(io, out_path, gpa, .limited(4096));
     defer gpa.free(recovered);
-    try testing.expectEqualStrings("recovered:{\"styles\":[\"Body\"]}\n", recovered);
+    try testing.expectEqualStrings(
+        "recovered:{\"styles\":[\"Body\"],\"z\":0}\n",
+        recovered,
+    );
+}
+
+test "a writer cannot decode an incompatible preservation version" {
+    const io = testing.io;
+    const gpa = testing.allocator;
+    const cwd = std.Io.Dir.cwd();
+    const dir = ".zig-cache/tmp/zenfmt-preservation-version";
+    cwd.deleteTree(io, dir) catch {};
+    try cwd.createDirPath(io, dir);
+    defer cwd.deleteTree(io, dir) catch {};
+
+    const source_path = dir ++ "/doc.presfix";
+    const middle_path = dir ++ "/doc.md";
+    try cwd.writeFile(io, .{ .sub_path = source_path, .data = "irrelevant" });
+    const FirstBundle = core.Bundle(.{
+        .readers = .{preserving_reader},
+        .writers = .{markdown.writer},
+    });
+    var first = FirstBundle.convert(gpa, io, .{
+        .input = .{ .path = source_path },
+        .output = .{ .path = middle_path },
+    });
+    defer first.deinit(gpa);
+    try testing.expectEqual(core.Status.success, first.status);
+
+    const SecondBundle = core.Bundle(.{
+        .readers = .{markdown.reader},
+        .writers = .{incompatible_writer},
+    });
+    var buffer: [64]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var second = SecondBundle.convert(gpa, io, .{
+        .input = .{ .path = middle_path },
+        .output = .{ .writer = &out },
+    });
+    defer second.deinit(gpa);
+    try testing.expectEqual(core.Status.success, second.status);
+    try testing.expectEqualStrings("missing\n", out.buffered());
+}
+
+fn readInvalidPreservation(ctx: *core.ReadContext) core.ReadError!void {
+    const paragraph = try ctx.out.beginParagraph();
+    try ctx.out.text("body");
+    ctx.out.endBlock(paragraph);
+    ctx.own_plugin_data = .{ .version = 2, .data = "{broken" };
+}
+
+const invalid_preservation_reader = core.Reader(.{
+    .id = "ai.insan.zenfmt.invalid-preservation",
+    .format = "badpres",
+    .extensions = &.{"badpres"},
+    .data_version = 1,
+    .read = readInvalidPreservation,
+});
+
+test "invalid preservation data refuses before streamed output" {
+    const BadBundle = core.Bundle(.{
+        .readers = .{invalid_preservation_reader},
+        .writers = .{markdown.writer},
+    });
+    var buffer: [64]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = BadBundle.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{ .name = "doc.badpres", .data = "x" } },
+        .output = .{ .writer = &out },
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(core.Status.failed, conversion.status);
+    try testing.expectEqual(core.Conversion.StreamState.untouched, conversion.stream);
+    try testing.expectEqual(@as(usize, 0), out.buffered().len);
+    try testing.expectEqualStrings(
+        "core.invalid-preservation-data",
+        conversion.reports[0].code,
+    );
+    try testing.expect(conversion.reports[0].directions.len > 0);
 }
 
 test "stream state reports a complete stream" {
@@ -395,6 +501,87 @@ test "stream state reports a complete stream" {
     });
     defer conversion.deinit(gpa);
     try testing.expectEqual(core.Conversion.StreamState.complete, conversion.stream);
+}
+
+fn readComplexCell(ctx: *core.ReadContext) core.ReadError!void {
+    const table = try ctx.out.beginTable(&.{.default});
+    const caption = try ctx.out.beginBlock(.caption);
+    const caption_text = try ctx.out.beginParagraph();
+    try ctx.out.text("table caption");
+    ctx.out.endBlock(caption_text);
+    ctx.out.endBlock(caption);
+    const body = try ctx.out.beginTableBody(.{ .row_head_columns = 0, .head_rows = 0 });
+    const row = try ctx.out.beginBlock(.table_row);
+    const cell = try ctx.out.beginTableCell(.plain);
+    try ctx.out.attrs(.{ .classes = &.{"callout"} });
+    const container = try ctx.out.beginBlock(.container);
+    const paragraph = try ctx.out.beginParagraph();
+    const underline = try ctx.out.beginInline(.underline);
+    try ctx.out.text("kept text");
+    ctx.out.endInline(underline);
+    ctx.out.endBlock(paragraph);
+    ctx.out.endBlock(container);
+    ctx.out.endBlock(cell);
+    ctx.out.endBlock(row);
+    ctx.out.endBlock(body);
+    ctx.out.endBlock(table);
+}
+
+test "flattened table cells enact every selected descendant loss" {
+    const CellBundle = core.Bundle(.{
+        .readers = .{core.Reader(.{
+            .id = "ai.insan.zenfmt.test-complex-cell",
+            .format = "complexcell",
+            .extensions = &.{"complexcell"},
+            .read = readComplexCell,
+        })},
+        .writers = .{markdown.writer},
+    });
+    var buffer: [1024]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = CellBundle.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{ .name = "doc.complexcell", .data = "x" } },
+        .output = .{ .writer = &out },
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(core.Status.success, conversion.status);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "kept text") != null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "table caption") != null);
+    inline for (.{
+        "markdown.table-cell-flattened",
+        "markdown.table-caption-degraded",
+        "markdown.container-attributes-dropped",
+        "markdown.style-dropped",
+    }) |code| {
+        try testing.expect(hasReport(conversion.reports, code));
+    }
+}
+
+fn hasReport(reports: []const core.Report, code: []const u8) bool {
+    for (reports) |entry| {
+        if (std.mem.eql(u8, entry.code, code)) return true;
+    }
+    return false;
+}
+
+test "stream state distinguishes a delivered prefix from untouched output" {
+    var buffer: [1]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = GridBundle.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{ .name = "cells.gridfix", .data = "x" } },
+        .output = .{ .writer = &out },
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(core.Status.failed, conversion.status);
+    try testing.expectEqual(core.Conversion.StreamState.partial, conversion.stream);
+    try testing.expectEqual(@as(usize, 1), out.buffered().len);
+    try testing.expectEqualStrings(
+        "core.writer-output-failed",
+        conversion.reports[0].code,
+    );
+    try testing.expect(conversion.reports[0].directions.len > 0);
 }
 
 test "distinct-owner extension nesting validates" {
