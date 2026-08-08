@@ -160,6 +160,90 @@ def test_success_without_manifest_is_corrupt(
         zenfmt.convert(b"# T\n")
 
 
+@pytest.mark.parametrize(
+    "reports",
+    [
+        {},
+        ["not-an-object"],
+        [report_payload(directions=[])],
+        [report_payload(problem="")],
+    ],
+)
+def test_malformed_report_payload_never_leaks_a_raw_exception(
+    fake_bridge: FakeBridge, reports: object
+) -> None:
+    class BadReportsHandle:
+        freed = 0
+
+        def status(self) -> int:
+            return 1
+
+        def exit_class(self) -> str:
+            return "conversion"
+
+        def reports_json(self) -> bytes:
+            import json
+
+            return json.dumps(reports).encode()
+
+        def free(self) -> None:
+            self.freed += 1
+
+    handle = BadReportsHandle()
+    fake_bridge.convert = lambda **kwargs: handle  # type: ignore[method-assign]
+    with pytest.raises(zenfmt.NativeLibraryError) as info:
+        zenfmt.convert(b"# T\n")
+    assert info.value.code == "python.corrupt-result"
+    assert "What you can do:" in str(info.value)
+    assert handle.freed == 1
+
+
+def test_unknown_native_status_is_corrupt(fake_bridge: FakeBridge) -> None:
+    fake_bridge.queue(
+        {
+            "status": 99,
+            "exit_class": "conversion",
+            "reports": [],
+        }
+    )
+    with pytest.raises(zenfmt.NativeLibraryError, match="status tag"):
+        zenfmt.convert(b"# T\n")
+    assert fake_bridge.handles[-1].freed == 1
+
+
+def test_success_decoder_failure_never_leaks_unicode_error(
+    fake_bridge: FakeBridge,
+) -> None:
+    class BadTextHandle:
+        freed = 0
+
+        def status(self) -> int:
+            return 0
+
+        def exit_class(self) -> str:
+            return "conversion"
+
+        def reports_json(self) -> bytes:
+            return b"[]"
+
+        def manifest_json(self) -> bytes:
+            return b"{}"
+
+        def source_format(self) -> str:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid")
+
+        def free(self) -> None:
+            self.freed += 1
+
+    handle = BadTextHandle()
+    fake_bridge.convert = lambda **kwargs: handle  # type: ignore[method-assign]
+    with pytest.raises(zenfmt.NativeLibraryError) as info:
+        zenfmt.convert(b"# T\n")
+    assert info.value.code == "python.corrupt-result"
+    assert "What you can do:" in str(info.value)
+    assert handle.freed == 1
+
+
 def test_process_control_exceptions_pass_through(
     fake_bridge: FakeBridge,
 ) -> None:

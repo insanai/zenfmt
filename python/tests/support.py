@@ -177,6 +177,7 @@ class FakeBridge:
         input_bytes: bytes | None,
         input_path: bytes | None,
         output_path: bytes | None,
+        copy_limits: dict[str, int],
     ) -> FakeHandle:
         self.requests.append(
             {
@@ -184,6 +185,7 @@ class FakeBridge:
                 "input_bytes": input_bytes,
                 "input_path": input_path,
                 "output_path": output_path,
+                "copy_limits": copy_limits,
             }
         )
         if not self.results:

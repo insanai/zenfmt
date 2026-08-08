@@ -9,7 +9,7 @@ from pathlib import Path, PurePath
 from typing import Any
 
 from . import _capabilities, _diagnostics, _ffi, _loader, _marshal
-from ._limits import Limits
+from ._limits import LIMIT_TABLE, Limits
 from ._models import Conversion, Format, Strictness
 
 _UNSET: Any = object()
@@ -37,6 +37,12 @@ def _normalize_limits(value: Any) -> Limits | None:
     if isinstance(value, Limits):
         return value
     raise _diagnostics.invalid_limits_argument(value)
+
+
+def _normalize_bool(argument: str, value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    raise _diagnostics.invalid_bool_argument(argument, value)
 
 
 def _normalize_format(argument: str, value: Any) -> str | None:
@@ -95,14 +101,16 @@ class _Source:
 
 
 def _classify_source(source: Any, name: str | None, max_input_bytes: int) -> _Source:
-    if isinstance(source, (str, PurePath)) or (
-        not isinstance(source, (bytes, bytearray, memoryview))
-        and hasattr(source, "__fspath__")
-    ):
+    if isinstance(source, (str, PurePath, os.PathLike)):
         # A Python str is always a filesystem path, never inline text.
         if name is not None:
             raise _diagnostics.name_with_path_source()
-        path = os.fspath(source)
+        try:
+            path = os.fspath(source)
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except BaseException as error:
+            raise _diagnostics.path_protocol_failed("source", error) from error
         display = os.path.basename(path) if isinstance(path, str) else None
         if display is None:
             display = os.path.basename(os.fsdecode(path))
@@ -115,10 +123,21 @@ def _classify_source(source: Any, name: str | None, max_input_bytes: int) -> _So
         data = source if isinstance(source, bytes) else bytes(source)
         return _Source("bytes", data=data, display_name=display or "<memory>")
 
-    read = getattr(source, "read", None)
+    try:
+        read = getattr(source, "read", None)
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except BaseException as error:
+        raise _diagnostics.reader_failed(error) from error
     if callable(read):
         data = _marshal.read_bounded(source, max_input_bytes)
-        fallback = _sanitize_stream_name(getattr(source, "name", None))
+        try:
+            stream_name = getattr(source, "name", None)
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except BaseException:
+            stream_name = None
+        fallback = _sanitize_stream_name(stream_name)
         return _Source(
             "bytes",
             data=data,
@@ -157,7 +176,11 @@ class Converter:
     ) -> None:
         object.__setattr__(self, "_strict", _normalize_strict(strict))
         object.__setattr__(self, "_limits", _normalize_limits(limits))
-        object.__setattr__(self, "_preserve_facets", bool(preserve_facets))
+        object.__setattr__(
+            self,
+            "_preserve_facets",
+            _normalize_bool("preserve_facets", preserve_facets),
+        )
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise AttributeError("Converter is immutable")
@@ -204,8 +227,9 @@ class Converter:
         effective_facets = (
             self._preserve_facets
             if preserve_facets is _UNSET
-            else bool(preserve_facets)
+            else _normalize_bool("preserve_facets", preserve_facets)
         )
+        effective_overwrite = _normalize_bool("overwrite", overwrite)
         to_value = _normalize_format("to", to)
         from_value = _normalize_format("from_", from_)
         output_path = _normalize_output(output)
@@ -249,7 +273,7 @@ class Converter:
             from_=resolved_from,
             to=resolved_to,
             strict=effective_strict.value,
-            overwrite=overwrite,
+            overwrite=effective_overwrite,
             preserve_facets=effective_facets,
             limits=(
                 effective_limits.to_dict() if effective_limits is not None else None
@@ -269,6 +293,14 @@ class Converter:
                 if output_path is not None
                 else None
             ),
+            copy_limits=(
+                effective_limits.to_dict()
+                if effective_limits is not None
+                else {
+                    name: caps.limits.get(name, default)
+                    for name, (default, _) in LIMIT_TABLE.items()
+                }
+            ),
         )
         if raw.status == _ffi.STATUS_INVALID_REQUEST:
             raise _diagnostics.invalid_request()
@@ -280,10 +312,15 @@ class Converter:
 def _normalize_output(output: Any) -> Path | None:
     if output is None:
         return None
-    if isinstance(output, (str, PurePath)) or hasattr(output, "__fspath__"):
+    if isinstance(output, (str, PurePath, os.PathLike)):
         # The caller's spelling is preserved rather than silently
         # resolved.
-        return Path(os.fsdecode(os.fspath(output)))
+        try:
+            return Path(os.fsdecode(os.fspath(output)))
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except BaseException as error:
+            raise _diagnostics.path_protocol_failed("output", error) from error
     raise _diagnostics.invalid_output_argument(output)
 
 

@@ -20,11 +20,12 @@ def test_memory_success_returns_the_full_ensemble(
     fake_bridge: FakeBridge,
 ) -> None:
     png = b"\x89PNGdata"
+    media = media_entry("note_media/image-1.png", png)
     fake_bridge.queue(
         success_payload(
             artifact=b"![a](note_media/image-1.png)\n",
-            media=[media_entry("note_media/image-1.png", png)],
-            resources=[("note_media/image-1.png", png, "ab" * 32)],
+            media=[media],
+            resources=[("note_media/image-1.png", png, media["digest"]["value"])],
         )
     )
     conversion = zenfmt.convert(b"# T\n", name="note.md")
@@ -98,6 +99,47 @@ def test_path_output_projects_resource_paths(
     resource = conversion.resources[0]
     assert resource.content is None
     assert resource.path == tmp_path / "out_media/image-1.png"
+
+
+def test_embedded_resource_paths_cannot_escape_the_destination(
+    fake_bridge: FakeBridge, tmp_path: Path
+) -> None:
+    fake_bridge.queue(
+        success_payload(
+            memory=False,
+            media=[media_entry("../escape.png", b"image")],
+        )
+    )
+    with pytest.raises(zenfmt.NativeLibraryError, match="safe relative path"):
+        zenfmt.convert(b"# T\n", output=tmp_path / "out.md")
+
+
+def test_memory_resource_manifest_and_bridge_must_agree(
+    fake_bridge: FakeBridge,
+) -> None:
+    data = b"image"
+    fake_bridge.queue(
+        success_payload(
+            media=[media_entry("out_media/image.png", data)],
+            resources=[("out_media/image.png", data, "wrong")],
+        )
+    )
+    with pytest.raises(zenfmt.NativeLibraryError, match="digest"):
+        zenfmt.convert(b"# T\n")
+
+    fake_bridge.queue(
+        success_payload(resources=[("out_media/extra.png", data, "digest")])
+    )
+    with pytest.raises(zenfmt.NativeLibraryError, match="does not list"):
+        zenfmt.convert(b"# T\n")
+
+
+def test_malformed_media_entry_is_a_native_library_error(
+    fake_bridge: FakeBridge,
+) -> None:
+    fake_bridge.queue(success_payload(media=[{"path": "image.png"}]))
+    with pytest.raises(zenfmt.NativeLibraryError, match="media entry"):
+        zenfmt.convert(b"# T\n")
 
 
 def test_external_resources_are_never_fetched(
@@ -260,4 +302,28 @@ def test_output_stream_objects_are_rejected(fake_bridge: FakeBridge) -> None:
 
     with pytest.raises(TypeError, match="INVALID OUTPUT ARGUMENT"):
         zenfmt.convert(b"# T\n", output=io.BytesIO())
+    assert fake_bridge.requests == []
+
+
+def test_boolean_policy_requires_real_booleans(fake_bridge: FakeBridge) -> None:
+    for argument in ("overwrite", "preserve_facets"):
+        with pytest.raises(TypeError, match="INVALID BOOLEAN ARGUMENT") as info:
+            zenfmt.convert(b"# T\n", **{argument: 1})
+        assert "What you can do:" in str(info.value)
+    with pytest.raises(TypeError, match="INVALID BOOLEAN ARGUMENT"):
+        zenfmt.Converter(preserve_facets="yes")
+    assert fake_bridge.requests == []
+
+
+def test_broken_output_path_protocol_is_an_elm_style_argument_error(
+    fake_bridge: FakeBridge,
+) -> None:
+    class BrokenPath:
+        def __fspath__(self) -> str:
+            raise OSError("destination provider failed")
+
+    with pytest.raises(TypeError, match="PATH-LIKE VALUE") as info:
+        zenfmt.convert(b"# T\n", output=BrokenPath())
+    assert isinstance(info.value.__cause__, OSError)
+    assert "What you can do:" in str(info.value)
     assert fake_bridge.requests == []

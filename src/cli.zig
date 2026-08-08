@@ -3,11 +3,11 @@
 //! Lives in the umbrella library so a user filter project reuses the whole
 //! CLI: its `main` calls `zenfmt.cli.main` with the pipeline its
 //! `pub fn filters` declared, exactly as `cli/src/main.zig` calls it with
-//! the empty one. Argument parsing allocates nothing: flags match a
-//! comptime table that also generates `--help`, and values are slices of
-//! argv. Exit codes are `0` success, `1` conversion error, `2` usage
-//! error, and `3` limit exceeded — a bulk script wants to treat a zip bomb
-//! differently from a malformed document.
+//! the empty one. Argument parsing uses one short-lived arena: flags match
+//! a comptime table that also generates `--help`, and parsed values borrow
+//! the collected argv slices. Exit codes are `0` success, `1` conversion
+//! error, `2` usage error, and `3` limit exceeded — a bulk script wants to
+//! treat a zip bomb differently from a malformed document.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -134,7 +134,7 @@ fn run(
     const arena = arena_state.allocator();
 
     var argv: std.ArrayList([]const u8) = .empty;
-    var iterator = std.process.Args.Iterator.init(args);
+    var iterator = try std.process.Args.Iterator.initAllocator(args, arena);
     defer iterator.deinit();
     while (iterator.next()) |arg| try argv.append(arena, try arena.dupe(u8, arg));
 

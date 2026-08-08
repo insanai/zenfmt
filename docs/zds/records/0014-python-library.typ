@@ -1,12 +1,12 @@
 #let zds-number = "0014"
 #let zds-title = "The zenfmt Python Library: API and Implementation"
-#let zds-state = "discussion"
+#let zds-state = "committed"
 #let zds-created = "2026-08-08"
-#let zds-discussion = "Implementation blueprint for the Python API, native boundary, uv workflow, packaging, and release"
+#let zds-discussion = "The implemented Python API, native boundary, uv workflow, packaging, benchmark, and release contract"
 #let zds-labels = ("python", "api", "packaging", "security",)
 #let zds-authors = ("Vikrant Rathore", "Ronak Rathore (assistance)",)
 #let zds-category = "Implementation Specification"
-#let zds-status = "Open for Discussion"
+#let zds-status = "Committed"
 #let zds-last-updated = "2026-08-08"
 
 #import "../../shared/zds.typ": zds-document
@@ -134,7 +134,7 @@ In scope:
 - automated native, Python, integration, wheel, and source-distribution tests;
 - platform-wheel, source-distribution, and PyPI release requirements;
 - user documentation and public API reference material;
-- the protected TestPyPI and PyPI publication workflow;
+- the protected PyPI publication workflow and optional TestPyPI rehearsal;
 - security, concurrency, testing, and support policy.
 
 Out of scope:
@@ -184,8 +184,9 @@ when every deliverable and acceptance gate in this record is satisfied.
     reference whose examples are exercised by tests, and the updated reference
     and benchmark chapters of the book.],
   [release], [The new wheel and release workflows, the required platform
-    wheels, standalone sdist, version parity, attestations, and protected
-    TestPyPI/PyPI publication.],
+    wheels, standalone sdist, standalone CLI archives, version parity,
+    attestations, protected PyPI publication, and one checksummed GitHub
+    release.],
 )
 
 = Problem Statement
@@ -1146,20 +1147,22 @@ gate inspects its file list and builds only from the archive.
 
 == PyPI publication
 
-The intended PyPI project name is `zenfmt`; it must be reserved and its trusted
-publisher configured before the first release. Publication occurs only from a
-protected release workflow for a signed/tagged source revision after all wheel
-jobs and the sdist job have completed. Local maintainer machines do not hold a
-long-lived PyPI upload token.
+The intended PyPI project name is `zenfmt`. Publication occurs only from the
+tag-driven release workflow's protected `pypi` environment after all wheel and
+sdist jobs complete. Trusted Publishing with short-lived OIDC credentials is
+preferred once the project publisher is configured. The bootstrap release may
+instead use a project-scoped PyPI API token stored only as that environment's
+encrypted `PYPI_API_TOKEN` secret. The credential never enters a build job,
+repository file, artifact, command output, or maintainer environment file.
 
-The workflow uses PyPI Trusted Publishing with short-lived OIDC credentials,
-produces PEP 740 attestations for every artifact, downloads the artifacts into
-one final job, checks that filenames and embedded versions form one complete
-matrix, and publishes the exact checked bytes through the PyPA publish action
-with attestation generation enabled; uv may replace that step once it
-produces PEP 740 attestations. TestPyPI receives a
-release candidate before the first stable release and whenever packaging
-machinery changes materially.
+The publication job downloads the artifacts built and exercised by unprivileged
+jobs, checks that filenames and embedded versions form one complete matrix,
+and publishes those exact bytes through the PyPA publish action with PEP 740
+attestation generation enabled. A TestPyPI release candidate is required when
+TestPyPI authority has been configured and whenever packaging machinery changes
+materially after the bootstrap release. The same tag builds standalone CLI
+archives for every wheel target and creates one GitHub release containing the
+CLI archives, wheels, sdist, and SHA-256 checksum manifest.
 
 No release job builds after it receives publication authority. Build jobs do
 not receive publication authority. Published files are immutable; a broken
@@ -1406,7 +1409,10 @@ This ZDS may move to `committed` only when:
 - release version parity is mechanically enforced;
 - user documentation clearly states input authority, adjacent-manifest loading,
   resource limits, external-reference behavior, and in-process native risk;
-- PyPI publication uses protected trusted publishing and artifact attestations.
+- PyPI publication uses the protected environment, a project-scoped credential
+  (Trusted Publishing when configured), and artifact attestations;
+- the GitHub release contains the complete wheel matrix, sdist, CLI matrix, and
+  checksum manifest.
 
 = Security Considerations
 
@@ -1460,9 +1466,10 @@ the packaging boundary.
 
 Python build and development dependencies are locked. Release builds use
 isolated PEP 517 environments with explicit build constraints and hash
-verification where supported. Trusted Publishing removes long-lived upload
-credentials but does not prove code safety; branch, tag, workflow, and approval
-protections remain required.
+verification where supported. Trusted Publishing avoids a long-lived upload
+credential; when a bootstrap token is used, it is project-scoped and isolated
+to the protected publication environment. Neither mechanism proves code safety;
+branch, tag, workflow, and approval protections remain required.
 
 == Filesystem output
 
@@ -1557,11 +1564,14 @@ corruption.
 
 == Phase 4: publication
 
-- Reserve the PyPI project and configure a protected trusted publisher.
+- Reserve the PyPI project and configure the protected publication environment;
+  use a project-scoped bootstrap token until its trusted publisher is active.
 - Add the wheel-matrix and tag-driven release workflows.
-- Tag and publish a `v0.1.0` release candidate, and verify it on TestPyPI.
+- Rehearse a release candidate on TestPyPI when that publisher is configured.
 - Generate attestations, publish the complete `0.1.0` matrix, and run
   post-publish install tests against PyPI.
+- Attach the complete wheel, sdist, CLI, and checksum set to the immutable
+  `v0.1.0` GitHub release.
 - Move this record through accepted, published, and committed states only as
   the corresponding lifecycle conditions are met.
 

@@ -32,6 +32,20 @@ def test_pathlike_is_a_path(fake_bridge: FakeBridge, tmp_path: Path) -> None:
     assert last_request(fake_bridge)["options"]["input"]["kind"] == "path"
 
 
+def test_broken_path_protocol_is_an_elm_style_argument_error(
+    fake_bridge: FakeBridge,
+) -> None:
+    class BrokenPath:
+        def __fspath__(self) -> str:
+            raise OSError("path provider failed")
+
+    with pytest.raises(TypeError, match="PATH-LIKE VALUE") as info:
+        zenfmt.convert(BrokenPath())
+    assert isinstance(info.value.__cause__, OSError)
+    assert "What you can do:" in str(info.value)
+    assert fake_bridge.requests == []
+
+
 @pytest.mark.parametrize(
     "source",
     [b"# T\n", bytearray(b"# T\n"), memoryview(b"# T\n")],
@@ -85,6 +99,21 @@ def test_reader_without_usable_name_is_stream(
         name = 7  # file descriptor: never used
 
     zenfmt.convert(Numbered(b"data"))
+    assert last_request(fake_bridge)["options"]["input"]["name"] == "<stream>"
+
+
+def test_reader_name_property_failure_is_ignored(fake_bridge: FakeBridge) -> None:
+    fake_bridge.queue(success_payload())
+
+    class Reader:
+        @property
+        def name(self) -> str:
+            raise OSError("display name unavailable")
+
+        def read(self, size: int) -> bytes:
+            return b""
+
+    zenfmt.convert(Reader())
     assert last_request(fake_bridge)["options"]["input"]["name"] == "<stream>"
 
 

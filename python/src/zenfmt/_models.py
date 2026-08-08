@@ -168,7 +168,7 @@ class Manifest:
         if parsed is None:
             try:
                 parsed = json.loads(self._raw)
-            except ValueError as error:
+            except (TypeError, UnicodeError, ValueError) as error:
                 raise corrupt_result("the manifest is not valid JSON") from error
             if not isinstance(parsed, dict):
                 raise corrupt_result("the manifest is not a JSON object")
@@ -180,12 +180,15 @@ class Manifest:
         if not isinstance(value, dict):
             raise corrupt_result(f"the manifest carries no `{key}` object")
         try:
-            return ManifestRef(
-                name=value["name"],
-                format=value["format"],
-                digest=value["digest"]["value"],
-                plugin_id=value["plugin"]["id"],
+            fields = (
+                value["name"],
+                value["format"],
+                value["digest"]["value"],
+                value["plugin"]["id"],
             )
+            if not all(isinstance(field, str) for field in fields):
+                raise TypeError("reference fields must be text")
+            return ManifestRef(*fields)
         except (KeyError, TypeError) as error:
             raise corrupt_result(
                 f"the manifest `{key}` object is incomplete"
@@ -197,7 +200,12 @@ class Manifest:
 
     @property
     def schema_version(self) -> int:
-        return int(self._load().get("schema_version", 0))
+        try:
+            return int(self._load().get("schema_version", 0))
+        except (TypeError, ValueError) as error:
+            raise corrupt_result(
+                "the manifest schema version is not an integer"
+            ) from error
 
     @property
     def source(self) -> ManifestRef:
@@ -210,23 +218,48 @@ class Manifest:
     @property
     def reports(self) -> tuple[Report, ...]:
         entries = self._load().get("reports", [])
-        return tuple(report_from_json(entry) for entry in entries)
+        if not isinstance(entries, list) or not all(
+            isinstance(entry, dict) for entry in entries
+        ):
+            raise corrupt_result("the manifest reports field is not an object array")
+        try:
+            return tuple(report_from_json(entry) for entry in entries)
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            raise corrupt_result("the manifest contains an invalid report") from error
 
     @property
     def document_metadata(self) -> dict[str, Any]:
-        return copy.deepcopy(self._load().get("document_metadata", {}))
+        value = self._load().get("document_metadata", {})
+        if not isinstance(value, dict):
+            raise corrupt_result(
+                "the manifest document_metadata field is not an object"
+            )
+        return copy.deepcopy(value)
 
     @property
     def plugins(self) -> dict[str, Any]:
-        return copy.deepcopy(self._load().get("plugins", {}))
+        value = self._load().get("plugins", {})
+        if not isinstance(value, dict):
+            raise corrupt_result("the manifest plugins field is not an object")
+        return copy.deepcopy(value)
 
     @property
     def media(self) -> tuple[dict[str, Any], ...]:
-        return tuple(copy.deepcopy(self._load().get("media", [])))
+        value = self._load().get("media", [])
+        if not isinstance(value, list) or not all(
+            isinstance(entry, dict) for entry in value
+        ):
+            raise corrupt_result("the manifest media field is not an object array")
+        return tuple(copy.deepcopy(value))
 
     @property
     def facets(self) -> tuple[dict[str, Any], ...]:
-        return tuple(copy.deepcopy(self._load().get("facets", [])))
+        value = self._load().get("facets", [])
+        if not isinstance(value, list) or not all(
+            isinstance(entry, dict) for entry in value
+        ):
+            raise corrupt_result("the manifest facets field is not an object array")
+        return tuple(copy.deepcopy(value))
 
     def to_dict(self) -> dict[str, Any]:
         return copy.deepcopy(self._load())
@@ -284,12 +317,20 @@ class Conversion:
                 consequence="Nothing was decoded.",
                 hint="Use `conversion.content` for the raw bytes.",
             )
-        return self.content.decode("utf-8")
+        try:
+            return self.content.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise corrupt_result(
+                f"the `{self.output_format}` writer declared text but emitted "
+                "invalid UTF-8"
+            ) from error
 
 
 def context_from_json(entry: dict[str, Any]) -> Context:
+    if not isinstance(entry, dict) or not isinstance(entry.get("kind"), str):
+        raise TypeError("a report context must be an object with a text kind")
     return Context(
-        kind=str(entry.get("kind", "")),
+        kind=entry["kind"],
         name=entry.get("name"),
         line=entry.get("line"),
         excerpt=entry.get("excerpt"),
@@ -305,28 +346,57 @@ def context_from_json(entry: dict[str, Any]) -> Context:
 
 
 def direction_from_json(entry: dict[str, Any]) -> Direction:
+    if not isinstance(entry, dict):
+        raise TypeError("a report direction must be an object")
+    title = entry.get("title")
+    explanation = entry.get("explanation")
+    if not isinstance(title, str) or not isinstance(explanation, str):
+        raise TypeError("a report direction needs text title and explanation fields")
+    command = entry.get("command")
+    if command is not None and (
+        not isinstance(command, list)
+        or not all(isinstance(part, str) for part in command)
+    ):
+        raise TypeError("a report direction command must be a text array")
+    replacement = entry.get("replacement")
+    if replacement is not None and not isinstance(replacement, str):
+        raise TypeError("a report direction replacement must be text")
     return Direction(
-        title=str(entry.get("title", "")),
-        explanation=str(entry.get("explanation", "")),
-        command=tuple(entry["command"]) if "command" in entry else None,
-        replacement=entry.get("replacement"),
+        title=title,
+        explanation=explanation,
+        command=tuple(command) if command is not None else None,
+        replacement=replacement,
     )
 
 
 def report_from_json(entry: dict[str, Any]) -> Report:
-    samples = tuple(context_from_json(sample) for sample in entry.get("samples", []))
+    if not isinstance(entry, dict):
+        raise TypeError("a report must be an object")
+    required_text = ("code", "severity", "title", "problem", "consequence")
+    if not all(isinstance(entry.get(key), str) for key in required_text):
+        raise TypeError("a report is missing required text fields")
+    sample_entries = entry.get("samples", [])
+    direction_entries = entry.get("directions", [])
+    if not isinstance(sample_entries, list):
+        raise TypeError("a report samples field must be an array")
+    if not isinstance(direction_entries, list):
+        raise TypeError("a report directions field must be an array")
+    count = entry.get("count", 1)
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise TypeError("a report count must be a positive integer")
+    samples = tuple(context_from_json(sample) for sample in sample_entries)
     return Report(
-        code=str(entry.get("code", "")),
-        severity=str(entry.get("severity", "")),
-        title=str(entry.get("title", "")),
-        problem=str(entry.get("problem", "")),
-        consequence=str(entry.get("consequence", "")),
-        count=int(entry.get("count", 1)),
+        code=entry["code"],
+        severity=entry["severity"],
+        title=entry["title"],
+        problem=entry["problem"],
+        consequence=entry["consequence"],
+        count=count,
         loss=entry.get("loss"),
         exit_class=entry.get("exit_class"),
         context=samples[0] if samples else None,
         samples=samples,
         directions=tuple(
-            direction_from_json(direction) for direction in entry.get("directions", [])
+            direction_from_json(direction) for direction in direction_entries
         ),
     )

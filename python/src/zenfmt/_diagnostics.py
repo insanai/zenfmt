@@ -142,6 +142,35 @@ def invalid_output_argument(value: object) -> TypeError:
     )
 
 
+def path_protocol_failed(argument: str, cause: BaseException) -> TypeError:
+    error = argument_error(
+        TypeError,
+        title="THE PATH-LIKE VALUE COULD NOT BE READ",
+        problem=(
+            f"Reading `{argument}` through os.fspath() raised {type(cause).__name__}."
+        ),
+        consequence=_NOT_STARTED,
+        hint=(
+            "Pass a str, bytes path on POSIX, pathlib.Path, or an os.PathLike "
+            "whose __fspath__() returns str or bytes."
+        ),
+    )
+    error.__cause__ = cause
+    return error  # type: ignore[return-value]
+
+
+def invalid_bool_argument(argument: str, value: object) -> TypeError:
+    return argument_error(  # type: ignore[return-value]
+        TypeError,
+        title="INVALID BOOLEAN ARGUMENT",
+        problem=(
+            f"`{argument}` must be True or False; received `{type(value).__name__}`."
+        ),
+        consequence=_NOT_STARTED,
+        hint=f"Pass `{argument}=True` or `{argument}=False` explicitly.",
+    )
+
+
 def reader_failed(cause: BaseException) -> InputReadError:
     error = InputReadError(
         code="python.reader-failed",

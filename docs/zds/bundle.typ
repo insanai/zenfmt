@@ -182,8 +182,8 @@
 #document(
   "zds/0014-python-library.html",
   title: [ZDS 0014: The zenfmt Python Library: API and Implementation],
-  author: ("Zen Contributors",),
-  description: [Implementation blueprint for the Python API, native boundary, uv workflow, packaging, and release],
+  author: ("Vikrant Rathore", "Ronak Rathore"),
+  description: [The implemented Python API, native boundary, uv workflow, packaging, benchmark, and release contract],
 )[
   #include "records/0014-python-library.typ"
 ]

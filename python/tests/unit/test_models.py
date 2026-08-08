@@ -58,6 +58,35 @@ def test_invalid_manifest_is_a_native_library_error() -> None:
         _ = manifest.artifact
 
 
+@pytest.mark.parametrize(
+    ("payload", "attribute"),
+    [
+        ({"schema_version": "not-an-int"}, "schema_version"),
+        ({"reports": {}}, "reports"),
+        ({"document_metadata": []}, "document_metadata"),
+        ({"plugins": []}, "plugins"),
+        ({"media": {}}, "media"),
+        ({"facets": {}}, "facets"),
+    ],
+)
+def test_malformed_manifest_fields_raise_native_library_error(
+    payload: dict, attribute: str
+) -> None:
+    manifest = zenfmt.Manifest(json.dumps(payload).encode())
+    with pytest.raises(zenfmt.NativeLibraryError) as info:
+        getattr(manifest, attribute)
+    assert info.value.code == "python.corrupt-result"
+    assert "What you can do:" in str(info.value)
+
+
+def test_malformed_manifest_reference_fields_are_rejected() -> None:
+    payload = json.loads(manifest_payload())
+    payload["artifact"]["name"] = 7
+    manifest = zenfmt.Manifest(json.dumps(payload).encode())
+    with pytest.raises(zenfmt.NativeLibraryError, match="incomplete"):
+        _ = manifest.artifact
+
+
 def test_report_parsing_keeps_stable_machine_fields() -> None:
     entry = report_payload(
         loss="structural",
@@ -110,6 +139,17 @@ def test_binary_writer_text_raises(fake_bridge: FakeBridge) -> None:
     assert conversion.content == b"\x00\x01"
     with pytest.raises(TypeError, match="BINARY OUTPUT"):
         _ = conversion.text
+
+
+def test_text_writer_invalid_utf8_is_a_native_library_error(
+    fake_bridge: FakeBridge,
+) -> None:
+    fake_bridge.queue(success_payload(artifact=b"\xff"))
+    conversion = zenfmt.convert(b"data", name="note.md")
+    with pytest.raises(zenfmt.NativeLibraryError) as info:
+        _ = conversion.text
+    assert info.value.code == "python.corrupt-result"
+    assert "What you can do:" in str(info.value)
 
 
 def test_strictness_values_and_true_false() -> None:

@@ -3,7 +3,7 @@
 A document converter in Zig: read a document in one format, write it in
 another, with one representation in the middle.
 
-**Status: implemented, in review.** The architecture is specified in
+**Current release: 0.1.0.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and the IR v2
 layer, facets, and writer lowering in
 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ); the library, CLI,
@@ -85,6 +85,10 @@ repository root stays a pure Zig project and `zig build` remains the
 orchestrator. Development uses [uv](https://docs.astral.sh/uv/) for the
 environment and lockfile, Hatchling as the build backend, Ruff for
 lint/format, and pytest.
+
+Install the library with `pip install zenfmt`. Prebuilt standalone CLI
+archives and the complete wheel matrix are available from
+[GitHub Releases](https://github.com/insanai/zenfmt/releases).
 
 Five properties drive the design, argued in ZDS 0002 and ZDS 0013:
 

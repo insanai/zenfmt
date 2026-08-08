@@ -37,16 +37,20 @@ dependencies = []
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/insan-ai/zenfmt"
-Documentation = "https://github.com/insan-ai/zenfmt/tree/main/docs"
-Repository = "https://github.com/insan-ai/zenfmt"
+Homepage = "https://github.com/insanai/zenfmt"
+Documentation = "https://insanai.github.io/zenfmt/"
+Repository = "https://github.com/insanai/zenfmt"
+Issues = "https://github.com/insanai/zenfmt/issues"
 
 [dependency-groups]
-dev = ["hatchling>=1.27", "pytest>=8.3", "ruff>=0.8"]
+dev = ["hatchling==1.31.0", "pytest>=8.3", "ruff>=0.8"]
 
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling==1.31.0"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+build-constraint-dependencies = ["hatchling==1.31.0"]
 
 [tool.hatch.version]
 source = "code"
@@ -55,6 +59,11 @@ expression = "PROJECT_VERSION"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/zenfmt"]
+exclude = [
+    "/src/zenfmt/_native/*.so",
+    "/src/zenfmt/_native/*.dylib",
+    "/src/zenfmt/_native/*.dll",
+]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"

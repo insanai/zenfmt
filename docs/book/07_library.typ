@@ -11,10 +11,11 @@
 
 #objectives([
   By the end of this chapter you should be able to call `zenfmt.convert` from
-  your own program and dispose of its result correctly, assemble a smaller
-  bundle than the CLI ships, write a filter in your own project and compile it
-  into a working binary, predict which parts of a document a sparse edit
-  copies, and read another tool's `.zenfmt.json` manifest with confidence.
+  Zig or Python and dispose of its result correctly, choose the authority and
+  isolation boundary for untrusted input, assemble a smaller bundle than the
+  CLI ships, write a filter in your own project and compile it into a working
+  binary, predict which parts of a document a sparse edit copies, and read
+  another tool's `.zenfmt.json` manifest with confidence.
 ])
 
 #checkpoint([prior knowledge], [
@@ -155,6 +156,56 @@ deliberately uncertified and a rerun with `--overwrite` repairs it.
   checked against the writer's lowering plan before the artifact is
   committed, so a pipeline that must never publish lossy output gets a
   hard guarantee, not a log line after the fact.
+])
+
+== Python: the same conversion as a value
+
+The `zenfmt` Python distribution packages the default bundle behind a typed,
+dependency-free API. Its common path is deliberately one call:
+
+```python
+import zenfmt
+
+conversion = zenfmt.convert("report.docx")
+print(conversion.text)
+for report in conversion.reports:
+    print(report.code, report.problem)
+```
+
+With no `output`, the returned `Conversion` owns the artifact bytes, canonical
+manifest, reports, and every embedded resource. Supplying an output path asks
+the same native publisher used by the CLI to commit the complete ensemble:
+
+```python
+conversion = zenfmt.convert(
+    uploaded_bytes,
+    name="upload.docx",
+    output="build/report.md",
+    strict="structure",
+    limits=zenfmt.Limits(max_input_bytes=64 * 1024 * 1024),
+)
+```
+
+A Python string is always a path, never inline document text. That explicit
+path grants read authority for the file and for one adjacent, digest-bound
+manifest probe. Bytes and binary readers grant no filesystem authority:
+their `name` is display-only and is never opened. External resource references
+are returned as metadata and never fetched. The library has no environment
+configuration, runtime download, plugin discovery, or network access.
+
+Every Python failure follows the same Elm-style diagnostic shape as the CLI.
+Applications branch on `error.code`, retain structured reports, and show
+`str(error)` or `error.hint` to a person. Argument mistakes remain ordinary
+`TypeError` or `ValueError`, but their messages still state the problem,
+consequence, and a concrete next action under `What you can do:`.
+
+#warning([A wheel is not a sandbox], [
+  The bundled native engine executes inside the Python process with that
+  process's authority. Limits bound input, expansion, structure, resources,
+  and output, but they do not create a process boundary. Convert higher-risk
+  workloads in a restricted worker process or container, publish into a
+  per-job quota-controlled directory, and create worker processes before
+  starting conversion threads (or use multiprocessing `spawn`).
 ])
 
 == Bundles: bring only the formats you need

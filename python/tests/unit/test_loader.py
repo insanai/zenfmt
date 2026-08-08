@@ -13,6 +13,7 @@ import pytest
 import zenfmt
 from zenfmt import _ffi
 from zenfmt import _loader as loader_module
+from zenfmt._limits import LIMIT_TABLE
 
 
 def test_import_does_not_load_the_native_library() -> None:
@@ -112,6 +113,34 @@ def test_abi_constants_are_pinned() -> None:
         2,
     )
     assert _ffi.EXIT_CLASSES == ("conversion", "usage", "limit")
+
+
+def test_native_lengths_are_refused_before_copying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limits = {name: default for name, (default, _) in LIMIT_TABLE.items()}
+
+    class OversizeLib:
+        def zenfmt_py_result_artifact(self, handle: int, out_length: object) -> int:
+            out_length._obj.value = limits["max_output_bytes"] + 1  # type: ignore[attr-defined]
+            return 1
+
+        def zenfmt_py_result_resource_count(self, handle: int) -> int:
+            return limits["max_resources"] + 1
+
+        def zenfmt_py_result_free(self, handle: int) -> None:
+            pass
+
+    monkeypatch.setattr(
+        _ffi,
+        "copy_bytes",
+        lambda *args: pytest.fail("oversized native data reached ctypes.string_at"),
+    )
+    result = loader_module.NativeResult(OversizeLib(), 1, limits)  # type: ignore[arg-type]
+    with pytest.raises(zenfmt.NativeLibraryError, match="copy limit"):
+        result.artifact()
+    with pytest.raises(zenfmt.NativeLibraryError, match="max_resources"):
+        result.resources()
 
 
 def test_pep440_mapping_matches_the_packaging_hook() -> None:

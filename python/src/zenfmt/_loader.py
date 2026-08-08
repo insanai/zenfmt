@@ -35,17 +35,25 @@ class NativeResult:
     Python ownership immediately; :meth:`free` releases the native side
     exactly once and is safe to call again."""
 
-    __slots__ = ("_handle", "_lib")
+    __slots__ = ("_handle", "_lib", "_limits")
 
-    def __init__(self, lib: ctypes.CDLL, handle: int) -> None:
+    def __init__(
+        self, lib: ctypes.CDLL, handle: int, copy_limits: dict[str, int]
+    ) -> None:
         self._lib = lib
         self._handle = handle
+        self._limits = copy_limits
 
-    def _read_slice(self, symbol: str) -> bytes | None:
+    def _read_slice(self, symbol: str, limit: int, label: str) -> bytes | None:
         length = ctypes.c_uint64(0)
         ptr = getattr(self._lib, symbol)(self._handle, ctypes.byref(length))
         if not ptr:
             return None
+        if length.value > limit:
+            raise _diagnostics.corrupt_result(
+                f"the native {label} length {length.value} exceeds its "
+                f"Python copy limit {limit}"
+            )
         return _ffi.copy_bytes(ptr, length.value)
 
     def status(self) -> int:
@@ -60,31 +68,61 @@ class NativeResult:
         return _ffi.EXIT_CLASSES[value]
 
     def reports_json(self) -> bytes:
-        return self._read_slice("zenfmt_py_result_reports_json") or b"[]"
+        report_limit = max(
+            self._limits["max_manifest_bytes"],
+            self._limits["max_reports_total"] * 4096,
+        )
+        return (
+            self._read_slice(
+                "zenfmt_py_result_reports_json", report_limit, "reports JSON"
+            )
+            or b"[]"
+        )
 
     def manifest_json(self) -> bytes | None:
-        return self._read_slice("zenfmt_py_result_manifest_json")
+        return self._read_slice(
+            "zenfmt_py_result_manifest_json",
+            max(
+                self._limits["max_manifest_bytes"],
+                self._limits["max_output_bytes"],
+            ),
+            "manifest",
+        )
 
     def source_format(self) -> str | None:
-        raw = self._read_slice("zenfmt_py_result_source_format")
+        raw = self._read_slice("zenfmt_py_result_source_format", 1024, "source format")
         return raw.decode("utf-8") if raw is not None else None
 
     def output_format(self) -> str | None:
-        raw = self._read_slice("zenfmt_py_result_output_format")
+        raw = self._read_slice("zenfmt_py_result_output_format", 1024, "output format")
         return raw.decode("utf-8") if raw is not None else None
 
     def artifact(self) -> bytes | None:
-        return self._read_slice("zenfmt_py_result_artifact")
+        return self._read_slice(
+            "zenfmt_py_result_artifact",
+            self._limits["max_output_bytes"],
+            "artifact",
+        )
 
     def artifact_name(self) -> str | None:
-        raw = self._read_slice("zenfmt_py_result_artifact_name")
+        raw = self._read_slice(
+            "zenfmt_py_result_artifact_name",
+            self._limits["max_entry_name_bytes"],
+            "artifact name",
+        )
         return raw.decode("utf-8") if raw is not None else None
 
     def resources(self) -> list[tuple[str, bytes, str]]:
         """Every embedded resource as (relative path, bytes, digest hex),
         in deterministic bridge order."""
         count = self._lib.zenfmt_py_result_resource_count(self._handle)
+        if count > self._limits["max_resources"]:
+            raise _diagnostics.corrupt_result(
+                f"the result carries {count} resources, above max_resources "
+                f"({self._limits['max_resources']})"
+            )
         entries: list[tuple[str, bytes, str]] = []
+        remaining_bytes = self._limits["max_resource_bytes"]
         for index in range(count):
             view = _ffi.ResourceView()
             status = self._lib.zenfmt_py_result_resource(
@@ -93,6 +131,19 @@ class NativeResult:
             if status != 0:
                 raise _diagnostics.corrupt_result(
                     f"resource {index} of {count} is unreadable"
+                )
+            if view.rel_path.len > 64 * 1024:
+                raise _diagnostics.corrupt_result(
+                    f"resource {index} has an overlong relative path"
+                )
+            if view.bytes.len > remaining_bytes:
+                raise _diagnostics.corrupt_result(
+                    f"resource {index} exceeds the remaining max_resource_bytes "
+                    f"budget ({remaining_bytes})"
+                )
+            if view.digest_hex.len > 128:
+                raise _diagnostics.corrupt_result(
+                    f"resource {index} has an overlong digest"
                 )
             entries.append(
                 (
@@ -105,6 +156,7 @@ class NativeResult:
                     ),
                 )
             )
+            remaining_bytes -= view.bytes.len
         return entries
 
     def free(self) -> None:
@@ -147,6 +199,7 @@ class Bridge:
         input_bytes: bytes | None,
         input_path: bytes | None,
         output_path: bytes | None,
+        copy_limits: dict[str, int],
     ) -> NativeResult:
         """One native conversion. The GIL is released for the duration of
         the foreign call by ``ctypes`` itself."""
@@ -184,7 +237,7 @@ class Bridge:
         handle = self._lib.zenfmt_py_convert(ctypes.byref(request))
         if not handle:
             raise _diagnostics.out_of_memory()
-        return NativeResult(self._lib, handle)
+        return NativeResult(self._lib, handle, copy_limits)
 
 
 _lock = threading.Lock()
@@ -211,11 +264,16 @@ def _bridge_path() -> Path:
     resource = importlib.resources.files("zenfmt") / "_native" / filename
     # The bridge must be a real on-disk file: zip and namespace installs
     # cannot be loaded and are never extracted to a predictable path.
-    if not isinstance(resource, Path):
-        raise _diagnostics.bridge_missing(str(resource))
-    if not resource.is_file():
-        raise _diagnostics.bridge_missing(str(resource))
-    return resource.resolve()
+    try:
+        if not isinstance(resource, Path):
+            raise _diagnostics.bridge_missing(str(resource))
+        if not resource.is_file():
+            raise _diagnostics.bridge_missing(str(resource))
+        return resource.resolve(strict=True)
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except OSError as error:
+        raise _diagnostics.bridge_load_failed(str(resource), error) from error
 
 
 def _load_and_verify() -> Bridge:
@@ -230,8 +288,13 @@ def _load_and_verify() -> Bridge:
             function = getattr(lib, symbol)
         except AttributeError as error:
             raise _diagnostics.bridge_symbol_missing(symbol, error) from error
-        function.argtypes = list(argtypes)
-        function.restype = restype
+        try:
+            function.argtypes = list(argtypes)
+            function.restype = restype
+        except (TypeError, ValueError) as error:
+            raise _diagnostics.runtime_mismatch(
+                f"the bridge symbol `{symbol}` rejected its required ctypes prototype"
+            ) from error
 
     packed = lib.zenfmt_py_abi_version()
     major, minor = packed >> 16, packed & 0xFFFF
@@ -259,7 +322,14 @@ def _load_and_verify() -> Bridge:
     version_ptr = lib.zenfmt_py_zenfmt_version(ctypes.byref(length))
     if not version_ptr:
         raise _diagnostics.corrupt_result("the bridge returned no version")
-    native_version = _ffi.copy_bytes(version_ptr, length.value).decode("utf-8")
+    if length.value > 1024:
+        raise _diagnostics.corrupt_result("the bridge version is over 1024 bytes")
+    try:
+        native_version = _ffi.copy_bytes(version_ptr, length.value).decode("utf-8")
+    except UnicodeError as error:
+        raise _diagnostics.corrupt_result(
+            "the bridge version is not valid UTF-8"
+        ) from error
     installed = distribution_version()
     if _pep440(native_version) != installed:
         raise _diagnostics.version_mismatch(native_version, installed)
@@ -267,12 +337,19 @@ def _load_and_verify() -> Bridge:
     capability_ptr = lib.zenfmt_py_capabilities(ctypes.byref(length))
     if not capability_ptr:
         raise _diagnostics.capabilities_invalid("the bridge returned none")
+    if length.value > 16 * 1024 * 1024:
+        raise _diagnostics.capabilities_invalid(
+            "the capability JSON exceeds the 16 MiB loader limit"
+        )
     capability_json = _ffi.copy_bytes(capability_ptr, length.value)
     try:
-        schema = json.loads(capability_json).get("schema")
-    except ValueError as error:
+        capability_document = json.loads(capability_json)
+        if not isinstance(capability_document, dict):
+            raise TypeError("the top-level value is not an object")
+        schema = capability_document.get("schema")
+    except (TypeError, UnicodeError, ValueError) as error:
         raise _diagnostics.capabilities_invalid(
-            "the capability JSON does not parse"
+            f"the capability JSON is invalid ({type(error).__name__})"
         ) from error
     if schema != _ffi.CAPABILITY_SCHEMA:
         raise _diagnostics.capabilities_invalid(
