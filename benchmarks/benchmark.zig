@@ -21,18 +21,33 @@ const Options = struct {
     zenfmt: []const u8 = "zig-out/bin/zenfmt",
     pandoc: []const u8 = "pandoc",
     anydoc: []const u8 = "benchmarks/.anydoc/node_modules/.bin/anydoc",
+    python: []const u8 = "benchmarks/.venv-wheel/bin/python",
     corpus: []const u8 = "benchmarks/corpus",
     out: []const u8 = "benchmarks/results/results.md",
     iterations: u32 = 5,
+};
+
+/// The zenfmt reader extension set, shared by the CLI row and the
+/// installed-wheel row: the wheel bundles the identical engine, so its
+/// support table is the same by construction (ZDS 0014).
+const zenfmt_extensions: []const []const u8 = &.{
+    "txt",  "md",   "markdown", "csv",  "docx", "docm", "rtf",
+    "xlsx", "xlsm", "odt",      "pptx", "pptm", "ppsx", "ppsm",
+    "html", "htm",  "adoc",     "rst",  "ods",  "odp",  "epub",
+    "pdf",  "doc",  "xls",      "ppt",  "pps",  "pot",  "xlsb",
 };
 
 const Tool = enum {
     zenfmt,
     pandoc,
     anydoc,
+    zenfmt_python,
 
     fn name(tool: Tool) []const u8 {
-        return @tagName(tool);
+        return switch (tool) {
+            .zenfmt_python => "zenfmt-python-wheel",
+            else => @tagName(tool),
+        };
     }
 
     /// Which input extensions each tool's reader set accepts, per its own
@@ -40,12 +55,7 @@ const Tool = enum {
     /// support matrix itself is one of the benchmark's results.
     fn supports(tool: Tool, extension: []const u8) bool {
         const table: []const []const u8 = switch (tool) {
-            .zenfmt => &.{
-                "txt",  "md",   "markdown", "csv",  "docx", "docm", "rtf",
-                "xlsx", "xlsm", "odt",      "pptx", "pptm", "ppsx", "ppsm",
-                "html", "htm",  "adoc",     "rst",  "ods",  "odp",  "epub",
-                "pdf",  "doc",  "xls",      "ppt",  "pps",  "pot",  "xlsb",
-            },
+            .zenfmt, .zenfmt_python => zenfmt_extensions,
             .pandoc => &.{
                 "docx", "odt", "epub", "html", "htm", "csv", "rtf", "rst", "md", "markdown",
             },
@@ -61,6 +71,8 @@ const Tool = enum {
         return false;
     }
 };
+
+const tool_count = std.meta.tags(Tool).len;
 
 const Sample = struct {
     wall_ns: u64,
@@ -81,7 +93,7 @@ const Measurement = struct {
 const FileResult = struct {
     name: []const u8,
     size: u64,
-    measurements: [3]Measurement,
+    measurements: [tool_count]Measurement,
 };
 
 pub fn main(init: std.process.Init) !u8 {
@@ -173,6 +185,7 @@ fn parseArgs(args: std.process.Args, options: *Options) void {
             .{ .name = "--zenfmt", .slot = &options.zenfmt },
             .{ .name = "--pandoc", .slot = &options.pandoc },
             .{ .name = "--anydoc", .slot = &options.anydoc },
+            .{ .name = "--python", .slot = &options.python },
             .{ .name = "--corpus", .slot = &options.corpus },
             .{ .name = "--out", .slot = &options.out },
         };
@@ -267,6 +280,12 @@ fn benchmarkTool(
         .zenfmt => &.{ options.zenfmt, path, "--stdout", "--quiet" },
         .pandoc => &.{ options.pandoc, path, "-t", "gfm", "-o", "/dev/null" },
         .anydoc => &.{ options.anydoc, path, "-o", "/dev/null" },
+        // A fresh interpreter per run: the installed wheel's cold row,
+        // directly comparable to the CLI child-process row. `-I` keeps the
+        // checkout off sys.path so only the clean-installed wheel runs.
+        .zenfmt_python => &.{
+            options.python, "-I", "benchmarks/python_api.py", "--convert", path,
+        },
     };
 
     _ = runOnce(io, argv) catch return measurement; // warm-up
@@ -393,7 +412,7 @@ fn summarize(writer: *std.Io.Writer, results: []const FileResult) !void {
         "\n## Head to head (geometric mean over commonly-converted files)\n\n" ++
             "| pair | files | wall | cpu | peak RSS |\n|---|---:|---:|---:|---:|\n",
     );
-    const pairs = [_][2]usize{ .{ 0, 1 }, .{ 0, 2 } };
+    const pairs = [_][2]usize{ .{ 0, 1 }, .{ 0, 2 }, .{ 0, 3 } };
     for (pairs) |pair| {
         var log_wall: f64 = 0;
         var log_cpu: f64 = 0;

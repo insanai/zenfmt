@@ -1,0 +1,669 @@
+{
+ "schema": 1,
+ "identity": {
+  "wheel": {
+   "filename": "zenfmt-0.1.0-py3-none-macosx_12_0_arm64.whl",
+   "sha256": "ee6190e8e35f9c2aab782383b17ad4ce947084c018d2a9ea7b516bbb2acb766d",
+   "version": "0.1.0",
+   "location": "/Users/vikrantrathore/projects/insan.ai/zenfmt/benchmarks/.venv-wheel/lib/python3.13/site-packages/zenfmt"
+  },
+  "native": {
+   "version": "0.1.0",
+   "abi_major": 1,
+   "abi_minor": 0
+  },
+  "interpreter": {
+   "implementation": "cpython",
+   "version": "3.13.6"
+  },
+  "platform": "darwin"
+ },
+ "config": {
+  "iterations": 5,
+  "warmup": 1,
+  "corpus": "benchmarks/corpus",
+  "corpus_files": [
+   "article.pdf",
+   "book.epub",
+   "data.csv",
+   "deck.ppt",
+   "grid.xlsb",
+   "letter.odt",
+   "memo.doc",
+   "notes.rtf",
+   "page.html",
+   "report.docx",
+   "sheet.ods",
+   "sheet.xlsx",
+   "slides.odp",
+   "slides.pptx",
+   "spec.pdf",
+   "table.xls"
+  ]
+ },
+ "parity": {
+  "ok": true,
+  "files": [
+   {
+    "name": "article.pdf",
+    "ok": true
+   },
+   {
+    "name": "book.epub",
+    "ok": true
+   },
+   {
+    "name": "data.csv",
+    "ok": true
+   },
+   {
+    "name": "deck.ppt",
+    "ok": true
+   },
+   {
+    "name": "grid.xlsb",
+    "ok": true
+   },
+   {
+    "name": "letter.odt",
+    "ok": true
+   },
+   {
+    "name": "memo.doc",
+    "ok": true
+   },
+   {
+    "name": "notes.rtf",
+    "ok": true
+   },
+   {
+    "name": "page.html",
+    "ok": true
+   },
+   {
+    "name": "report.docx",
+    "ok": true
+   },
+   {
+    "name": "sheet.ods",
+    "ok": true
+   },
+   {
+    "name": "sheet.xlsx",
+    "ok": true
+   },
+   {
+    "name": "slides.odp",
+    "ok": true
+   },
+   {
+    "name": "slides.pptx",
+    "ok": true
+   },
+   {
+    "name": "spec.pdf",
+    "ok": true
+   },
+   {
+    "name": "table.xls",
+    "ok": true
+   }
+  ]
+ },
+ "profiles": {
+  "cold_import": {
+   "samples_ms": [
+    45.145,
+    44.3213,
+    44.7633,
+    44.8005,
+    44.785
+   ],
+   "median_ms": 44.785
+  },
+  "cold_first_conversion": {
+   "samples_ms": [
+    47.7498,
+    48.7818,
+    49.0587,
+    47.9933,
+    47.7767
+   ],
+   "median_ms": 47.9933
+  },
+  "warm_path_memory": {
+   "article.pdf": {
+    "samples_ms": [
+     0.9696,
+     0.9175,
+     0.9078,
+     0.9117,
+     0.9017
+    ],
+    "median_ms": 0.9117
+   },
+   "book.epub": {
+    "samples_ms": [
+     77.5695,
+     78.248,
+     77.9891,
+     78.3468,
+     78.0417
+    ],
+    "median_ms": 78.0417
+   },
+   "data.csv": {
+    "samples_ms": [
+     1271.5069,
+     1271.5502,
+     1271.4346,
+     1276.7898,
+     1272.027
+    ],
+    "median_ms": 1271.5502
+   },
+   "deck.ppt": {
+    "samples_ms": [
+     15.0201,
+     15.002,
+     15.0662,
+     15.0214,
+     14.9574
+    ],
+    "median_ms": 15.0201
+   },
+   "grid.xlsb": {
+    "samples_ms": [
+     0.5274,
+     0.5425,
+     0.5156,
+     0.5172,
+     0.5019
+    ],
+    "median_ms": 0.5172
+   },
+   "letter.odt": {
+    "samples_ms": [
+     0.456,
+     0.4517,
+     0.4465,
+     0.449,
+     0.4316
+    ],
+    "median_ms": 0.449
+   },
+   "memo.doc": {
+    "samples_ms": [
+     1.0687,
+     1.0604,
+     1.0501,
+     1.0471,
+     1.044
+    ],
+    "median_ms": 1.0501
+   },
+   "notes.rtf": {
+    "samples_ms": [
+     0.7176,
+     0.7248,
+     0.7218,
+     0.7232,
+     0.7109
+    ],
+    "median_ms": 0.7218
+   },
+   "page.html": {
+    "samples_ms": [
+     73.7373,
+     73.1889,
+     73.0965,
+     73.2399,
+     76.2545
+    ],
+    "median_ms": 73.2399
+   },
+   "report.docx": {
+    "samples_ms": [
+     3.2924,
+     3.2632,
+     3.2586,
+     3.2605,
+     3.2478
+    ],
+    "median_ms": 3.2605
+   },
+   "sheet.ods": {
+    "samples_ms": [
+     1.3965,
+     1.3827,
+     1.3546,
+     1.3556,
+     1.351
+    ],
+    "median_ms": 1.3556
+   },
+   "sheet.xlsx": {
+    "samples_ms": [
+     3.6778,
+     3.6557,
+     3.667,
+     3.6616,
+     3.6499
+    ],
+    "median_ms": 3.6616
+   },
+   "slides.odp": {
+    "samples_ms": [
+     18.9767,
+     18.9542,
+     18.879,
+     18.8598,
+     18.8446
+    ],
+    "median_ms": 18.879
+   },
+   "slides.pptx": {
+    "samples_ms": [
+     22.0214,
+     21.8501,
+     21.821,
+     22.3513,
+     22.1611
+    ],
+    "median_ms": 22.0214
+   },
+   "spec.pdf": {
+    "samples_ms": [
+     0.4478,
+     0.4394,
+     0.4273,
+     0.4175,
+     0.434
+    ],
+    "median_ms": 0.434
+   },
+   "table.xls": {
+    "samples_ms": [
+     2.7465,
+     2.7206,
+     2.7415,
+     2.6627,
+     2.6722
+    ],
+    "median_ms": 2.7206
+   }
+  },
+  "warm_bytes_memory": {
+   "article.pdf": {
+    "samples_ms": [
+     0.8488,
+     0.8524,
+     0.8665,
+     0.8759,
+     0.8878
+    ],
+    "median_ms": 0.8665
+   },
+   "book.epub": {
+    "samples_ms": [
+     77.6288,
+     78.7689,
+     78.2892,
+     78.4901,
+     78.2207
+    ],
+    "median_ms": 78.2892
+   },
+   "data.csv": {
+    "samples_ms": [
+     1270.4562,
+     1271.6317,
+     1270.1943,
+     1270.8835,
+     1269.9361
+    ],
+    "median_ms": 1270.4562
+   },
+   "deck.ppt": {
+    "samples_ms": [
+     14.6544,
+     14.6293,
+     14.7092,
+     14.705,
+     14.625
+    ],
+    "median_ms": 14.6544
+   },
+   "grid.xlsb": {
+    "samples_ms": [
+     0.4612,
+     0.46,
+     0.4604,
+     0.4561,
+     0.4562
+    ],
+    "median_ms": 0.46
+   },
+   "letter.odt": {
+    "samples_ms": [
+     0.4044,
+     0.4041,
+     0.4047,
+     0.418,
+     0.4037
+    ],
+    "median_ms": 0.4044
+   },
+   "memo.doc": {
+    "samples_ms": [
+     0.9918,
+     0.9984,
+     0.9937,
+     0.9992,
+     1.0006
+    ],
+    "median_ms": 0.9984
+   },
+   "notes.rtf": {
+    "samples_ms": [
+     0.6372,
+     0.6442,
+     0.6422,
+     0.6469,
+     0.6433
+    ],
+    "median_ms": 0.6433
+   },
+   "page.html": {
+    "samples_ms": [
+     72.887,
+     73.4347,
+     72.8778,
+     72.8274,
+     73.202
+    ],
+    "median_ms": 72.887
+   },
+   "report.docx": {
+    "samples_ms": [
+     3.1612,
+     3.1552,
+     3.1879,
+     3.184,
+     3.15
+    ],
+    "median_ms": 3.1612
+   },
+   "sheet.ods": {
+    "samples_ms": [
+     1.3269,
+     1.3148,
+     1.3168,
+     1.3139,
+     1.3142
+    ],
+    "median_ms": 1.3148
+   },
+   "sheet.xlsx": {
+    "samples_ms": [
+     3.6295,
+     3.598,
+     3.6067,
+     3.5931,
+     3.6152
+    ],
+    "median_ms": 3.6067
+   },
+   "slides.odp": {
+    "samples_ms": [
+     19.489,
+     19.4005,
+     19.3825,
+     19.376,
+     19.4003
+    ],
+    "median_ms": 19.4003
+   },
+   "slides.pptx": {
+    "samples_ms": [
+     22.2692,
+     21.9905,
+     22.0041,
+     21.9353,
+     21.9353
+    ],
+    "median_ms": 21.9905
+   },
+   "spec.pdf": {
+    "samples_ms": [
+     0.3521,
+     0.3583,
+     0.3678,
+     0.3516,
+     0.3498
+    ],
+    "median_ms": 0.3521
+   },
+   "table.xls": {
+    "samples_ms": [
+     2.6593,
+     2.6455,
+     2.6996,
+     2.7008,
+     2.6434
+    ],
+    "median_ms": 2.6593
+   }
+  },
+  "path_publication": {
+   "article.pdf": {
+    "samples_ms": [
+     2.1827,
+     2.1628,
+     2.1115,
+     2.1251,
+     2.2092
+    ],
+    "median_ms": 2.1628
+   },
+   "book.epub": {
+    "samples_ms": [
+     78.6348,
+     78.0392,
+     77.629,
+     77.6641,
+     77.7713
+    ],
+    "median_ms": 77.7713
+   },
+   "data.csv": {
+    "samples_ms": [
+     1269.6201,
+     1271.0157,
+     1271.2786,
+     1271.8811,
+     1274.8384
+    ],
+    "median_ms": 1271.2786
+   },
+   "deck.ppt": {
+    "samples_ms": [
+     16.2664,
+     16.2193,
+     16.2042,
+     16.1948,
+     16.165
+    ],
+    "median_ms": 16.2042
+   },
+   "grid.xlsb": {
+    "samples_ms": [
+     1.659,
+     1.6669,
+     1.6569,
+     1.6773,
+     1.6492
+    ],
+    "median_ms": 1.659
+   },
+   "letter.odt": {
+    "samples_ms": [
+     1.5865,
+     1.6207,
+     1.5887,
+     1.5893,
+     1.6032
+    ],
+    "median_ms": 1.5893
+   },
+   "memo.doc": {
+    "samples_ms": [
+     2.2009,
+     2.2565,
+     2.1768,
+     2.2529,
+     2.1931
+    ],
+    "median_ms": 2.2009
+   },
+   "notes.rtf": {
+    "samples_ms": [
+     1.8787,
+     1.8675,
+     1.8497,
+     1.8432,
+     1.8553
+    ],
+    "median_ms": 1.8553
+   },
+   "page.html": {
+    "samples_ms": [
+     73.3923,
+     74.4463,
+     73.856,
+     73.5835,
+     73.6481
+    ],
+    "median_ms": 73.6481
+   },
+   "report.docx": {
+    "samples_ms": [
+     5.5799,
+     5.4713,
+     5.4551,
+     5.4505,
+     5.4846
+    ],
+    "median_ms": 5.4713
+   },
+   "sheet.ods": {
+    "samples_ms": [
+     2.5099,
+     2.5177,
+     2.4855,
+     2.5456,
+     2.5068
+    ],
+    "median_ms": 2.5099
+   },
+   "sheet.xlsx": {
+    "samples_ms": [
+     4.8148,
+     4.8115,
+     4.8246,
+     4.771,
+     4.8087
+    ],
+    "median_ms": 4.8115
+   },
+   "slides.odp": {
+    "samples_ms": [
+     20.054,
+     20.0708,
+     20.0443,
+     20.0289,
+     20.0409
+    ],
+    "median_ms": 20.0443
+   },
+   "slides.pptx": {
+    "samples_ms": [
+     27.1385,
+     27.147,
+     27.2588,
+     26.9949,
+     26.9814
+    ],
+    "median_ms": 27.1385
+   },
+   "spec.pdf": {
+    "samples_ms": [
+     1.5622,
+     1.5851,
+     1.5985,
+     1.5679,
+     1.5713
+    ],
+    "median_ms": 1.5713
+   },
+   "table.xls": {
+    "samples_ms": [
+     3.8355,
+     3.8778,
+     3.8604,
+     3.8407,
+     3.847
+    ],
+    "median_ms": 3.847
+   }
+  },
+  "diagnostic_failure": {
+   "samples_ms": [
+    0.3924,
+    0.3756,
+    0.3679,
+    0.3627,
+    0.3748
+   ],
+   "median_ms": 0.3748
+  },
+  "micro": {
+   "tiny_text_to_markdown": {
+    "samples_ms": [
+     0.2208,
+     0.2159,
+     0.2171,
+     0.2141,
+     0.2202
+    ],
+    "median_ms": 0.2171
+   }
+  }
+ },
+ "concurrency": [
+  {
+   "threads": 1,
+   "documents": 80,
+   "wall_ms": 7465.59,
+   "docs_per_s": 10.72
+  },
+  {
+   "threads": 2,
+   "documents": 80,
+   "wall_ms": 4367.04,
+   "docs_per_s": 18.32
+  },
+  {
+   "threads": 4,
+   "documents": 80,
+   "wall_ms": 2771.3,
+   "docs_per_s": 28.87
+  },
+  {
+   "threads": 8,
+   "documents": 80,
+   "wall_ms": 1674.62,
+   "docs_per_s": 47.77
+  }
+ ]
+}

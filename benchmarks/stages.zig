@@ -90,6 +90,7 @@ const StageResult = struct {
     read_ns: u64,
     writer_ns: u64,
     full_ns: u64,
+    memory_ns: u64,
 };
 
 pub fn main(init: std.process.Init) !u8 {
@@ -181,16 +182,19 @@ fn stageFile(
     _ = try timeConvert(ProbeBundle, gpa, io, name, bytes, null);
     var warm_timing: WriterTiming = .{ .io = io };
     _ = try timeConvert(TimedBundle, gpa, io, name, bytes, &warm_timing);
+    _ = try timeMemoryConvert(gpa, io, name, bytes);
 
     var read_samples: [max_iterations]u64 = undefined;
     var writer_samples: [max_iterations]u64 = undefined;
     var full_samples: [max_iterations]u64 = undefined;
+    var memory_samples: [max_iterations]u64 = undefined;
     var index: u32 = 0;
     while (index < iterations) : (index += 1) {
         read_samples[index] = try timeConvert(ProbeBundle, gpa, io, name, bytes, null);
         var timing: WriterTiming = .{ .io = io };
         full_samples[index] = try timeConvert(TimedBundle, gpa, io, name, bytes, &timing);
         writer_samples[index] = timing.elapsed_ns;
+        memory_samples[index] = try timeMemoryConvert(gpa, io, name, bytes);
     }
     std.debug.assert(index == iterations);
 
@@ -200,7 +204,34 @@ fn stageFile(
         .read_ns = median(read_samples[0..iterations]),
         .writer_ns = median(writer_samples[0..iterations]),
         .full_ns = median(full_samples[0..iterations]),
+        .memory_ns = median(memory_samples[0..iterations]),
     };
+}
+
+/// The in-process memory-publication profile (ZDS 0014): the complete
+/// ensemble — artifact bytes, embedded resources, digests, and manifest —
+/// staged in conversion-owned memory through the default bundle. This is
+/// the native baseline the installed wheel's warm memory calls are
+/// compared against.
+fn timeMemoryConvert(
+    gpa: std.mem.Allocator,
+    io: Io,
+    name: []const u8,
+    bytes: []const u8,
+) !u64 {
+    const started = Io.Clock.Timestamp.now(io, .awake);
+    var conversion = zenfmt.convert(gpa, io, .{
+        .input = .{ .bytes = .{ .name = name, .data = bytes } },
+        .output = .{ .memory = .{ .artifact_name = "artifact.md" } },
+    });
+    const elapsed = started.durationTo(Io.Clock.Timestamp.now(io, .awake));
+    defer conversion.deinit(gpa);
+    if (conversion.status != .success) {
+        std.debug.print("benchmark-stages: {s} failed to convert\n", .{name});
+        return error.ConversionFailed;
+    }
+    std.debug.assert(conversion.ensemble != null);
+    return @intCast(@max(elapsed.raw.nanoseconds, 0));
 }
 
 fn timeConvert(
@@ -275,7 +306,7 @@ fn renderJson(
         try writer.print(
             "{{\"name\":\"{s}\",\"size\":{d},\"read_ms\":{d:.3}," ++
                 "\"lowering_ms\":{d:.3},\"writer_ms\":{d:.3}," ++
-                "\"full_ms\":{d:.3}}}",
+                "\"full_ms\":{d:.3},\"memory_ms\":{d:.3}}}",
             .{
                 result.name,
                 result.size,
@@ -283,6 +314,7 @@ fn renderJson(
                 @as(f64, @floatFromInt(lowering_ns)) / std.time.ns_per_ms,
                 @as(f64, @floatFromInt(result.writer_ns)) / std.time.ns_per_ms,
                 @as(f64, @floatFromInt(result.full_ns)) / std.time.ns_per_ms,
+                @as(f64, @floatFromInt(result.memory_ns)) / std.time.ns_per_ms,
             },
         );
     }
