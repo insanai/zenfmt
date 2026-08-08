@@ -230,7 +230,14 @@ manifest is never observable before its whole artifact ensemble. Direct
 streams cannot be rolled back; their API result reports `untouched`,
 `partial`, or `complete` so callers can discard an incomplete prefix.
 
-#book_figure(
+#diagram_figure(
+  alt: "The publication commit order as a sequence. Both the artifact and "
+    + "its manifest are first written to unpredictable temporary names, so a "
+    + "partial write is never visible under the real name. The artifact is "
+    + "then renamed into place, and only afterwards the manifest. Because "
+    + "the artifact becomes visible first, an observer can see an artifact "
+    + "without a manifest, but never a manifest describing a file that does "
+    + "not exist.",
   [The commit order. Every write goes to an unpredictable temporary name
   first. The artifact becomes visible before its manifest, so a manifest
   never describes a file that does not exist.],

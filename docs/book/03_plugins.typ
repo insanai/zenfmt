@@ -272,7 +272,12 @@ application can assemble a smaller one, with 3 formats and your own
 filter pipeline, and get a proportionally smaller binary. Nothing about
 the default is privileged.
 
-#book_figure(
+#diagram_figure(
+  alt: "A bundle assembled at build time, drawn as a chain: reader and "
+    + "writer descriptors on the left feed a comptime validation step, which "
+    + "produces one engine on the right. All of the engine's format "
+    + "knowledge is the descriptor table it was handed; nothing about a "
+    + "format is discovered at run time.",
   [A bundle at build time: descriptors in, one engine out. The engine's
   format knowledge is this table and nothing else.],
   pipeline((

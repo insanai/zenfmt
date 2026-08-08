@@ -32,7 +32,14 @@ Every input zenfmt accepts arrives in one of three shapes. The shape
 decides which support library opens it, which limits guard it, and which
 attacks it must survive.
 
-#book_figure(
+#diagram_figure(
+  alt: "The container taxonomy as a layered graph. Two shared container "
+    + "libraries sit in the middle: zenfmt_ooxml, which opens ZIP packages, "
+    + "and zenfmt_cfb, which opens compound files. Above zenfmt_ooxml sit "
+    + "the modern Office and OpenDocument readers together with EPUB; above "
+    + "zenfmt_cfb sit the legacy binary Office readers. The stream formats "
+    + "sit apart from both, parsing their bytes directly with no container "
+    + "layer beneath them.",
   [The container taxonomy. The format libraries sit on two shared
   container libraries. `zenfmt_ooxml` opens ZIP packages and `zenfmt_cfb`
   opens compound files. Stream formats parse their bytes directly.],
@@ -110,7 +117,14 @@ next, and a directory of 128-byte entries with UTF-16LE names. Streams
 smaller than 4,096 bytes live in a mini stream of 64-byte mini-sectors
 with its own mini-FAT.
 
-#book_figure(
+#diagram_figure(
+  alt: "A compound-file stream drawn as numbered sector boxes connected by "
+    + "arrows. Each sector's entry in the file allocation table names the "
+    + "next sector, so the stream is a chain rather than a contiguous run, "
+    + "and a sentinel value marks the end. A second chain is drawn looping "
+    + "back on itself to show a crafted file: the walk is bounded by the "
+    + "total sector count, so the loop is detected and refused rather than "
+    + "followed forever.",
   [A CFB stream is a chain of sectors threaded through the FAT. Sentinel
   values terminate chains. A crafted FAT that loops back is detected,
   because every walk is bounded by the sector count, and the file is
@@ -196,7 +210,14 @@ instead. Every flag-based reader (DOCX, RTF, ODT) converts flags to the
 canonical nesting order and shares the common prefix between consecutive
 runs.
 
-#book_figure(
+#diagram_figure(
+  alt: "Two adjacent formatted runs, the first bold and the second bold and "
+    + "italic, shown as the inline tree they become. A single strong node "
+    + "spans both runs, and an emphasis node nests inside it covering only "
+    + "the second. The alternative — closing all formatting at the run "
+    + "boundary and reopening it — would produce two sibling strong nodes "
+    + "instead, which is not the structure a person reading the document "
+    + "would describe.",
   [Two adjacent runs, bold then bold-italic. Closing everything and
   reopening would emit two separate bold spans. Sharing the common prefix
   keeps one `strong` node. This is the tree a person would draw.],
@@ -353,7 +374,14 @@ array of character positions (cp) paired with descriptors that map each
 cp range to a file offset (fc) range. Bit 30 of the fc marks 8-bit
 cp1252 pieces; without it, the piece is 16-bit UTF-16LE.
 
-#book_figure(
+#diagram_figure(
+  alt: "A piece table drawn as two parallel rows. The upper row is logical "
+    + "character-position order, the order a reader sees. The lower row is "
+    + "physical file order. Arrows between them cross, because the pieces "
+    + "were appended to the file as the document was edited rather than "
+    + "rewritten in place: reading the file front to back would produce the "
+    + "text out of order, so the piece table, not the file layout, defines "
+    + "reading order.",
   [The piece table maps logical character positions to physical file
   ranges. Reading order is cp order, not file order. An edit in 1997
   Word appended a piece, not the text.],

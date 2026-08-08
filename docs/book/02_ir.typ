@@ -208,7 +208,11 @@ Hop from 0 and you visit exactly the heading's 7 top-level children. The
 hop skips the insides of `emphasis` and `link` without ever testing what
 they are.
 
-#book_figure(
+#diagram_figure(
+  alt: "The block table's tag column drawn as a single row of cells in "
+    + "document order: heading, paragraph, paragraph, heading, paragraph, "
+    + "table, cell, paragraph. Each cell is one node, and the row is the "
+    + "whole document — there is no separate tree structure alongside it.",
   [The tag column of the block table for the worked example. The
   document is this array. There is nothing else to point to.],
   array_picture((
@@ -362,7 +366,13 @@ Five facet kinds ship, each an append-only table sorted by entity:
     timestamp.],
 )
 
-#book_figure(
+#diagram_figure(
+  alt: "Stand-off binding drawn as two separate columns. On the left, three "
+    + "node rows; two of them carry an entity identifier and the first "
+    + "paragraph carries none. On the right, facet rows, each pointing at an "
+    + "entity identifier rather than at a node row. Because the binding goes "
+    + "through entities, a node with no facets occupies no facet storage at "
+    + "all.",
   [Stand-off binding. Two of three nodes carry entities; facet rows
   reference the entities, never the node rows. The first paragraph
   costs nothing.],

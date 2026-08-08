@@ -113,7 +113,10 @@
   line((x0, 0.25), (x0, -height - 0.05), stroke: 0.7pt + ink)
 })
 
-#let legend = {
+// The legend is paged decoration only. On the web the same information is in
+// each chart's data table, where it is readable rather than a row of colour
+// swatches, so reproducing it here would add colour-only meaning to the page.
+#let legend = context if target() != "html" {
   set text(size: 8.5pt)
   grid(
     columns: 2 * tool_count,
@@ -124,6 +127,50 @@
       .map(((i, name)) => (
         box(width: 9pt, height: 9pt, fill: tool_fill.at(i), radius: 2pt),
         raw(name),
+      ))
+      .flatten(),
+  )
+}
+
+/// The numbers behind a per-file, per-tool chart, as a real table. A chart
+/// exported to HTML is vector artwork with no text in it, so this is the only
+/// form in which its values can actually be read (ZDS 0015, Accessibility).
+#let metric_table(files, metric, unit) = {
+  let heads = tool_names.slice(0, tool_count)
+  table(
+    columns: (auto,) + heads.map(_ => auto),
+    table.header([*File*], ..heads.map(name => [*#name*])),
+    ..files
+      .map(file => (
+        [#file.name],
+        ..range(tool_count).map(i => {
+          let entry = file.tools.at(i)
+          if entry.ok {
+            [#calc.round(entry.at(metric), digits: 2) #unit]
+          } else if not entry.supported {
+            [not supported]
+          } else {
+            [failed]
+          }
+        }),
+      ))
+      .flatten(),
+  )
+}
+
+/// The ratio table behind the speedup chart: only files both tools convert.
+#let ratio_table(files, other) = {
+  let rows = files.filter(f => f.tools.at(0).ok and f.tools.at(other).ok)
+  table(
+    columns: (auto, auto),
+    table.header([*File*], [*Speedup over #tool_names.at(other)*]),
+    ..rows
+      .map(file => (
+        [#file.name],
+        [#calc.round(
+            file.tools.at(other).wall_ms / file.tools.at(0).wall_ms,
+            digits: 2,
+          )x],
       ))
       .flatten(),
   )
@@ -282,9 +329,7 @@ benchmark.
 
 == The headline
 
-#block(breakable: false, grid(
-  columns: (1fr, 1fr, 1fr),
-  gutter: 4mm,
+#tile_row(
   {
     let all = converted(bench.files, 0)
     stat_tile(
@@ -311,7 +356,7 @@ benchmark.
       [geometric mean over the #h.files files both convert; #calc.round(h.rss, digits: 1)x less peak memory],
     )
   },
-))
+)
 
 The geometric mean is the honest average for ratios. A 100x win on one
 file cannot buy back ten 2x losses. A tool that halves one ratio while
@@ -371,9 +416,12 @@ zenfmt detects this variant by exact-consumption parsing.
   tools?
 ])
 
-#figure(
-  placement: auto,
-  kind: image,
+#chart_figure(
+  [
+    Median wall latency per conversion, log-10 axis. Absent bars carry
+    their reason in italics. The dashed rule marks the startup floor the
+    interpreted runtimes pay before any document work begins.
+  ],
   {
     legend
     log_bars(
@@ -385,11 +433,14 @@ zenfmt detects this variant by exact-consumption parsing.
       marker_label: [40 ms: the competitors' runtime startup floor],
     )
   },
-  caption: [
-    Median wall latency per conversion, log-10 axis. Absent bars carry
-    their reason in italics. The dashed rule marks the startup floor the
-    interpreted runtimes pay before any document work begins.
-  ],
+  alt: "Grouped bar chart of median wall latency per corpus file on a "
+    + "log-10 axis, one bar per tool per file. zenfmt's bars are the "
+    + "shortest on every file; the other tools' bars start near a common "
+    + "floor of about 40 milliseconds, marked by a dashed rule, which is "
+    + "their runtime startup cost before any document work. Files a tool "
+    + "does not convert have no bar. The exact values are in the table "
+    + "below.",
+  data: metric_table(bench.files, "wall_ms", "ms"),
 )
 
 The log axis is doing real work, because the three tools live on
@@ -411,16 +462,20 @@ bounded-stack fix described below removed its former latency penalty.
 
 == Memory
 
-#figure(
-  placement: auto,
-  kind: image,
+#chart_figure(
+  [
+    Peak resident set size per conversion, log-10 axis.
+  ],
   {
     legend
     log_bars(bench.files, "max_rss_mb", "MB", 3.0)
   },
-  caption: [
-    Peak resident set size per conversion, log-10 axis.
-  ],
+  alt: "Grouped bar chart of peak resident memory per corpus file on a "
+    + "log-10 axis, one bar per tool per file. zenfmt's bars stay a small "
+    + "constant above each input's size, while the other tools' bars sit "
+    + "roughly an order of magnitude higher and grow faster on the larger "
+    + "inputs. The exact values are in the table below.",
+  data: metric_table(bench.files, "max_rss_mb", "MB"),
 )
 
 Memory tells the architecture story more plainly than latency does.
@@ -441,14 +496,20 @@ files land on the winning side of parity; `data.csv` is the closest at
 1.1x. The spread tells you the rest: small files are dominated by the
 competitor's startup, and large files are dominated by parsing.
 
-#figure(
-  placement: auto,
-  kind: image,
-  speedup_bars(bench.files, 2),
-  caption: [
+#chart_figure(
+  [
     Wall-time speedup of zenfmt over anydoc per shared corpus file,
     sorted, log-10 axis. The dashed rule is parity.
   ],
+  speedup_bars(bench.files, 2),
+  alt: "Single-series bar chart, sorted, of how many times faster zenfmt "
+    + "converts each file that both it and anydoc convert, on a log-10 axis "
+    + "with a dashed parity rule at one times. Every bar sits above parity, "
+    + "so the advantage is not one outlier carrying an average; the smallest "
+    + "margin is on the large CSV file and the largest are on the small "
+    + "files, where the competitor's startup cost dominates. The exact "
+    + "ratios are in the table below.",
+  data: ratio_table(bench.files, 2),
 )
 
 == Where the time goes
@@ -527,9 +588,7 @@ different questions and are never merged into one headline.
   warm_values.sorted().at(int(warm_values.len() / 2))
 } else { 0 }
 
-#grid(
-  columns: (1fr, 1fr, 1fr, 1fr),
-  gutter: 8pt,
+#tile_row(
   stat_tile(
     [#calc.round(py_profiles.cold_import.median_ms, digits: 1) ms],
     [cold import],

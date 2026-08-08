@@ -160,6 +160,9 @@ notes and warnings, which fail a conversion only under `--strict`.
     and `--overwrite` was not given.],
   [`core.file-operation-failed`], [error], [conversion], [An open, write,
     flush, or rename failed. The report names the operation and path.],
+  [`core.host-io-unavailable`], [error], [usage], [A file path was given to a
+    build with no filesystem access compiled in, such as the browser module.
+    Convert the bytes instead, or use the CLI or Python library.],
   [`core.writer-output-failed`], [error], [conversion], [A writer or direct
     output sink stopped during emission. The result says whether a streamed
     prefix had already been delivered.],

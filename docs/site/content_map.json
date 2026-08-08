@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "note": "The one source of routes and anchors shared by the Typst book bundle and the Python site assembler. Neither derives this list; both read it, so they cannot drift.",
+  "book": [
+    {
+      "id": "preface",
+      "source": "docs/book/00_front.typ",
+      "route": "book/preface/",
+      "title": "Preface",
+      "summary": "Why the book exists and how to read it."
+    },
+    {
+      "id": "tour",
+      "source": "docs/book/01_tour.typ",
+      "route": "book/tour/",
+      "title": "A Conversion, End to End",
+      "summary": "The shortest safe path from an unfamiliar document to useful Markdown."
+    },
+    {
+      "id": "ir",
+      "source": "docs/book/02_ir.typ",
+      "route": "book/ir/",
+      "title": "One Representation",
+      "summary": "The layered document IR every reader feeds and every writer lowers."
+    },
+    {
+      "id": "plugins",
+      "source": "docs/book/03_plugins.typ",
+      "route": "book/plugins/",
+      "title": "Readers, Writers, Bundles",
+      "summary": "How format knowledge stays out of the core."
+    },
+    {
+      "id": "office",
+      "source": "docs/book/04_office.typ",
+      "route": "book/office/",
+      "title": "Every Format Is a Container",
+      "summary": "Archives, binary streams, and the limits that bound them."
+    },
+    {
+      "id": "markdown",
+      "source": "docs/book/05_markdown.typ",
+      "route": "book/markdown/",
+      "title": "The One Writer",
+      "summary": "What the Markdown writer emits and what it refuses."
+    },
+    {
+      "id": "limits",
+      "source": "docs/book/06_limits.typ",
+      "route": "book/limits/",
+      "title": "Hostile by Default",
+      "summary": "Resource limits, strictness, and the browser profile."
+    },
+    {
+      "id": "library",
+      "source": "docs/book/07_library.typ",
+      "route": "book/library/",
+      "title": "Embedding and Filtering",
+      "summary": "The Zig, Python, and browser APIs."
+    },
+    {
+      "id": "reference",
+      "source": "docs/book/08_reference.typ",
+      "route": "book/reference/",
+      "title": "Reference",
+      "summary": "The diagnostic catalogue and the limit table."
+    },
+    {
+      "id": "benchmark",
+      "source": "docs/book/09_benchmark.typ",
+      "route": "book/benchmark/",
+      "title": "The Measure of the Tool",
+      "summary": "Method, corpus, and recorded results."
+    }
+  ],
+  "routes": {
+    "home": "",
+    "benchmark": "benchmark/",
+    "book": "book/",
+    "zds": "zds/",
+    "download": "download/",
+    "security": "security/",
+    "book_pdf": "pdf/zenfmt-book.pdf"
+  }
+}

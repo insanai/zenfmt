@@ -233,7 +233,12 @@ knows no format names. Its tables are generated from exactly the descriptors
 you passed. A slim bundle is not a configuration of the big one. It is the
 engine, smaller.
 
-#book_figure(
+#diagram_figure(
+  alt: "One conversion as the bundle runs it, drawn as a chain: input, "
+    + "reader, validated tree, filter pipeline, validated tree again, "
+    + "writer, artifact. Filters sit strictly between the validated tree and "
+    + "the writer, and the tree is revalidated after they run, so a filter "
+    + "cannot hand the writer a structure the engine would reject.",
   [A conversion, as the bundle runs it. Filters sit between the validated
     tree and the writer. Each stage revalidates.],
   pipeline((
@@ -390,7 +395,15 @@ each edit) and bulk-copies every untouched subtree, column by column. A
 subtree is a contiguous slice in preorder storage. So "copy this untouched
 chapter" is one `memcpy` per column, not a traversal.
 
-#book_figure(
+#diagram_figure(
+  alt: "A sparse edit shown as two rows of node cells, the input above and "
+    + "the output below. Both rows read heading, paragraph, paragraph, "
+    + "heading, paragraph, table, cell, paragraph. Only the fourth cell "
+    + "differs: its payload is edited. The runs of cells before and after it "
+    + "are unchanged and move as two column-wise copies rather than being "
+    + "walked node by node. The text, attribute, and target side tables are "
+    + "not drawn as copied at all, because they are append-only and shared "
+    + "between the two trees.",
   [A sparse edit. One heading's payload changes. The runs before and after
     it move as single column-wise copies. Side tables (text, attrs,
     targets) are append-only and shared, never copied.],
@@ -399,7 +412,9 @@ chapter" is one `memcpy` per column, not a traversal.
       ([h1], [para], [para], [*h2\*edit*], [para], [table], [cell], [para]),
       label: [in],
     )
-    v(2mm)
+    // Paged separation only: HTML export has no vertical spacing primitive
+    // and the two pictures become separate images there anyway.
+    context if target() != "html" { v(2mm) }
     array_picture(
       ([h1], [para], [para], [*h2'*], [para], [table], [cell], [para]),
       label: [out],

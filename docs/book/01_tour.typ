@@ -302,7 +302,13 @@ content wins and a `core.extension-mismatch` note says so, which is how
 When nothing matches, or there is no extension at all, zenfmt reads the
 bytes and looks for content signatures:
 
-#book_figure(
+#diagram_figure(
+  alt: "Format detection as a decision chain. An explicit --from flag is "
+    + "consulted first and wins outright. Otherwise the filename extension "
+    + "proposes a format, and the file's leading bytes are matched against "
+    + "the content signature table to confirm or override it. When no "
+    + "signature matches, the chain ends in a diagnostic report rather than "
+    + "a guessed format.",
   [Format detection: explicit flag, then extension, then content
   signatures. No signature ends in a report, never in a guess.],
   diagram(
@@ -357,7 +363,14 @@ if nothing happened. The name was wrong; the bytes were not.
 Every conversion in this book, every format, every chapter, makes the
 same seven stops:
 
-#book_figure(
+#diagram_figure(
+  alt: "The conversion pipeline as a left-to-right chain of stages: input "
+    + "bytes, reader, document tree, validator, filters, validator again, "
+    + "lowering plan, writer, artifact. The single document tree in the "
+    + "middle is what every reader produces and every writer consumes. The "
+    + "validator appears on both sides of the filter stage, and the lowering "
+    + "plan sits between the tree and the writer so each loss is priced "
+    + "before any output byte is emitted.",
   [The conversion pipeline. One representation in the middle. The
   validator guards both sides of the filter stage, and the lowering plan
   prices every loss before the writer runs.],

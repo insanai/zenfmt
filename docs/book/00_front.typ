@@ -1,20 +1,24 @@
 #import "theme.typ": title_page, book_quote, callout
 
-#title_page(
-  title: "zenfmt",
-  subtitle: "One representation, every document",
-  eyebrow: "A guide to writing a document converter",
-  edition: "First edition",
-  authors: ("Zen Contributors",),
-  epigraph_label: "The premise",
-  epigraph: [
-    Every format a converter reads is a lossy projection onto one shared
-    representation. Every format it writes is a lossy projection back out.
-    The engineering is in those two projections, and so is the honesty.
-  ],
-)
-
-#outline(indent: 1.2em)
+// The cover and the table of contents belong to the printed edition. On the
+// web the site shell supplies the title, and the chapter tree is the
+// navigation, so reproducing either here would duplicate them.
+#context if target() != "html" {
+  title_page(
+    title: "zenfmt",
+    subtitle: "One representation, every document",
+    eyebrow: "A guide to writing a document converter",
+    edition: "First edition",
+    authors: ("Zen Contributors",),
+    epigraph_label: "The premise",
+    epigraph: [
+      Every format a converter reads is a lossy projection onto one shared
+      representation. Every format it writes is a lossy projection back out.
+      The engineering is in those two projections, and so is the honesty.
+    ],
+  )
+  outline(indent: 1.2em)
+}
 
 #set heading(numbering: none)
 

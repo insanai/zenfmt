@@ -3,6 +3,7 @@
 // parameterized; nothing names a specific book.
 
 #import "@preview/cetz:0.5.2" as cetz
+#import "web.typ" as web
 
 #let ink = rgb("172033")
 #let blue = rgb("2855a6")
@@ -174,22 +175,32 @@
   pagebreak()
 }
 
-#let part_page(number, title, summary) = {
-  set page(header: none)
-  pagebreak(weak: true)
-  align(center + horizon)[
-    #text(size: 11pt, tracking: 1.6pt, fill: blue)[PART #number]
-    #v(5mm)
-    #text(size: 28pt, weight: "bold")[#title]
-    #v(7mm)
-    #line(length: 34mm, stroke: 1.5pt + blue)
-    #v(7mm)
-    #box(width: 72%, text(size: 10.5pt, fill: gray)[#summary])
-  ]
-  pagebreak()
+/// A part divider. On the web there are no pages to divide, and the chapter
+/// is its own route, so the part becomes a labelled banner above the chapter
+/// rather than a sheet of its own.
+#let part_page(number, title, summary) = context {
+  if target() == "html" {
+    web.part_banner(number, title, summary)
+  } else {
+    set page(header: none)
+    pagebreak(weak: true)
+    align(center + horizon)[
+      #text(size: 11pt, tracking: 1.6pt, fill: blue)[PART #number]
+      #v(5mm)
+      #text(size: 28pt, weight: "bold")[#title]
+      #v(7mm)
+      #line(length: 34mm, stroke: 1.5pt + blue)
+      #v(7mm)
+      #box(width: 72%, text(size: 10.5pt, fill: gray)[#summary])
+    ]
+    pagebreak()
+  }
 }
 
-#let callout(title, body, kind: "note") = {
+#let callout(title, body, kind: "note") = context {
+  if target() == "html" {
+    return web.callout(title, body, kind: kind)
+  }
   let colors = if kind == "warning" {
     (red, red_light)
   } else if kind == "idea" {
@@ -223,37 +234,47 @@
 
 #let warning(title, body) = callout(title, body, kind: "warning")
 
-#let book_quote(body, attribution) = block(
-  width: 88%,
-  inset: (left: 12pt, right: 8pt, y: 7pt),
-  outset: (y: 4pt),
-  stroke: (left: 1.2pt + blue),
-)[
-  #grid(
-    columns: (auto, 1fr),
-    column-gutter: 7pt,
-    text(size: 24pt, fill: rule, font: "New Computer Modern", baseline: 6pt)["],
-    emph(body),
-  )
-  #align(right, text(size: 9pt, fill: gray)[#text("- ")#attribution])
-]
-
-#let exercise(number, body, hint: none) = block(
-  width: 100%,
-  inset: 9pt,
-  outset: (y: 3pt),
-  radius: 3pt,
-  fill: amber_light,
-  stroke: 0.6pt + amber,
-)[
-  #text(weight: "bold", fill: amber)[Exercise #number.]
-  #h(4pt)
-  #body
-  #if hint != none [
-    #linebreak()
-    #text(size: 9pt, fill: gray)[Hint: #hint]
+#let book_quote(body, attribution) = context {
+  if target() == "html" {
+    return web.book_quote(body, attribution)
+  }
+  block(
+    width: 88%,
+    inset: (left: 12pt, right: 8pt, y: 7pt),
+    outset: (y: 4pt),
+    stroke: (left: 1.2pt + blue),
+  )[
+    #grid(
+      columns: (auto, 1fr),
+      column-gutter: 7pt,
+      text(size: 24pt, fill: rule, font: "New Computer Modern", baseline: 6pt)["],
+      emph(body),
+    )
+    #align(right, text(size: 9pt, fill: gray)[#text("- ")#attribution])
   ]
-]
+}
+
+#let exercise(number, body, hint: none) = context {
+  if target() == "html" {
+    return web.exercise(number, body, hint: hint)
+  }
+  block(
+    width: 100%,
+    inset: 9pt,
+    outset: (y: 3pt),
+    radius: 3pt,
+    fill: amber_light,
+    stroke: 0.6pt + amber,
+  )[
+    #text(weight: "bold", fill: amber)[Exercise #number.]
+    #h(4pt)
+    #body
+    #if hint != none [
+      #linebreak()
+      #text(size: 9pt, fill: gray)[Hint: #hint]
+    ]
+  ]
+}
 
 #let transcript(rows) = table(
   columns: (auto, auto, 1fr),
@@ -270,39 +291,98 @@
 
 #let predict(body) = callout([Predict before reading on], body, kind: "warning")
 
-#let teach_back(body) = block(
-  width: 100%,
-  inset: 9pt,
-  outset: (y: 3pt),
-  radius: 3pt,
-  fill: blue_light,
-  stroke: 0.6pt + blue,
-)[
-  #text(weight: "bold", fill: blue)[Teach it back.]
-  #h(4pt)
-  #body
-]
+#let teach_back(body) = context {
+  if target() == "html" {
+    return web.teach_back(body)
+  }
+  block(
+    width: 100%,
+    inset: 9pt,
+    outset: (y: 3pt),
+    radius: 3pt,
+    fill: blue_light,
+    stroke: 0.6pt + blue,
+  )[
+    #text(weight: "bold", fill: blue)[Teach it back.]
+    #h(4pt)
+    #body
+  ]
+}
 
 #let api_anchor(symbol, purpose, source: none) = {
   let location = if source == none { [] } else { [ in #source] }
   callout([API anchor: #symbol], [#purpose#location])
 }
 
-#let code_file(path, body) = block(
-  width: 100%,
-  inset: 0pt,
-  outset: (y: 4pt),
-  stroke: 0.6pt + rule,
-  radius: 3pt,
-)[
-  #block(width: 100%, inset: 6pt, fill: blue_light)[
-    #text(size: 8pt, weight: "bold", fill: blue)[#path]
+#let code_file(path, body) = context {
+  if target() == "html" {
+    return web.code_file(path, body)
+  }
+  block(
+    width: 100%,
+    inset: 0pt,
+    outset: (y: 4pt),
+    stroke: 0.6pt + rule,
+    radius: 3pt,
+  )[
+    #block(width: 100%, inset: 6pt, fill: blue_light)[
+      #text(size: 8pt, weight: "bold", fill: blue)[#path]
+    ]
+    #block(width: 100%, inset: 8pt)[#body]
   ]
-  #block(width: 100%, inset: 8pt)[#body]
-]
+}
 
-#let book_figure(caption, body) = figure(
-  placement: auto,
-  body,
-  caption: text(size: 9pt, fill: gray)[#caption],
-)
+/// A figure whose body is prose, a table, or code.
+#let book_figure(caption, body) = context {
+  if target() == "html" {
+    return web.book_figure(caption, body)
+  }
+  figure(
+    placement: auto,
+    body,
+    caption: text(size: 9pt, fill: gray)[#caption],
+  )
+}
+
+/// A figure whose body is drawn artwork, which HTML export turns into vector
+/// outlines carrying no text at all. `alt` is mandatory; see `web.typ`.
+#let diagram_figure(caption, body, alt: none, description: none) = context {
+  if target() == "html" {
+    return web.diagram_figure(caption, body, alt: alt, description: description)
+  }
+  figure(
+    placement: auto,
+    body,
+    caption: text(size: 9pt, fill: gray)[#caption],
+  )
+}
+
+/// A chart. `data` carries the same figures as a table so the numbers are
+/// readable without seeing the drawing (ZDS 0015, Accessibility).
+#let chart_figure(caption, body, alt: none, data: none) = context {
+  if target() == "html" {
+    return web.chart_figure(caption, body, alt: alt, data: data)
+  }
+  figure(
+    placement: auto,
+    kind: image,
+    body,
+    caption: text(size: 9pt, fill: gray)[#caption],
+  )
+}
+
+/// A row of summary tiles: a grid on paper, a reflowing row on the web.
+#let tile_row(..tiles) = context {
+  let items = tiles.pos()
+  if target() == "html" {
+    return web.tile_row(items)
+  }
+  block(
+    breakable: false,
+    grid(
+      columns: items.map(_ => 1fr),
+      gutter: 4mm,
+      ..items,
+    ),
+  )
+}
