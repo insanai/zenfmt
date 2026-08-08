@@ -51,6 +51,7 @@ fn addPythonBridge(
         .root_source_file = b.path("bindings/python/abi.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
         .imports = &.{
             .{ .name = "zenfmt", .module = b.modules.get("zenfmt").? },
             .{ .name = "zenfmt_core", .module = b.modules.get("zenfmt_core").? },
@@ -62,6 +63,10 @@ fn addPythonBridge(
         .linkage = .dynamic,
         .root_module = bridge_module,
     });
+    // This is a dynamically loaded C-ABI library, so its target C runtime
+    // must be recorded in the shared object's dependency table. Without an
+    // explicit libc link Zig emits a static-PIE-style ELF DSO; glibc happens
+    // to load it, but musl faults while resolving the bridge at `dlopen`.
     const install = b.addInstallArtifact(bridge, .{
         .dest_dir = .{ .override = .{ .custom = "lib" } },
     });
