@@ -111,7 +111,7 @@ pub fn writeMetaMap(
     doc: *const ast.Document,
     map: MetaMapIndex,
     w: *json.WriteStream,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     var tasks: std.ArrayList(Task) = .empty;
     defer tasks.deinit(gpa);
 
@@ -187,7 +187,7 @@ fn writeValueTask(
     tasks: *std.ArrayList(Task),
     w: *json.WriteStream,
     index: MetaValueIndex,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     switch (doc.metaValue(index)) {
         .null => try w.nullValue(),
         .boolean => |value| try w.boolean(value),
@@ -242,14 +242,15 @@ fn writeAttrsField(
     doc: *const ast.Document,
     w: *json.WriteStream,
     index: ast.OptionalAttrsIndex,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     const attrs = doc.attrsOf(index);
     if (index == .none) return;
     try w.field("attrs");
     try w.beginObject();
     try w.field("classes");
     try w.beginArray();
-    const classes = doc.store.strings.items[attrs.classes.start .. attrs.classes.start + attrs.classes.len];
+    const classes_end = attrs.classes.start + attrs.classes.len;
+    const classes = doc.store.strings.items[attrs.classes.start..classes_end];
     for (classes) |class| try w.string(doc.text(class));
     try w.endArray();
     try w.field("id");
@@ -273,7 +274,7 @@ fn contentForest(
     w: *json.WriteStream,
     finish: Task,
     forest: Task,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     try w.field("content");
     try w.beginArray();
     try tasks.append(gpa, finish);
@@ -287,7 +288,7 @@ fn writeInlineNode(
     tasks: *std.ArrayList(Task),
     w: *json.WriteStream,
     index: u32,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     const view = doc.inlineView(@enumFromInt(index));
     try w.beginObject();
     switch (view.content) {
@@ -408,7 +409,7 @@ fn writeCitation(
     tasks: *std.ArrayList(Task),
     w: *json.WriteStream,
     index: u32,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     const citation = doc.store.citations.items[index];
     try w.beginObject();
     try w.field("id");
@@ -435,7 +436,7 @@ fn finishInline(
     doc: *const ast.Document,
     w: *json.WriteStream,
     index: u32,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     const view = doc.inlineView(@enumFromInt(index));
     switch (view.content) {
         .note => try typeField(w, "note"),
@@ -481,7 +482,7 @@ fn writeBlockNode(
     tasks: *std.ArrayList(Task),
     w: *json.WriteStream,
     index: u32,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     const view = doc.block(@enumFromInt(index));
     try w.beginObject();
     switch (view.content) {
@@ -558,7 +559,8 @@ fn writeBlockNode(
             try writeAttrsField(doc, w, view.attrs);
             try w.field("columns");
             try w.beginArray();
-            const columns = doc.store.columns.items[table.columns.start .. table.columns.start + table.columns.len];
+            const columns_end = table.columns.start + table.columns.len;
+            const columns = doc.store.columns.items[table.columns.start..columns_end];
             for (columns) |column| try w.string(@tagName(column.alignment));
             try w.endArray();
             try contentForest(gpa, tasks, w, .{ .finish_block = index }, .{
@@ -591,7 +593,7 @@ fn finishBlock(
     doc: *const ast.Document,
     w: *json.WriteStream,
     index: u32,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     const view = doc.block(@enumFromInt(index));
     switch (view.content) {
         .plain,
@@ -654,7 +656,7 @@ fn finishBlock(
     try w.endObject();
 }
 
-fn typeField(w: *json.WriteStream, name: []const u8) error{OutOfMemory}!void {
+fn typeField(w: *json.WriteStream, name: []const u8) json.WriteError!void {
     try w.field("type");
     try w.string(name);
 }

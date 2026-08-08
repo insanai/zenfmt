@@ -4,8 +4,9 @@
 //! constructor validates ids, formats, extensions, and callbacks where the
 //! plugin is defined, so a registry mistake is a compile error pointing at
 //! the plugin rather than at router internals. Descriptor `@compileError`
-//! messages follow the four-question diagnostic structure in miniature:
-//! what is wrong, where, and what to change.
+//! messages identify the declaration, explain the violated contract, and
+//! give the exact type or field change needed; headings alone are not an
+//! actionable diagnostic.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -64,8 +65,10 @@ pub const ReadContext = struct {
     /// Display name of the input, for report contexts.
     input_name: []const u8,
     reports: *report.Reports,
-    /// Present only after the engine verified the adjacent manifest digest.
-    manifest_in: ?*const manifest.Loaded,
+    /// The selected reader's entry from a digest-verified adjacent
+    /// manifest. The engine performs namespace selection, so the plugin
+    /// cannot inspect another plugin family's preservation data.
+    preservation_in: ?manifest.PluginEntry = null,
     limits: limits_mod.Limits,
     /// Preservation data this reader wants carried in the manifest under
     /// its own plugin id: canonical JSON plus its schema version. The
@@ -102,6 +105,19 @@ pub const ReadContext = struct {
             },
         }
     }
+
+    pub fn preservation(ctx: *const ReadContext) ?manifest.PluginEntry {
+        return ctx.preservation_in;
+    }
+
+    pub fn preservationAs(
+        ctx: *const ReadContext,
+        comptime T: type,
+        comptime decode: anytype,
+    ) !?T {
+        const entry = ctx.preservation() orelse return null;
+        return try decode(ctx.gpa, entry.version, entry.data);
+    }
 };
 
 pub const WriteContext = struct {
@@ -113,18 +129,24 @@ pub const WriteContext = struct {
     out: *std.Io.Writer,
     reports: *report.Reports,
     limits: limits_mod.Limits,
-    /// The input's verified adjacent manifest, when one was loaded, so a
-    /// writer can recover preservation data its own reader saved (ZDS
-    /// 0013, manifest schema v2).
-    manifest_in: ?*const manifest.Loaded = null,
+    /// This writer family's entry from the input's digest-verified adjacent
+    /// manifest. Other namespaces are deliberately absent from the context.
+    preservation_in: ?manifest.PluginEntry = null,
 
-    /// The namespace owned by `id` in the input's manifest, when present.
-    pub fn preservation(ctx: *const WriteContext, id: []const u8) ?manifest.PluginEntry {
-        const loaded = ctx.manifest_in orelse return null;
-        for (loaded.plugins) |entry| {
-            if (std.mem.eql(u8, entry.id, id)) return entry;
-        }
-        return null;
+    /// This writer family's verified namespace from the input manifest.
+    pub fn preservation(ctx: *const WriteContext) ?manifest.PluginEntry {
+        return ctx.preservation_in;
+    }
+
+    /// Decodes this writer's namespace through its typed, plugin-owned
+    /// codec. `decode` receives `(arena, schema_version, canonical_json)`.
+    pub fn preservationAs(
+        ctx: *const WriteContext,
+        comptime T: type,
+        comptime decode: anytype,
+    ) !?T {
+        const entry = ctx.preservation() orelse return null;
+        return try decode(ctx.gpa, entry.version, entry.data);
     }
 };
 
@@ -201,28 +223,47 @@ fn validateCommon(
     comptime extensions: []const []const u8,
 ) void {
     if (!validPluginId(id)) {
-        @compileError("plugin id `" ++ id ++ "` is not valid. A plugin id " ++
-            "is reverse-DNS ASCII — lowercase letters, digits, hyphens, " ++
-            "and at least one dot, as in `ai.insan.zenfmt.docx`. Change " ++
-            "the `.id` field of this descriptor.");
+        @compileError(
+            "INVALID PLUGIN ID\n\n" ++
+                "What happened: `" ++ id ++ "` is not reverse-DNS ASCII.\n" ++
+                "Where: This descriptor's `.id` field.\n" ++
+                "What zenfmt did: Compilation stopped before registering " ++
+                "an unstable namespace.\n" ++
+                "What you can do: Use lowercase letters, digits, hyphens, " ++
+                "and at least one dot, such as `ai.insan.zenfmt.docx`.\n",
+        );
     }
     if (!validFormatName(format)) {
-        @compileError("format name `" ++ format ++ "` is not valid. A " ++
-            "format name is lowercase ASCII letters, digits, and hyphens, " ++
-            "as in `markdown`. Change the `.format` field of this " ++
-            "descriptor.");
+        @compileError(
+            "INVALID FORMAT NAME\n\n" ++
+                "What happened: `" ++ format ++ "` is not a lowercase format name.\n" ++
+                "Where: This descriptor's `.format` field.\n" ++
+                "What zenfmt did: Compilation stopped before CLI routing became ambiguous.\n" ++
+                "What you can do: Use lowercase ASCII letters, digits, " ++
+                "and hyphens, such as `markdown`.\n",
+        );
     }
     if (extensions.len == 0) {
-        @compileError("format `" ++ format ++ "` declares no extensions. " ++
-            "List at least one lowercase extension without the dot, " ++
-            "primary first, in the `.extensions` field; it drives format " ++
-            "detection and derived output paths.");
+        @compileError(
+            "FORMAT HAS NO EXTENSION\n\n" ++
+                "What happened: `" ++ format ++ "` declares no file extension.\n" ++
+                "Where: This descriptor's `.extensions` field.\n" ++
+                "What zenfmt did: Compilation stopped because detection " ++
+                "and output naming need a primary extension.\n" ++
+                "What you can do: List at least one lowercase extension " ++
+                "without its dot, primary first.\n",
+        );
     }
     for (extensions) |extension| {
         if (!validFormatName(extension)) {
-            @compileError("extension `" ++ extension ++ "` of format `" ++
-                format ++ "` is not valid. Extensions are lowercase ASCII " ++
-                "without the leading dot, as in `docx`.");
+            @compileError(
+                "INVALID FORMAT EXTENSION\n\n" ++
+                    "What happened: `" ++ extension ++ "` is not a lowercase extension.\n" ++
+                    "Where: The `.extensions` list for `" ++ format ++ "`.\n" ++
+                    "What zenfmt did: Compilation stopped before file " ++
+                    "detection used an invalid suffix.\n" ++
+                    "What you can do: Use lowercase ASCII without a leading dot, such as `docx`.\n",
+            );
         }
     }
 }

@@ -49,7 +49,12 @@ pub fn resolveInput(
     switch (options.input) {
         .bytes => |input| {
             if (input.data.len > options.limits.max_input_bytes) {
-                try reports.add(inputTooLarge(input.name, options.limits));
+                try reports.add(try inputTooLarge(
+                    arena,
+                    input.name,
+                    input.data.len,
+                    options.limits,
+                ));
                 return error.Failed;
             }
             return .{
@@ -70,7 +75,12 @@ pub fn resolveInput(
                 return error.Failed;
             };
             if (size > options.limits.max_input_bytes) {
-                try reports.add(inputTooLarge(path, options.limits));
+                try reports.add(try inputTooLarge(
+                    arena,
+                    path,
+                    size,
+                    options.limits,
+                ));
                 return error.Failed;
             }
             const digest_hex = streamDigest(io, file, size) catch |err| {
@@ -121,7 +131,12 @@ pub fn inputAllBytes(
                 return error.Failed;
             };
             if (read != size) {
-                try reports.add(try pathFailure(arena, "read the input file", input.name, error.Unexpected));
+                try reports.add(try pathFailure(
+                    arena,
+                    "read the input file",
+                    input.name,
+                    error.Unexpected,
+                ));
                 return error.Failed;
             }
             input.slurped = bytes;

@@ -31,6 +31,8 @@ pub const Provenance = struct {
     byte_start: u64,
     byte_len: u64,
     confidence: Confidence,
+    /// Source-native geometry spelling when normalization rounded a value.
+    original_geometry: ByteRange = .empty,
 };
 
 pub const ProvenanceData = struct {
@@ -39,9 +41,31 @@ pub const ProvenanceData = struct {
     byte_start: u64 = 0,
     byte_len: u64 = 0,
     confidence: Confidence = .exact,
+    original_geometry: []const u8 = "",
 };
 
 pub const Direction = enum(u8) { inherit, ltr, rtl };
+
+pub const StylePropertyKind = enum(u8) {
+    font_size_emu,
+    font_weight,
+    italic,
+    underline,
+    foreground_argb,
+    background_argb,
+};
+
+pub const StyleProperty = struct {
+    kind: StylePropertyKind,
+    value: i64,
+};
+
+pub const StylePropertyRange = struct {
+    start: u32,
+    len: u32,
+
+    pub const empty: StylePropertyRange = .{ .start = 0, .len = 0 };
+};
 
 pub const Style = struct {
     entity: EntityId,
@@ -52,6 +76,7 @@ pub const Style = struct {
     /// BCP 47 language tag.
     language: ByteRange,
     direction: Direction,
+    properties: StylePropertyRange = .empty,
 };
 
 pub const StyleData = struct {
@@ -59,9 +84,24 @@ pub const StyleData = struct {
     role: []const u8 = "",
     language: []const u8 = "",
     direction: Direction = .inherit,
+    properties: []const StyleProperty = &.{},
 };
 
 pub const Surface = enum(u8) { page, slide, canvas };
+
+pub const no_layout_relation = std.math.maxInt(u32);
+
+/// Affine transform in parts per million; identity is exact and integer.
+pub const Transform = struct {
+    a: i32 = 1_000_000,
+    b: i32 = 0,
+    c: i32 = 0,
+    d: i32 = 1_000_000,
+    tx: i32 = 0,
+    ty: i32 = 0,
+
+    pub const identity: Transform = .{};
+};
 
 /// Geometry in EMU (1/914400 inch), top-left origin (ZDS 0013, One
 /// coordinate system). Readers normalize at read time; original units, when
@@ -76,6 +116,9 @@ pub const Layout = struct {
     width: i32,
     height: i32,
     z_order: i32,
+    transform: Transform = .identity,
+    column: u32 = no_layout_relation,
+    reading_after: u32 = no_layout_relation,
 };
 
 pub const LayoutData = struct {
@@ -86,6 +129,9 @@ pub const LayoutData = struct {
     width: i32 = 0,
     height: i32 = 0,
     z_order: i32 = 0,
+    transform: Transform = .identity,
+    column: u32 = no_layout_relation,
+    reading_after: u32 = no_layout_relation,
 };
 
 pub const ValueType = enum(u8) { empty, text, number, boolean, error_value, date };
@@ -103,6 +149,10 @@ pub const Grid = struct {
     cached: ByteRange,
     merge_rows: u16,
     merge_cols: u16,
+    row_height: i32 = 0,
+    column_width: i32 = 0,
+    row_hidden: bool = false,
+    column_hidden: bool = false,
 };
 
 pub const GridData = struct {
@@ -114,6 +164,10 @@ pub const GridData = struct {
     cached: []const u8 = "",
     merge_rows: u16 = 1,
     merge_cols: u16 = 1,
+    row_height: i32 = 0,
+    column_width: i32 = 0,
+    row_hidden: bool = false,
+    column_hidden: bool = false,
 };
 
 pub const RevisionKind = enum(u8) { insertion, deletion, comment, bookmark };
@@ -165,13 +219,40 @@ pub fn findAll(comptime Row: type, rows: []const Row, entity: EntityId) []const 
 
 test "find and findAll agree on a sorted table" {
     const rows = [_]Revision{
-        .{ .entity = @enumFromInt(1), .kind = .insertion, .author = .empty, .timestamp = .empty, .note = .empty },
-        .{ .entity = @enumFromInt(3), .kind = .comment, .author = .empty, .timestamp = .empty, .note = .empty },
-        .{ .entity = @enumFromInt(3), .kind = .deletion, .author = .empty, .timestamp = .empty, .note = .empty },
-        .{ .entity = @enumFromInt(7), .kind = .bookmark, .author = .empty, .timestamp = .empty, .note = .empty },
+        .{
+            .entity = @enumFromInt(1),
+            .kind = .insertion,
+            .author = .empty,
+            .timestamp = .empty,
+            .note = .empty,
+        },
+        .{
+            .entity = @enumFromInt(3),
+            .kind = .comment,
+            .author = .empty,
+            .timestamp = .empty,
+            .note = .empty,
+        },
+        .{
+            .entity = @enumFromInt(3),
+            .kind = .deletion,
+            .author = .empty,
+            .timestamp = .empty,
+            .note = .empty,
+        },
+        .{
+            .entity = @enumFromInt(7),
+            .kind = .bookmark,
+            .author = .empty,
+            .timestamp = .empty,
+            .note = .empty,
+        },
     };
     try std.testing.expectEqual(@as(usize, 2), findAll(Revision, &rows, @enumFromInt(3)).len);
     try std.testing.expectEqual(@as(usize, 0), findAll(Revision, &rows, @enumFromInt(2)).len);
-    try std.testing.expectEqual(RevisionKind.bookmark, find(Revision, &rows, @enumFromInt(7)).?.kind);
+    try std.testing.expectEqual(
+        RevisionKind.bookmark,
+        find(Revision, &rows, @enumFromInt(7)).?.kind,
+    );
     try std.testing.expectEqual(@as(?Revision, null), find(Revision, &rows, @enumFromInt(0)));
 }

@@ -12,6 +12,7 @@ const assert = std.debug.assert;
 /// this at compile time, so raising `max_depth` past it is refused rather
 /// than silently unsafe.
 pub const max_depth_hard_cap: u32 = 4096;
+pub const max_lowering_alternatives_hard: u32 = 64;
 
 pub const Limits = struct {
     /// Maximum bytes read from any single input document.
@@ -43,6 +44,9 @@ pub const Limits = struct {
     /// Distinct locations an aggregated report retains before it counts the
     /// remainder instead of listing it.
     max_report_samples: u32 = 4,
+    /// Maximum distinct aggregated report groups. Additional groups are
+    /// represented by one deterministic truncation note.
+    max_reports_total: u32 = 16 * 1024,
     /// Maximum media files a reader may extract from one document.
     max_resources: u32 = 256,
     /// Maximum total bytes of extracted media across one document.
@@ -66,6 +70,40 @@ pub const Limits = struct {
     /// One row of the `--limit` table: the field name is the public name.
     pub const Field = std.meta.FieldEnum(Limits);
 
+    /// Returns the first invalid programmatic override. CLI parsing already
+    /// enforces these rules; the library repeats them before constructing any
+    /// fixed-capacity state so an embedding mistake becomes a report.
+    pub fn invalidField(limits: Limits) ?Field {
+        inline for (@typeInfo(Limits).@"struct".fields) |field| {
+            if (@field(limits, field.name) == 0) return @field(Field, field.name);
+        }
+        if (limits.max_depth > max_depth_hard_cap) return .max_depth;
+        if (limits.max_xml_depth > max_depth_hard_cap) return .max_xml_depth;
+        if (limits.max_lowering_alternatives > max_lowering_alternatives_hard) {
+            return .max_lowering_alternatives;
+        }
+        return null;
+    }
+
+    pub fn fieldValue(limits: Limits, field: Field) u64 {
+        inline for (@typeInfo(Limits).@"struct".fields) |definition| {
+            if (field == @field(Field, definition.name)) {
+                return @field(limits, definition.name);
+            }
+        }
+        unreachable;
+    }
+
+    /// The compile-time safety cap for fields backed by fixed-size state.
+    /// Most positive limits have no additional cap.
+    pub fn hardCap(field: Field) ?u64 {
+        return switch (field) {
+            .max_depth, .max_xml_depth => max_depth_hard_cap,
+            .max_lowering_alternatives => max_lowering_alternatives_hard,
+            else => null,
+        };
+    }
+
     /// Applies `NAME=VALUE`. Returns the offending part on failure so the
     /// caller can build a report that shows exactly what to change.
     pub fn override(limits: *Limits, text: []const u8) OverrideError!void {
@@ -84,6 +122,14 @@ pub const Limits = struct {
                 const is_depth = comptime std.mem.eql(u8, field.name, "max_depth") or
                     std.mem.eql(u8, field.name, "max_xml_depth");
                 if (is_depth and value > max_depth_hard_cap) return error.InvalidValue;
+                const is_alternatives = comptime std.mem.eql(
+                    u8,
+                    field.name,
+                    "max_lowering_alternatives",
+                );
+                if (is_alternatives and value > max_lowering_alternatives_hard) {
+                    return error.InvalidValue;
+                }
                 @field(limits, field.name) = value;
                 return;
             }
@@ -117,11 +163,37 @@ test "override rejects unknown names and malformed values" {
     try std.testing.expectError(error.InvalidValue, limits.override("max_depth=abc"));
     try std.testing.expectError(error.InvalidValue, limits.override("max_depth=0"));
     try std.testing.expectError(error.InvalidValue, limits.override("max_depth=1000000"));
+    try std.testing.expectError(
+        error.InvalidValue,
+        limits.override("max_lowering_alternatives=65"),
+    );
 }
 
 test "names lists every field" {
     try std.testing.expectEqual(
         @typeInfo(Limits).@"struct".fields.len,
         Limits.names.len,
+    );
+}
+
+test "programmatic limits reject zeroes and hard-cap violations" {
+    var zero: Limits = .{};
+    zero.max_reports_total = 0;
+    try std.testing.expectEqual(Limits.Field.max_reports_total, zero.invalidField().?);
+
+    var deep: Limits = .{};
+    deep.max_depth = max_depth_hard_cap + 1;
+    try std.testing.expectEqual(Limits.Field.max_depth, deep.invalidField().?);
+    try std.testing.expectEqual(
+        @as(u64, max_depth_hard_cap + 1),
+        deep.fieldValue(.max_depth),
+    );
+    try std.testing.expectEqual(
+        @as(?u64, max_depth_hard_cap),
+        Limits.hardCap(.max_depth),
+    );
+    try std.testing.expectEqual(
+        @as(?u64, null),
+        Limits.hardCap(.max_input_bytes),
     );
 }

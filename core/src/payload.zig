@@ -107,7 +107,11 @@ pub const QuoteKind = enum(u8) { single, double };
 pub const Target = struct {
     url: ByteRange,
     title: ByteRange,
+    /// Index into `Store.resources`, or `no_resource` for an external link.
+    resource: u32 = no_resource,
 };
+
+pub const no_resource = std.math.maxInt(u32);
 
 pub const CitationMode = enum(u8) { normal, in_text, suppress_author };
 
@@ -274,6 +278,7 @@ pub const QuoteView = struct {
 pub const TargetView = struct {
     url: ByteRange,
     title: ByteRange,
+    resource: u32,
     children: InlineRange,
 };
 
@@ -480,11 +485,13 @@ pub fn inlineViewOf(store: *const Store, index: u32) InlineView {
         .link => .{ .link = .{
             .url = store.targets.items[payload_index].url,
             .title = store.targets.items[payload_index].title,
+            .resource = no_resource,
             .children = children,
         } },
         .image => .{ .image = .{
             .url = store.targets.items[payload_index].url,
             .title = store.targets.items[payload_index].title,
+            .resource = store.targets.items[payload_index].resource,
             .children = children,
         } },
         .note => .{ .note = store.block_ranges.items[payload_index] },

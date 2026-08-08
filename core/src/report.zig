@@ -2,9 +2,9 @@
 //!
 //! An error message is a user interface. Every report answers four questions
 //! in order: what happened, where, what zenfmt did about it, and what the
-//! user can do next. Construction validates the contract with assertions, so
-//! a report that names a failure without giving direction is rejected at the
-//! source rather than shipped.
+//! user can do next. That structure is only the floor: a direction names an
+//! exact source edit, option, command, safe bound, or preservation action
+//! with enough context to perform it. Construction rejects bare failures.
 //!
 //! Text and JSON are two renderers of the same `Report`; display flags never
 //! change the canonical report stream stored in the artifact manifest.
@@ -31,10 +31,12 @@ pub const Severity = enum(u8) {
 /// The lossiness tier of a degraded or dropped construct. The tier of a
 /// construct is decided in the plugin's ZDS, not at the keyboard.
 pub const LossTier = enum(u8) {
-    /// Something reached the output in simplified form.
-    degraded,
     /// Recognized, and produced nothing.
     dropped,
+    /// Content survived, but its document structure was simplified.
+    structural,
+    /// Style, layout, revision, or metadata semantics were simplified.
+    presentation,
 };
 
 /// Which exit class a failure belongs to; a bulk script wants to treat a zip
@@ -122,8 +124,9 @@ pub const out_of_memory: Report = .{
     .code = "core.out-of-memory",
     .title = "OUT OF MEMORY",
     .problem = "I ran out of memory while converting this document.",
-    .consequence = "The conversion stopped and no output file was created " ++
-        "or replaced.",
+    .consequence = "The conversion stopped. No path output was published; " ++
+        "for a direct stream, Conversion.stream records whether the caller " ++
+        "received nothing, a prefix, or the complete artifact.",
     .directions = &.{.{
         .title = "Free memory or shrink the input",
         .explanation = "Close other programs or run the conversion on a " ++
@@ -178,6 +181,8 @@ pub const Reports = struct {
     gpa: std.mem.Allocator,
     entries: std.ArrayList(Entry) = .empty,
     max_samples: u32,
+    max_groups: u32,
+    omitted_groups: u32 = 0,
 
     const Entry = struct {
         report: Report,
@@ -187,7 +192,18 @@ pub const Reports = struct {
 
     pub fn init(gpa: std.mem.Allocator, limits: limits_mod.Limits) Reports {
         assert(limits.max_report_samples >= 1);
-        return .{ .gpa = gpa, .max_samples = limits.max_report_samples };
+        assert(limits.max_reports_total >= 1);
+        return .{
+            .gpa = gpa,
+            .max_samples = limits.max_report_samples,
+            .max_groups = limits.max_reports_total,
+        };
+    }
+
+    pub fn deinit(r: *Reports) void {
+        for (r.entries.items) |*entry| entry.samples.deinit(r.gpa);
+        r.entries.deinit(r.gpa);
+        r.* = undefined;
     }
 
     /// Strings inside `report` must outlive the conversion: static memory or
@@ -198,7 +214,7 @@ pub const Reports = struct {
 
         for (r.entries.items) |*entry| {
             if (!aggregates(entry.report, report)) continue;
-            entry.report.count += report.count;
+            entry.report.count +|= report.count;
             if (entry.report.severity != report.severity) {
                 // The louder severity wins the aggregate.
                 if (@intFromEnum(report.severity) > @intFromEnum(entry.report.severity)) {
@@ -226,6 +242,10 @@ pub const Reports = struct {
             return;
         }
 
+        if (r.entries.items.len >= r.max_groups) {
+            r.omitted_groups +|= 1;
+            return;
+        }
         var entry: Entry = .{ .report = report, .samples = .empty, .omitted = 0 };
         if (report.context) |context| {
             assert(r.max_samples >= 1);
@@ -239,11 +259,13 @@ pub const Reports = struct {
         return switch (a) {
             .source => |source| std.mem.eql(u8, source.name, b.source.name) and
                 source.line == b.source.line and
+                std.mem.eql(u8, source.excerpt, b.source.excerpt) and
                 source.span_start == b.source.span_start and
                 source.span_len == b.source.span_len,
             .logical => |name| std.mem.eql(u8, name, b.logical),
             .archive_member => |member| std.mem.eql(u8, member, b.archive_member),
-            .argv => |argv| argv.highlight == b.argv.highlight,
+            .argv => |argv| argv.highlight == b.argv.highlight and
+                stringListEql(argv.args, b.argv.args),
             .path => |path| std.mem.eql(u8, path.path, b.path.path) and
                 std.mem.eql(u8, path.operation, b.path.operation),
         };
@@ -256,19 +278,39 @@ pub const Reports = struct {
         for (existing.directions, candidate.directions) |a, b| {
             if (!std.mem.eql(u8, a.title, b.title)) return false;
             if (!std.mem.eql(u8, a.explanation, b.explanation)) return false;
+            if (!optionalStringListEql(a.command, b.command)) return false;
+            if (!optionalStringEql(a.replacement, b.replacement)) return false;
         }
         return true;
+    }
+
+    fn stringListEql(a: []const []const u8, b: []const []const u8) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |x, y| if (!std.mem.eql(u8, x, y)) return false;
+        return true;
+    }
+
+    fn optionalStringListEql(a: ?[]const []const u8, b: ?[]const []const u8) bool {
+        if (a == null or b == null) return a == null and b == null;
+        return stringListEql(a.?, b.?);
+    }
+
+    fn optionalStringEql(a: ?[]const u8, b: ?[]const u8) bool {
+        if (a == null or b == null) return a == null and b == null;
+        return std.mem.eql(u8, a.?, b.?);
     }
 
     /// The canonical report list: aggregated, in first-occurrence order,
     /// with bounded samples materialized.
     pub fn finalize(r: *Reports) error{OutOfMemory}![]const Report {
-        const out = try r.gpa.alloc(Report, r.entries.items.len);
-        for (r.entries.items, out) |*entry, *report| {
+        const extra: usize = if (r.omitted_groups > 0) 1 else 0;
+        const out = try r.gpa.alloc(Report, r.entries.items.len + extra);
+        for (r.entries.items, out[0..r.entries.items.len]) |*entry, *report| {
             report.* = entry.report;
             report.samples = entry.samples.items;
             assert(report.samples.len <= r.max_samples);
         }
+        if (r.omitted_groups > 0) out[out.len - 1] = truncatedReport(r.omitted_groups);
         return out;
     }
 
@@ -297,6 +339,19 @@ pub const Reports = struct {
         return r.worst() == .err;
     }
 };
+
+fn truncatedReport(count: u32) Report {
+    return .{
+        .severity = .note,
+        .code = "core.reports-truncated",
+        .title = "ADDITIONAL REPORT GROUPS OMITTED",
+        .problem = "The conversion produced more distinct diagnostic " ++
+            "groups than the configured report budget allows.",
+        .consequence = "The artifact result is unchanged; additional " ++
+            "diagnostic groups were counted but not retained.",
+        .count = count,
+    };
+}
 
 // ------------------------------------------------------- text rendering
 
@@ -371,7 +426,11 @@ fn renderOne(report: Report, out: *std.Io.Writer, options: RenderOptions) std.Io
     }
 }
 
-fn renderBanner(report: Report, out: *std.Io.Writer, options: RenderOptions) std.Io.Writer.Error!void {
+fn renderBanner(
+    report: Report,
+    out: *std.Io.Writer,
+    options: RenderOptions,
+) std.Io.Writer.Error!void {
     const label = contextLabel(report);
     if (options.color) try out.writeAll(severityColor(report.severity));
     try out.writeAll("-- ");
@@ -535,7 +594,7 @@ fn needsQuoting(arg: []const u8) bool {
 /// The structured form of a report: the same facts as the text renderer,
 /// not the terminal text wrapped in JSON. Used both by `--reports=json` and
 /// by the artifact manifest.
-pub fn writeJson(report: Report, w: *json.WriteStream) error{OutOfMemory}!void {
+pub fn writeJson(report: Report, w: *json.WriteStream) json.WriteError!void {
     try w.beginObject();
     try w.field("code");
     try w.string(report.code);
@@ -585,7 +644,7 @@ pub fn writeJson(report: Report, w: *json.WriteStream) error{OutOfMemory}!void {
     try w.endObject();
 }
 
-fn writeContextJson(context: Context, w: *json.WriteStream) error{OutOfMemory}!void {
+fn writeContextJson(context: Context, w: *json.WriteStream) json.WriteError!void {
     try w.beginObject();
     switch (context) {
         .source => |source| {
@@ -708,4 +767,55 @@ test "text rendering carries the four answers" {
 
 test "the reserved out-of-memory report is contract-valid" {
     assertReportValid(out_of_memory);
+}
+
+test "direction commands and replacements are aggregation identity" {
+    var reports = Reports.init(testing.allocator, .{});
+    defer reports.deinit();
+    const base: Report = .{
+        .severity = .warning,
+        .code = "core.file-operation-failed",
+        .title = "EXAMPLE",
+        .problem = "An example failed.",
+        .consequence = "No example was emitted.",
+        .directions = &.{.{
+            .title = "Choose a value",
+            .explanation = "Use the replacement shown.",
+            .command = &.{ "zenfmt", "--from", "docx" },
+            .replacement = "docx",
+        }},
+    };
+    try reports.add(base);
+    var other = base;
+    other.directions = &.{.{
+        .title = "Choose a value",
+        .explanation = "Use the replacement shown.",
+        .command = &.{ "zenfmt", "--from", "odt" },
+        .replacement = "odt",
+    }};
+    try reports.add(other);
+    try testing.expectEqual(@as(usize, 2), reports.entries.items.len);
+}
+
+test "report groups stop at the configured bound with a summary" {
+    var reports = Reports.init(testing.allocator, .{ .max_reports_total = 1 });
+    defer reports.deinit();
+    inline for (.{
+        "core.extension-mismatch",
+        "core.strict-refused",
+        "core.construct-refused",
+    }) |code| {
+        try reports.add(.{
+            .severity = .note,
+            .code = code,
+            .title = "BOUNDED NOTE",
+            .problem = "A bounded event occurred.",
+            .consequence = "The conversion continued.",
+        });
+    }
+    const final = try reports.finalize();
+    defer testing.allocator.free(final);
+    try testing.expectEqual(@as(usize, 2), final.len);
+    try testing.expectEqualStrings("core.reports-truncated", final[1].code);
+    try testing.expectEqual(@as(u32, 2), final[1].count);
 }

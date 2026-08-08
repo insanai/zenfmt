@@ -20,6 +20,7 @@ const resources_mod = @import("resources.zig");
 const manifest = @import("manifest.zig");
 const metadata = @import("metadata.zig");
 const limits_mod = @import("limits.zig");
+const builder_facets = @import("builder_facets.zig");
 
 const Store = ast.Store;
 const ByteRange = ast.ByteRange;
@@ -445,118 +446,38 @@ pub const Builder = struct {
     /// Definition 6). Rows land unsorted and are ordered by node index at
     /// `finish`.
     pub fn blockEntityOf(b: *Builder, node: u32) Error!EntityId {
-        return b.entityOf(&b.block_entity_map, &b.store.block_entities, node);
+        return builder_facets.blockEntity(b, node);
     }
 
     pub fn inlineEntityOf(b: *Builder, node: u32) Error!EntityId {
-        return b.entityOf(&b.inline_entity_map, &b.store.inline_entities, node);
-    }
-
-    fn entityOf(
-        b: *Builder,
-        map: *std.AutoHashMapUnmanaged(u32, u32),
-        rows: *std.ArrayList(ast.EntityRow),
-        node: u32,
-    ) Error!EntityId {
-        const entry = try map.getOrPut(b.gpa, node);
-        if (entry.found_existing) return @enumFromInt(entry.value_ptr.*);
-        const entity = b.next_entity;
-        b.next_entity += 1;
-        entry.value_ptr.* = entity;
-        try rows.append(b.gpa, .{ .node = node, .entity = @enumFromInt(entity) });
-        return @enumFromInt(entity);
-    }
-
-    /// One facet row of budget; every attach draws from the same pool so a
-    /// facet bomb is a refusal, not an allocation storm.
-    fn takeFacetRow(b: *Builder) Error!void {
-        if (b.facet_rows_total >= b.limits.max_facet_rows) return error.LimitExceeded;
-        b.facet_rows_total += 1;
+        return builder_facets.inlineEntity(b, node);
     }
 
     pub fn attachProvenance(b: *Builder, entity: EntityId, data: facets.ProvenanceData) Error!void {
-        assert(data.plugin.len > 0);
-        try b.takeFacetRow();
-        try b.store.provenance_facets.append(b.gpa, .{
-            .entity = entity,
-            .plugin = try b.intern(data.plugin),
-            .member = try b.intern(data.member),
-            .byte_start = data.byte_start,
-            .byte_len = data.byte_len,
-            .confidence = data.confidence,
-        });
+        return builder_facets.attachProvenance(b, entity, data);
     }
 
     pub fn attachStyle(b: *Builder, entity: EntityId, data: facets.StyleData) Error!void {
-        assert(data.name.len > 0 or data.role.len > 0 or data.language.len > 0);
-        try b.takeFacetRow();
-        try b.store.style_facets.append(b.gpa, .{
-            .entity = entity,
-            .name = try b.intern(data.name),
-            .role = try b.intern(data.role),
-            .language = try b.intern(data.language),
-            .direction = data.direction,
-        });
+        return builder_facets.attachStyle(b, entity, data);
     }
 
     pub fn attachLayout(b: *Builder, entity: EntityId, data: facets.LayoutData) Error!void {
-        assert(data.width >= 0);
-        assert(data.height >= 0);
-        try b.takeFacetRow();
-        try b.store.layout_facets.append(b.gpa, .{
-            .entity = entity,
-            .surface = data.surface,
-            .surface_index = data.surface_index,
-            .x = data.x,
-            .y = data.y,
-            .width = data.width,
-            .height = data.height,
-            .z_order = data.z_order,
-        });
+        return builder_facets.attachLayout(b, entity, data);
     }
 
     pub fn attachGrid(b: *Builder, entity: EntityId, data: facets.GridData) Error!void {
-        assert(data.merge_rows >= 1);
-        assert(data.merge_cols >= 1);
-        try b.takeFacetRow();
-        try b.store.grid_facets.append(b.gpa, .{
-            .entity = entity,
-            .sheet = try b.intern(data.sheet),
-            .row = data.row,
-            .col = data.col,
-            .value_type = data.value_type,
-            .formula = try b.appendText(data.formula),
-            .cached = try b.appendText(data.cached),
-            .merge_rows = data.merge_rows,
-            .merge_cols = data.merge_cols,
-        });
+        return builder_facets.attachGrid(b, entity, data);
     }
 
     pub fn attachRevision(b: *Builder, entity: EntityId, data: facets.RevisionData) Error!void {
-        try b.takeFacetRow();
-        try b.store.revision_facets.append(b.gpa, .{
-            .entity = entity,
-            .kind = data.kind,
-            .author = try b.intern(data.author),
-            .timestamp = try b.appendText(data.timestamp),
-            .note = try b.appendText(data.note),
-        });
+        return builder_facets.attachRevision(b, entity, data);
     }
 
     // ---------------------------------------------------------- metadata
 
     /// Adds a string entry to the document's root metadata map.
     pub fn metaString(b: *Builder, key: []const u8, value: []const u8) Error!void {
-        const key_range = try b.appendText(key);
-        const value_range = try b.appendText(value);
-        const span_index: u32 = @intCast(b.store.spans.items.len);
-        try b.store.spans.append(b.gpa, value_range);
-        const value_index: u32 = @intCast(b.store.meta_values.items.len);
-        try b.store.meta_values.append(b.gpa, .{ .tag = .string, .payload = span_index });
-        try b.pending_meta.append(b.gpa, .{
-            .key = key_range,
-            .value = @enumFromInt(value_index),
-        });
+        return builder_facets.appendMetadataString(b, key, value);
     }
 
     // ------------------------------------------------------------ finish
@@ -595,19 +516,28 @@ pub const Builder = struct {
         const block_count: u32 = @intCast(b.store.blocks.len);
         const body_end = b.body_end orelse block_count;
         assert(body_end >= b.body_start);
+        const block_entities: ast.EntityRange = .{
+            .start = b.block_entities_start,
+            .len = @intCast(block_rows.len),
+        };
+        const inline_entities: ast.EntityRange = .{
+            .start = b.inline_entities_start,
+            .len = @intCast(inline_rows.len),
+        };
+        const entity_index = try ast.appendEntityIndex(
+            b.gpa,
+            b.store,
+            block_entities,
+            inline_entities,
+        );
         return .{
             .store = b.store,
             .body = ast.BlockRange.init(b.body_start, body_end - b.body_start),
             .meta = @enumFromInt(map_index),
             .plugin_data = .empty,
-            .block_entities = .{
-                .start = b.block_entities_start,
-                .len = @intCast(block_rows.len),
-            },
-            .inline_entities = .{
-                .start = b.inline_entities_start,
-                .len = @intCast(inline_rows.len),
-            },
+            .block_entities = block_entities,
+            .inline_entities = inline_entities,
+            .entity_index = entity_index,
         };
     }
 
@@ -639,7 +569,19 @@ pub const Emitter = struct {
     // Container blocks without payloads.
     pub fn beginBlock(e: Emitter, tag: BlockTag) Error!BlockToken {
         assert(switch (tag) {
-            .quote, .container, .figure, .line_block, .definition_list, .list_item, .definition_entry, .definition_body, .caption, .table_head, .table_foot, .table_row => true,
+            .quote,
+            .container,
+            .figure,
+            .line_block,
+            .definition_list,
+            .list_item,
+            .definition_entry,
+            .definition_body,
+            .caption,
+            .table_head,
+            .table_foot,
+            .table_row,
+            => true,
             else => false,
         });
         return e.builder.openBlock(tag, 0);
@@ -769,7 +711,11 @@ pub const Emitter = struct {
         try e.builder.attachProvenance(try e.blockEntity(token), data);
     }
 
-    pub fn attachProvenanceInline(e: Emitter, token: InlineToken, data: facets.ProvenanceData) Error!void {
+    pub fn attachProvenanceInline(
+        e: Emitter,
+        token: InlineToken,
+        data: facets.ProvenanceData,
+    ) Error!void {
         try e.builder.attachProvenance(try e.inlineEntity(token), data);
     }
 
@@ -793,7 +739,11 @@ pub const Emitter = struct {
         try e.builder.attachRevision(try e.blockEntity(token), data);
     }
 
-    pub fn attachRevisionInline(e: Emitter, token: InlineToken, data: facets.RevisionData) Error!void {
+    pub fn attachRevisionInline(
+        e: Emitter,
+        token: InlineToken,
+        data: facets.RevisionData,
+    ) Error!void {
         try e.builder.attachRevision(try e.inlineEntity(token), data);
     }
 
@@ -813,7 +763,15 @@ pub const Emitter = struct {
     // Inline containers.
     pub fn beginInline(e: Emitter, tag: InlineTag) Error!InlineToken {
         assert(switch (tag) {
-            .emphasis, .underline, .strong, .strikethrough, .superscript, .subscript, .small_caps, .span => true,
+            .emphasis,
+            .underline,
+            .strong,
+            .strikethrough,
+            .superscript,
+            .subscript,
+            .small_caps,
+            .span,
+            => true,
             else => false,
         });
         return e.builder.openInline(tag, 0);
@@ -828,7 +786,7 @@ pub const Emitter = struct {
     }
 
     pub fn beginImage(e: Emitter, url: []const u8, title: []const u8) Error!InlineToken {
-        return e.builder.openInline(.image, try e.appendTarget(url, title));
+        return e.builder.openInline(.image, try e.appendImageTarget(url, title));
     }
 
     pub fn endInline(e: Emitter, token: InlineToken) void {
@@ -838,21 +796,32 @@ pub const Emitter = struct {
     /// Registers extracted bytes for a resource named in `beginImage`
     /// (ZDS 0013, the resource store). On path output the engine writes
     /// the bytes into a `<stem>_media` directory beside the artifact and
-    /// rewrites every image whose URL equals `source` to the written file;
-    /// stream output leaves sources untouched. A duplicate source keeps
-    /// its first registration and returns its id. The digest is computed
-    /// here, once, and reused by the manifest.
+    /// binds matching images to its `ResourceId`. Path projection rewrites
+    /// targets by that typed id; stream output leaves sources untouched. A
+    /// duplicate source keeps its first registration and returns its id.
+    /// The digest is computed here once and reused by the manifest.
     pub fn resource(
         e: Emitter,
         source: []const u8,
         bytes: []const u8,
         mime: []const u8,
     ) Error!resources_mod.ResourceId {
+        return e.resourceWithMetadata(source, bytes, mime, .{});
+    }
+
+    pub fn resourceWithMetadata(
+        e: Emitter,
+        source: []const u8,
+        bytes: []const u8,
+        mime: []const u8,
+        details: resources_mod.Metadata,
+    ) Error!resources_mod.ResourceId {
         assert(source.len > 0);
         assert(bytes.len > 0);
         const b = e.builder;
         for (b.store.resources.items, 0..) |existing, index| {
             if (std.mem.eql(u8, b.store.textSlice(existing.source), source)) {
+                e.bindResource(source, @intCast(index));
                 return @enumFromInt(index);
             }
         }
@@ -874,8 +843,44 @@ pub const Emitter = struct {
             .mime = mime_range,
             .bytes = bytes_range,
             .digest_hex = manifest.digestHex(bytes),
-            .alt = ast.ByteRange.empty,
+            .pixel_width = details.pixel_width,
+            .pixel_height = details.pixel_height,
+            .alt = if (details.alt.len == 0)
+                ast.ByteRange.empty
+            else
+                try b.appendText(details.alt),
         });
+        e.bindResource(source, id);
+        return @enumFromInt(id);
+    }
+
+    pub fn externalResource(
+        e: Emitter,
+        reference: []const u8,
+        mime: []const u8,
+        details: resources_mod.Metadata,
+    ) Error!resources_mod.ResourceId {
+        assert(reference.len > 0);
+        assert(mime.len > 0);
+        const b = e.builder;
+        if (b.store.resources.items.len >= b.limits.max_resources) {
+            return error.LimitExceeded;
+        }
+        const id: u32 = @intCast(b.store.resources.items.len);
+        try b.store.resources.append(b.gpa, .{
+            .source = try b.appendText(reference),
+            .mime = try b.appendText(mime),
+            .kind = .external,
+            .bytes = .empty,
+            .digest_hex = manifest.digestHex(reference),
+            .pixel_width = details.pixel_width,
+            .pixel_height = details.pixel_height,
+            .alt = if (details.alt.len == 0)
+                .empty
+            else
+                try b.appendText(details.alt),
+        });
+        e.bindResource(reference, id);
         return @enumFromInt(id);
     }
 
@@ -943,10 +948,38 @@ pub const Emitter = struct {
     fn appendTarget(e: Emitter, url: []const u8, title: []const u8) Error!u32 {
         const store = e.builder.store;
         const url_range = try e.builder.appendText(url);
-        const title_range = if (title.len == 0) ByteRange.empty else try e.builder.appendText(title);
+        const title_range = if (title.len == 0)
+            ByteRange.empty
+        else
+            try e.builder.appendText(title);
         const index: u32 = @intCast(store.targets.items.len);
         try store.targets.append(e.builder.gpa, .{ .url = url_range, .title = title_range });
         return index;
+    }
+
+    fn appendImageTarget(e: Emitter, url: []const u8, title: []const u8) Error!u32 {
+        const index = try e.appendTarget(url, title);
+        const store = e.builder.store;
+        for (store.resources.items, 0..) |entry, resource_index| {
+            if (std.mem.eql(u8, store.textSlice(entry.source), url)) {
+                store.targets.items[index].resource = @intCast(resource_index);
+                break;
+            }
+        }
+        return index;
+    }
+
+    fn bindResource(e: Emitter, source: []const u8, resource_index: u32) void {
+        const store = e.builder.store;
+        const tags = store.inlines.items(.tag);
+        const payloads = store.inlines.items(.payload);
+        for (tags, payloads) |tag, payload_index| {
+            if (tag != .image) continue;
+            const target = &store.targets.items[payload_index];
+            if (std.mem.eql(u8, store.textSlice(target.url), source)) {
+                target.resource = resource_index;
+            }
+        }
     }
 
     fn appendRaw(e: Emitter, format: []const u8, bytes: []const u8) Error!u32 {
@@ -959,143 +992,6 @@ pub const Emitter = struct {
     }
 };
 
-// ---------------------------------------------------------------- tests
-
-const testing = std.testing;
-
-fn testDocument(store: *Store, build_fn: fn (Emitter) Error!void) !ast.Document {
-    var b = Builder.init(testing.allocator, store, .{});
-    defer b.deinit();
-    try build_fn(.{ .builder = &b });
-    return b.finish();
-}
-
-test "a paragraph splits and coalesces text" {
-    var store: Store = .{};
-    defer store.deinit(testing.allocator);
-
-    const doc = try testDocument(&store, struct {
-        fn build(e: Emitter) Error!void {
-            const p = try e.beginParagraph();
-            defer e.endBlock(p);
-            try e.text("The quick ");
-            try e.text("bro");
-            try e.text("wn fox");
-        }
-    }.build);
-    try ast.validate(&doc, .{});
-
-    // text("The") space text("quick") space text("brown") space text("fox"):
-    // the chunk boundary inside "brown" coalesces, the spaces split.
-    try testing.expectEqual(@as(usize, 7), store.inlines.len);
-    const view = doc.block(@enumFromInt(0));
-    try testing.expectEqual(ast.BlockTag.paragraph, @as(ast.BlockTag, view.content));
-    const brown = doc.text(store.spans.items[store.inlines.items(.payload)[4]]);
-    try testing.expectEqualStrings("brown", brown);
-    const fox = doc.text(store.spans.items[store.inlines.items(.payload)[6]]);
-    try testing.expectEqualStrings("fox", fox);
-}
-
-test "nested inline containers patch subtree lengths" {
-    var store: Store = .{};
-    defer store.deinit(testing.allocator);
-
-    const doc = try testDocument(&store, struct {
-        fn build(e: Emitter) Error!void {
-            const h = try e.beginHeading(2);
-            defer e.endBlock(h);
-            try e.text("The ");
-            const em = try e.beginInline(.emphasis);
-            try e.text("quick");
-            e.endInline(em);
-            try e.text(" ");
-            const link = try e.beginLink("http://x", "");
-            try e.text("brown");
-            e.endInline(link);
-            try e.text(" fox");
-        }
-    }.build);
-    try ast.validate(&doc, .{});
-
-    const heading = doc.blockAs(@enumFromInt(0), .heading).?;
-    try testing.expectEqual(@as(u8, 2), heading.level);
-    try testing.expectEqual(@as(u32, 9), heading.inlines.len);
-
-    // Hopping the heading's inlines yields seven top-level children.
-    var count: u32 = 0;
-    var it = doc.inlineRoots(heading.inlines);
-    while (it.next()) |_| count += 1;
-    try testing.expectEqual(@as(u32, 7), count);
-}
-
-test "quote nests blocks and lists hold items" {
-    var store: Store = .{};
-    defer store.deinit(testing.allocator);
-
-    const doc = try testDocument(&store, struct {
-        fn build(e: Emitter) Error!void {
-            const q = try e.beginBlock(.quote);
-            defer e.endBlock(q);
-            const list = try e.beginList(.unordered);
-            defer e.endBlock(list);
-            {
-                const item = try e.beginBlock(.list_item);
-                defer e.endBlock(item);
-                const p = try e.beginPlain();
-                defer e.endBlock(p);
-                try e.text("one");
-            }
-            {
-                const item = try e.beginBlock(.list_item);
-                defer e.endBlock(item);
-                const p = try e.beginParagraph();
-                defer e.endBlock(p);
-                try e.text("two");
-            }
-        }
-    }.build);
-    try ast.validate(&doc, .{});
-
-    const lengths = store.blocks.items(.subtree_len);
-    try testing.expectEqual(@as(u32, 6), lengths[0]);
-    try testing.expectEqual(@as(u32, 5), lengths[1]);
-    try testing.expectEqual(@as(u32, 2), lengths[2]);
-}
-
-test "attrs staging applies to the next node only" {
-    var store: Store = .{};
-    defer store.deinit(testing.allocator);
-
-    const doc = try testDocument(&store, struct {
-        fn build(e: Emitter) Error!void {
-            try e.attrs(.{ .id = "intro", .classes = &.{"lead"} });
-            const p = try e.beginParagraph();
-            defer e.endBlock(p);
-            try e.text("hi");
-        }
-    }.build);
-    try ast.validate(&doc, .{});
-
-    const view = doc.block(@enumFromInt(0));
-    const attrs = doc.attrsOf(view.attrs);
-    try testing.expectEqualStrings("intro", doc.text(attrs.id));
-    try testing.expectEqual(@as(u32, 1), attrs.classes.len);
-}
-
-test "metadata entries sort by key bytes" {
-    var store: Store = .{};
-    defer store.deinit(testing.allocator);
-
-    const doc = try testDocument(&store, struct {
-        fn build(e: Emitter) Error!void {
-            try e.metaString("title", "A Report");
-            try e.metaString("author", "Zen");
-        }
-    }.build);
-    try ast.validate(&doc, .{});
-
-    const entries = doc.metaEntries(doc.meta);
-    try testing.expectEqual(@as(usize, 2), entries.len);
-    try testing.expectEqualStrings("author", doc.text(entries[0].key));
-    try testing.expectEqualStrings("title", doc.text(entries[1].key));
+test {
+    _ = @import("builder_test.zig");
 }

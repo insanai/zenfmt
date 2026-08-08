@@ -17,17 +17,29 @@ pub const ResourceId = enum(u32) {
     }
 };
 
+pub const Kind = enum(u8) { embedded, external };
+
 pub const Resource = struct {
     /// The source name a reader saw: an archive part, an object id, a URL.
-    /// Image targets matching this name are rewritten on path output.
+    /// Readers initially bind image targets by this source name; path
+    /// projection subsequently rewrites by the typed `ResourceId`.
     source: ast.ByteRange,
     mime: ast.ByteRange,
+    kind: Kind = .embedded,
     /// Content bytes in `Store.resource_bytes`; binary, never in the UTF-8
     /// text pool.
     bytes: ast.ByteRange,
     /// BLAKE3-256 of the content, computed once at registration; the
     /// manifest reuses it instead of hashing again at commit.
     digest_hex: manifest.DigestHex,
+    pixel_width: u32 = 0,
+    pixel_height: u32 = 0,
     /// Accessibility text, when the source carries any.
     alt: ast.ByteRange,
+};
+
+pub const Metadata = struct {
+    alt: []const u8 = "",
+    pixel_width: u32 = 0,
+    pixel_height: u32 = 0,
 };

@@ -38,7 +38,13 @@ const Rebuild = struct {
     block_runs: std.ArrayList(Run) = .empty,
     inline_runs: std.ArrayList(Run) = .empty,
 
-    fn recordRun(r: *Rebuild, runs: *std.ArrayList(Run), old_start: u32, new_start: u32, len: u32) FilterError!void {
+    fn recordRun(
+        r: *Rebuild,
+        runs: *std.ArrayList(Run),
+        old_start: u32,
+        new_start: u32,
+        len: u32,
+    ) FilterError!void {
         if (!r.track or len == 0) return;
         if (runs.items.len > 0) {
             const last = &runs.items[runs.items.len - 1];
@@ -234,7 +240,12 @@ const Rebuild = struct {
             } else {
                 // Kept in place: an identity run so inline entity bindings
                 // under this block survive.
-                try r.recordRun(&r.inline_runs, copy.inlines.startRaw(), copy.inlines.startRaw(), copy.inlines.len);
+                try r.recordRun(
+                    &r.inline_runs,
+                    copy.inlines.startRaw(),
+                    copy.inlines.startRaw(),
+                    copy.inlines.len,
+                );
             }
         }
 
@@ -384,6 +395,7 @@ pub fn rebuild(ctx: *FilterContext, doc: ast.Document) FilterError!ast.Document 
     // their entities; dropped nodes' bindings are left behind.
     var new_block_entities = doc.block_entities;
     var new_inline_entities = doc.inline_entities;
+    var new_entity_index = doc.entity_index;
     if (body_rebuilt and r.track) {
         std.mem.sort(Run, r.block_runs.items, {}, runLessThan);
         std.mem.sort(Run, r.inline_runs.items, {}, runLessThan);
@@ -399,6 +411,12 @@ pub fn rebuild(ctx: *FilterContext, doc: ast.Document) FilterError!ast.Document 
             doc.inline_entities,
             r.inline_runs.items,
         );
+        new_entity_index = try ast.appendEntityIndex(
+            ctx.gpa,
+            store,
+            new_block_entities,
+            new_inline_entities,
+        );
     }
 
     var new_meta = doc.meta;
@@ -413,6 +431,7 @@ pub fn rebuild(ctx: *FilterContext, doc: ast.Document) FilterError!ast.Document 
         .plugin_data = doc.plugin_data,
         .block_entities = new_block_entities,
         .inline_entities = new_inline_entities,
+        .entity_index = new_entity_index,
     };
 }
 
