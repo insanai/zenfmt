@@ -191,3 +191,16 @@
 #document("pdf/zds-0014-python-library.pdf")[
   #include "records/0014-python-library.typ"
 ]
+
+#document(
+  "zds/0015-wasm-and-project-site.html",
+  title: [ZDS 0015: Browser WebAssembly and the zenfmt Project Site],
+  author: ("Vikrant Rathore", "Ronak Rathore"),
+  description: [The implementation blueprint for the 0.1.2 Zig WebAssembly browser release, local conversion playground, project website, HTML/PDF book and ZDS help system, and reproducible benchmark dashboard],
+)[
+  #include "records/0015-wasm-and-project-site.typ"
+]
+
+#document("pdf/zds-0015-wasm-and-project-site.pdf")[
+  #include "records/0015-wasm-and-project-site.typ"
+]
