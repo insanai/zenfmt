@@ -61,10 +61,15 @@ pub const PluginEntry = struct {
 
 /// One extracted media file committed beside the artifact.
 pub const MediaFile = struct {
-    /// Path relative to the artifact's directory, as written into the
-    /// artifact's image URLs.
+    /// Relative output path for embedded bytes, or the external reference.
     path: []const u8,
+    source: []const u8 = "",
+    mime: []const u8 = "application/octet-stream",
     digest_hex: DigestHex,
+    external: bool = false,
+    pixel_width: u32 = 0,
+    pixel_height: u32 = 0,
+    alt: []const u8 = "",
 };
 
 /// One facet kind's manifest entry (ZDS 0013, manifest schema v2). The
@@ -99,8 +104,9 @@ pub const ArtifactManifest = struct {
 
 /// The version 2 envelope, as canonical JSON bytes. Deterministic: no
 /// timestamps, hostnames, or absolute paths.
-pub fn encode(gpa: std.mem.Allocator, m: ArtifactManifest) error{OutOfMemory}![]u8 {
+pub fn encode(gpa: std.mem.Allocator, m: ArtifactManifest) json.WriteError![]u8 {
     assert(m.document_metadata.len > 0);
+    assert(m.source.name.len > 0);
     var w = json.WriteStream.init(gpa);
     defer w.deinit();
 
@@ -108,76 +114,15 @@ pub fn encode(gpa: std.mem.Allocator, m: ArtifactManifest) error{OutOfMemory}![]
     try w.field("artifact");
     try encodeRef(&w, m.artifact);
     try w.field("ast");
-    try w.beginObject();
-    try w.field("schema");
-    try w.string(ast_schema_name);
-    try w.field("version");
-    try w.integer(ast_version);
-    try w.endObject();
+    try encodeAst(&w);
     try w.field("document_metadata");
     try w.raw(m.document_metadata);
-    if (m.facets.len > 0) {
-        try w.field("facets");
-        try w.beginObject();
-        // `facetEntries` produces the entries in bytewise kind order; the
-        // canonical writer asserts it.
-        for (m.facets) |entry| {
-            try w.field(entry.kind);
-            try w.beginObject();
-            try w.field("count");
-            try w.integer(@intCast(entry.count));
-            try w.field("digest");
-            try w.beginObject();
-            try w.field("algorithm");
-            try w.string(digest_algorithm);
-            try w.field("value");
-            try w.string(&entry.digest_hex);
-            try w.endObject();
-            if (entry.rows_json) |rows| {
-                try w.field("rows");
-                try w.raw(rows);
-            }
-            try w.field("unused");
-            try w.boolean(entry.unused);
-            try w.endObject();
-        }
-        try w.endObject();
-    }
-    if (m.media.len > 0) {
-        try w.field("media");
-        try w.beginArray();
-        for (m.media) |entry| {
-            try w.beginObject();
-            try w.field("digest");
-            try w.beginObject();
-            try w.field("algorithm");
-            try w.string(digest_algorithm);
-            try w.field("value");
-            try w.string(&entry.digest_hex);
-            try w.endObject();
-            try w.field("path");
-            try w.string(entry.path);
-            try w.endObject();
-        }
-        try w.endArray();
-    }
+    if (m.facets.len > 0) try encodeFacets(&w, m.facets);
+    if (m.media.len > 0) try encodeMedia(&w, m.media);
     try w.field("plugins");
-    try w.beginObject();
-    // Namespace keys must arrive sorted; the engine sorts entries by id.
-    for (m.plugins) |entry| {
-        try w.field(entry.id);
-        try w.beginObject();
-        try w.field("data");
-        try w.raw(entry.data);
-        try w.field("version");
-        try w.integer(entry.version);
-        try w.endObject();
-    }
-    try w.endObject();
+    try encodePlugins(&w, m.plugins);
     try w.field("reports");
-    try w.beginArray();
-    for (m.reports) |item| try report.writeJson(item, &w);
-    try w.endArray();
+    try encodeReports(&w, m.reports);
     try w.field("schema");
     try w.string(schema_name);
     try w.field("schema_version");
@@ -189,15 +134,124 @@ pub fn encode(gpa: std.mem.Allocator, m: ArtifactManifest) error{OutOfMemory}![]
     return w.toOwnedSlice();
 }
 
-fn encodeRef(w: *json.WriteStream, ref: ArtifactRef) error{OutOfMemory}!void {
+fn encodeAst(w: *json.WriteStream) json.WriteError!void {
     try w.beginObject();
-    try w.field("digest");
+    try w.field("schema");
+    try w.string(ast_schema_name);
+    try w.field("version");
+    try w.integer(ast_version);
+    try w.endObject();
+}
+
+fn encodeFacets(
+    w: *json.WriteStream,
+    entries: []const FacetEntry,
+) json.WriteError!void {
+    assert(entries.len > 0);
+    try w.field("facets");
+    try w.beginObject();
+    for (entries) |entry| {
+        try w.field(entry.kind);
+        try w.beginObject();
+        try w.field("count");
+        try w.integer(@intCast(entry.count));
+        try w.field("digest");
+        try encodeDigest(w, entry.digest_hex, null);
+        if (entry.rows_json) |rows| {
+            try w.field("rows");
+            try w.raw(rows);
+        }
+        try w.field("unused");
+        try w.boolean(entry.unused);
+        try w.endObject();
+    }
+    try w.endObject();
+}
+
+fn encodeMedia(
+    w: *json.WriteStream,
+    entries: []const MediaFile,
+) json.WriteError!void {
+    assert(entries.len > 0);
+    try w.field("media");
+    try w.beginArray();
+    for (entries) |entry| {
+        try w.beginObject();
+        if (entry.alt.len > 0) {
+            try w.field("alt");
+            try w.string(entry.alt);
+        }
+        try w.field("digest");
+        const scope: []const u8 = if (entry.external) "reference" else "content";
+        try encodeDigest(w, entry.digest_hex, scope);
+        try w.field("kind");
+        try w.string(if (entry.external) "external" else "embedded");
+        try w.field("mime");
+        try w.string(entry.mime);
+        try w.field("path");
+        try w.string(entry.path);
+        if (entry.pixel_height > 0) {
+            try w.field("pixel_height");
+            try w.integer(entry.pixel_height);
+        }
+        if (entry.pixel_width > 0) {
+            try w.field("pixel_width");
+            try w.integer(entry.pixel_width);
+        }
+        try w.field("source");
+        try w.string(entry.source);
+        try w.endObject();
+    }
+    try w.endArray();
+}
+
+fn encodeDigest(
+    w: *json.WriteStream,
+    digest: DigestHex,
+    scope: ?[]const u8,
+) json.WriteError!void {
     try w.beginObject();
     try w.field("algorithm");
     try w.string(digest_algorithm);
+    if (scope) |value| {
+        try w.field("scope");
+        try w.string(value);
+    }
     try w.field("value");
-    try w.string(&ref.digest_hex);
+    try w.string(&digest);
     try w.endObject();
+}
+
+fn encodePlugins(
+    w: *json.WriteStream,
+    entries: []const PluginEntry,
+) json.WriteError!void {
+    try w.beginObject();
+    for (entries) |entry| {
+        try w.field(entry.id);
+        try w.beginObject();
+        try w.field("data");
+        try w.raw(entry.data);
+        try w.field("version");
+        try w.integer(entry.version);
+        try w.endObject();
+    }
+    try w.endObject();
+}
+
+fn encodeReports(
+    w: *json.WriteStream,
+    reports: []const report.Report,
+) json.WriteError!void {
+    try w.beginArray();
+    for (reports) |item| try report.writeJson(item, w);
+    try w.endArray();
+}
+
+fn encodeRef(w: *json.WriteStream, ref: ArtifactRef) json.WriteError!void {
+    try w.beginObject();
+    try w.field("digest");
+    try encodeDigest(w, ref.digest_hex, null);
     try w.field("format");
     try w.string(ref.format);
     try w.field("name");
@@ -223,55 +277,18 @@ pub fn facetEntries(
     doc: *const ast.Document,
     consumed: []const lowering.FacetKind,
     preserve: bool,
-) error{OutOfMemory}![]const FacetEntry {
-    const reachable = try reachableEntities(arena, doc);
-    if (reachable.len == 0) return &.{};
+) json.WriteError![]const FacetEntry {
+    if (doc.entity_index.len == 0) return &.{};
 
     var entries: std.ArrayList(FacetEntry) = .empty;
     // Bytewise order of the kind names: grid, layout, provenance,
     // revision, style.
-    try appendFacetEntry(&entries, arena, doc, .grid, reachable, consumed, preserve);
-    try appendFacetEntry(&entries, arena, doc, .layout, reachable, consumed, preserve);
-    try appendFacetEntry(&entries, arena, doc, .provenance, reachable, consumed, preserve);
-    try appendFacetEntry(&entries, arena, doc, .revision, reachable, consumed, preserve);
-    try appendFacetEntry(&entries, arena, doc, .style, reachable, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .grid, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .layout, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .provenance, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .revision, consumed, preserve);
+    try appendFacetEntry(&entries, arena, doc, .style, consumed, preserve);
     return entries.items;
-}
-
-/// The snapshot's entity ids, sorted, for reachability filtering.
-fn reachableEntities(
-    arena: std.mem.Allocator,
-    doc: *const ast.Document,
-) error{OutOfMemory}![]const u32 {
-    const store = doc.store;
-    const total = doc.block_entities.len + doc.inline_entities.len;
-    if (total == 0) return &.{};
-    var ids = try arena.alloc(u32, total);
-    var index: usize = 0;
-    const block_rows = store.block_entities.items[doc.block_entities.start..doc.block_entities.end()];
-    for (block_rows) |row| {
-        ids[index] = row.entity.raw();
-        index += 1;
-    }
-    const inline_rows = store.inline_entities.items[doc.inline_entities.start..doc.inline_entities.end()];
-    for (inline_rows) |row| {
-        ids[index] = row.entity.raw();
-        index += 1;
-    }
-    assert(index == total);
-    std.mem.sort(u32, ids, {}, std.sort.asc(u32));
-    return ids;
-}
-
-fn entityReachable(sorted: []const u32, entity: u32) bool {
-    var lo: usize = 0;
-    var hi: usize = sorted.len;
-    while (lo < hi) {
-        const mid = lo + (hi - lo) / 2;
-        if (sorted[mid] == entity) return true;
-        if (sorted[mid] < entity) lo = mid + 1 else hi = mid;
-    }
-    return false;
 }
 
 fn appendFacetEntry(
@@ -279,10 +296,9 @@ fn appendFacetEntry(
     arena: std.mem.Allocator,
     doc: *const ast.Document,
     comptime kind: lowering.FacetKind,
-    reachable: []const u32,
     consumed: []const lowering.FacetKind,
     preserve: bool,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     const store = doc.store;
     const rows = switch (kind) {
         .provenance => store.provenance_facets.items,
@@ -298,7 +314,7 @@ fn appendFacetEntry(
     var count: u64 = 0;
     try w.beginArray();
     for (rows) |row| {
-        if (!entityReachable(reachable, row.entity.raw())) continue;
+        if (doc.entityNode(row.entity) == null) continue;
         count += 1;
         try writeFacetRow(&w, store, kind, row);
     }
@@ -324,87 +340,162 @@ fn writeFacetRow(
     store: *const ast.Store,
     comptime kind: lowering.FacetKind,
     row: anytype,
-) error{OutOfMemory}!void {
+) json.WriteError!void {
     try w.beginObject();
     switch (kind) {
-        .provenance => {
-            try w.field("byte_len");
-            try w.integer(@intCast(row.byte_len));
-            try w.field("byte_start");
-            try w.integer(@intCast(row.byte_start));
-            try w.field("confidence");
-            try w.string(@tagName(row.confidence));
-            try w.field("entity");
-            try w.integer(row.entity.raw());
-            try w.field("member");
-            try w.string(store.textSlice(row.member));
-            try w.field("plugin");
-            try w.string(store.textSlice(row.plugin));
-        },
-        .style => {
-            try w.field("direction");
-            try w.string(@tagName(row.direction));
-            try w.field("entity");
-            try w.integer(row.entity.raw());
-            try w.field("language");
-            try w.string(store.textSlice(row.language));
-            try w.field("name");
-            try w.string(store.textSlice(row.name));
-            try w.field("role");
-            try w.string(store.textSlice(row.role));
-        },
-        .layout => {
-            try w.field("entity");
-            try w.integer(row.entity.raw());
-            try w.field("height");
-            try w.integer(row.height);
-            try w.field("surface");
-            try w.string(@tagName(row.surface));
-            try w.field("surface_index");
-            try w.integer(row.surface_index);
-            try w.field("width");
-            try w.integer(row.width);
-            try w.field("x");
-            try w.integer(row.x);
-            try w.field("y");
-            try w.integer(row.y);
-            try w.field("z_order");
-            try w.integer(row.z_order);
-        },
-        .grid => {
-            try w.field("cached");
-            try w.string(store.textSlice(row.cached));
-            try w.field("col");
-            try w.integer(row.col);
-            try w.field("entity");
-            try w.integer(row.entity.raw());
-            try w.field("formula");
-            try w.string(store.textSlice(row.formula));
-            try w.field("merge_cols");
-            try w.integer(row.merge_cols);
-            try w.field("merge_rows");
-            try w.integer(row.merge_rows);
-            try w.field("row");
-            try w.integer(row.row);
-            try w.field("sheet");
-            try w.string(store.textSlice(row.sheet));
-            try w.field("value_type");
-            try w.string(@tagName(row.value_type));
-        },
-        .revision => {
-            try w.field("author");
-            try w.string(store.textSlice(row.author));
-            try w.field("entity");
-            try w.integer(row.entity.raw());
-            try w.field("kind");
-            try w.string(@tagName(row.kind));
-            try w.field("note");
-            try w.string(store.textSlice(row.note));
-            try w.field("timestamp");
-            try w.string(store.textSlice(row.timestamp));
-        },
+        .provenance => try writeProvenance(w, store, row),
+        .style => try writeStyle(w, store, row),
+        .layout => try writeLayout(w, row),
+        .grid => try writeGrid(w, store, row),
+        .revision => try writeRevision(w, store, row),
     }
     try w.endObject();
+}
+
+fn writeProvenance(
+    w: *json.WriteStream,
+    store: *const ast.Store,
+    row: anytype,
+) json.WriteError!void {
+    try w.field("byte_len");
+    try w.integer(@intCast(row.byte_len));
+    try w.field("byte_start");
+    try w.integer(@intCast(row.byte_start));
+    try w.field("confidence");
+    try w.string(@tagName(row.confidence));
+    try w.field("entity");
+    try w.integer(row.entity.raw());
+    try w.field("member");
+    try w.string(store.textSlice(row.member));
+    if (row.original_geometry.len > 0) {
+        try w.field("original_geometry");
+        try w.string(store.textSlice(row.original_geometry));
+    }
+    try w.field("plugin");
+    try w.string(store.textSlice(row.plugin));
+}
+
+fn writeStyle(
+    w: *json.WriteStream,
+    store: *const ast.Store,
+    row: anytype,
+) json.WriteError!void {
+    try w.field("direction");
+    try w.string(@tagName(row.direction));
+    try w.field("entity");
+    try w.integer(row.entity.raw());
+    try w.field("language");
+    try w.string(store.textSlice(row.language));
+    try w.field("name");
+    try w.string(store.textSlice(row.name));
+    if (row.properties.len > 0) {
+        try w.field("properties");
+        try w.beginArray();
+        const end = row.properties.start + row.properties.len;
+        for (store.style_properties.items[row.properties.start..end]) |property| {
+            try w.beginObject();
+            try w.field("kind");
+            try w.string(@tagName(property.kind));
+            try w.field("value");
+            try w.integer(property.value);
+            try w.endObject();
+        }
+        try w.endArray();
+    }
+    try w.field("role");
+    try w.string(store.textSlice(row.role));
+}
+
+fn writeLayout(w: *json.WriteStream, row: anytype) json.WriteError!void {
+    if (row.column != facets_mod.no_layout_relation) {
+        try w.field("column");
+        try w.integer(row.column);
+    }
+    try w.field("entity");
+    try w.integer(row.entity.raw());
+    try w.field("height");
+    try w.integer(row.height);
+    if (row.reading_after != facets_mod.no_layout_relation) {
+        try w.field("reading_after");
+        try w.integer(row.reading_after);
+    }
+    try w.field("surface");
+    try w.string(@tagName(row.surface));
+    try w.field("surface_index");
+    try w.integer(row.surface_index);
+    if (!std.meta.eql(row.transform, facets_mod.Transform.identity)) {
+        try w.field("transform");
+        try writeTransform(w, row.transform);
+    }
+    try w.field("width");
+    try w.integer(row.width);
+    try w.field("x");
+    try w.integer(row.x);
+    try w.field("y");
+    try w.integer(row.y);
+    try w.field("z_order");
+    try w.integer(row.z_order);
+}
+
+fn writeTransform(
+    w: *json.WriteStream,
+    transform: facets_mod.Transform,
+) json.WriteError!void {
+    try w.beginArray();
+    inline for (.{ "a", "b", "c", "d", "tx", "ty" }) |field_name| {
+        try w.integer(@field(transform, field_name));
+    }
+    try w.endArray();
+}
+
+fn writeGrid(
+    w: *json.WriteStream,
+    store: *const ast.Store,
+    row: anytype,
+) json.WriteError!void {
+    try w.field("cached");
+    try w.string(store.textSlice(row.cached));
+    try w.field("col");
+    try w.integer(row.col);
+    try w.field("column_hidden");
+    try w.boolean(row.column_hidden);
+    try w.field("column_width");
+    try w.integer(row.column_width);
+    try w.field("entity");
+    try w.integer(row.entity.raw());
+    try w.field("formula");
+    try w.string(store.textSlice(row.formula));
+    try w.field("merge_cols");
+    try w.integer(row.merge_cols);
+    try w.field("merge_rows");
+    try w.integer(row.merge_rows);
+    try w.field("row");
+    try w.integer(row.row);
+    try w.field("row_height");
+    try w.integer(row.row_height);
+    try w.field("row_hidden");
+    try w.boolean(row.row_hidden);
+    try w.field("sheet");
+    try w.string(store.textSlice(row.sheet));
+    try w.field("value_type");
+    try w.string(@tagName(row.value_type));
+}
+
+fn writeRevision(
+    w: *json.WriteStream,
+    store: *const ast.Store,
+    row: anytype,
+) json.WriteError!void {
+    try w.field("author");
+    try w.string(store.textSlice(row.author));
+    try w.field("entity");
+    try w.integer(row.entity.raw());
+    try w.field("kind");
+    try w.string(@tagName(row.kind));
+    try w.field("note");
+    try w.string(store.textSlice(row.note));
+    try w.field("timestamp");
+    try w.string(store.textSlice(row.timestamp));
 }
 
 // -------------------------------------------------------------- loading
@@ -417,6 +508,11 @@ pub const Loaded = struct {
 };
 
 pub const LoadError = error{ OutOfMemory, Invalid };
+
+const LoadedArtifact = struct {
+    format: []const u8,
+    digest_hex: DigestHex,
+};
 
 /// Parses and structurally verifies an adjacent manifest under explicit
 /// limits. The caller still must verify `artifact_digest_hex` against the
@@ -443,11 +539,23 @@ pub fn load(
     // A newer schema is not understood; the caller reports staleness.
     if (version != schema_version) return error.Invalid;
 
-    const artifact = objectMembers(field(top, "artifact") orelse return error.Invalid) orelse
-        return error.Invalid;
+    const artifact = try loadArtifact(top);
+    const plugins = try loadPlugins(arena, top, limits);
+    return .{
+        .artifact_format = artifact.format,
+        .artifact_digest_hex = artifact.digest_hex,
+        .plugins = plugins,
+    };
+}
+
+fn loadArtifact(top: []json.Member) LoadError!LoadedArtifact {
+    const artifact = objectMembers(
+        field(top, "artifact") orelse return error.Invalid,
+    ) orelse return error.Invalid;
     const format = stringField(artifact, "format") orelse return error.Invalid;
-    const digest = objectMembers(field(artifact, "digest") orelse return error.Invalid) orelse
-        return error.Invalid;
+    const digest = objectMembers(
+        field(artifact, "digest") orelse return error.Invalid,
+    ) orelse return error.Invalid;
     const algorithm = stringField(digest, "algorithm") orelse return error.Invalid;
     if (!std.mem.eql(u8, algorithm, digest_algorithm)) return error.Invalid;
     const value = stringField(digest, "value") orelse return error.Invalid;
@@ -459,17 +567,40 @@ pub fn load(
             else => return error.Invalid,
         }
     }
+    return .{ .format = format, .digest_hex = digest_hex };
+}
 
+fn loadPlugins(
+    arena: std.mem.Allocator,
+    top: []json.Member,
+    limits: limits_mod.Limits,
+) LoadError![]const PluginEntry {
     var plugins: std.ArrayList(PluginEntry) = .empty;
+    errdefer plugins.deinit(arena);
     if (field(top, "plugins")) |plugins_value| {
         const members = objectMembers(plugins_value) orelse return error.Invalid;
         for (members) |member| {
             const entry = objectMembers(member.value) orelse return error.Invalid;
-            const entry_version = integerField(entry, "version") orelse return error.Invalid;
+            const entry_version = integerField(
+                entry,
+                "version",
+            ) orelse return error.Invalid;
+            if (entry_version < 0 or
+                entry_version > @as(i64, std.math.maxInt(u32)))
+            {
+                return error.Invalid;
+            }
             const data = field(entry, "data") orelse return error.Invalid;
             var w = json.WriteStream.init(arena);
-            try json.writeValue(&w, data);
-            const canonical = try w.toOwnedSlice();
+            defer w.deinit();
+            json.writeValue(&w, data) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.Invalid,
+            };
+            const canonical = w.toOwnedSlice() catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.Invalid,
+            };
             if (canonical.len > limits.max_plugin_data_bytes) return error.Invalid;
             try plugins.append(arena, .{
                 .id = member.key,
@@ -478,12 +609,7 @@ pub fn load(
             });
         }
     }
-
-    return .{
-        .artifact_format = format,
-        .artifact_digest_hex = digest_hex,
-        .plugins = plugins.items,
-    };
+    return plugins.items;
 }
 
 fn objectMembers(value: json.Value) ?[]json.Member {
@@ -545,7 +671,11 @@ test "encode emits the version 2 envelope canonically" {
     defer testing.allocator.free(bytes);
 
     try testing.expect(std.mem.startsWith(u8, bytes, "{\"artifact\":{\"digest\":"));
-    try testing.expect(std.mem.indexOf(u8, bytes, "\"schema\":\"ai.insan.zenfmt.artifact-manifest\"") != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        bytes,
+        "\"schema\":\"ai.insan.zenfmt.artifact-manifest\"",
+    ) != null);
     try testing.expect(std.mem.indexOf(u8, bytes, "\"paragraph_styles\"") != null);
     // No whitespace anywhere: canonical form.
     try testing.expect(std.mem.indexOfAny(u8, bytes, " \n\t") == null);
@@ -585,6 +715,15 @@ test "a round trip through encode and load preserves plugin data" {
     try testing.expectEqual(@as(usize, 1), loaded.plugins.len);
     try testing.expectEqual(@as(i64, 3), loaded.plugins[0].version);
     try testing.expectEqualStrings("{\"a\":[1,2],\"z\":true}", loaded.plugins[0].data);
+
+    var invalid_version = manifest;
+    invalid_version.plugins = &.{.{
+        .id = "ai.insan.zenfmt.docx",
+        .version = -1,
+        .data = "{}",
+    }};
+    const invalid_bytes = try encode(arena, invalid_version);
+    try testing.expectError(error.Invalid, load(arena, invalid_bytes, .{}));
 }
 
 test "load refuses a wrong schema or digest algorithm" {
