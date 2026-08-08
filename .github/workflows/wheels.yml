@@ -17,9 +17,6 @@ on:
       - "support/**"
       - "formats/**"
       - "src/**"
-      - "pyproject.toml"
-      - "hatch_build.py"
-      - "uv.lock"
       - "build.zig"
       - "build.zig.zon"
       - ".github/workflows/wheels.yml"
@@ -63,7 +60,7 @@ jobs:
       - name: Build the wheel
         env:
           ZENFMT_WHEEL_TARGET: ${{ matrix.target }}
-        run: uv build --wheel --out-dir dist
+        run: uv build --wheel --out-dir dist python
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.target }}
@@ -79,7 +76,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
       - name: Build the sdist
-        run: uv build --sdist --out-dir dist
+        run: uv build --sdist --out-dir dist python
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
