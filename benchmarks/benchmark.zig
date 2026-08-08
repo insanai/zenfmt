@@ -284,7 +284,7 @@ fn benchmarkTool(
         // directly comparable to the CLI child-process row. `-I` keeps the
         // checkout off sys.path so only the clean-installed wheel runs.
         .zenfmt_python => &.{
-            options.python, "-I", "benchmarks/python_api.py", "--convert", path,
+            options.python, "-I", "python/benchmarks/python_api.py", "--convert", path,
         },
     };
 

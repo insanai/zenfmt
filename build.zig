@@ -132,7 +132,12 @@ fn addPythonWorkflows(
         }
     };
 
-    const sync = Run.command(b, uv_missing, &.{ "uv", "sync", "--locked" });
+    // Every uv command runs from the repository root (so zig-out/ and
+    // benchmarks/ literals stay stable) and names the Python subproject
+    // explicitly with --project python / a positional project directory.
+    const sync = Run.command(b, uv_missing, &.{
+        "uv", "sync", "--project", "python", "--locked",
+    });
     sync.step.dependOn(&stage.step);
     const sync_step = b.step(
         "python-sync",
@@ -142,8 +147,9 @@ fn addPythonWorkflows(
     sync_step.dependOn(&sync.step);
 
     const pytest = Run.command(b, uv_missing, &.{
-        "uv", "run",         "--locked",     "pytest",
-        "-m", "not release", "python/tests",
+        "uv",           "run",    "--project", "python",
+        "--locked",     "pytest", "-m",        "not release",
+        "python/tests",
     });
     pytest.step.dependOn(&stage.step);
     const pytest_step = b.step(
@@ -154,13 +160,13 @@ fn addPythonWorkflows(
     test_step.dependOn(pytest_step);
 
     const lint = Run.command(b, uv_missing, &.{
-        "uv", "run", "--locked", "ruff", "check",
+        "uv", "run", "--project", "python", "--locked", "ruff", "check", "python",
     });
     const lint_step = b.step("python-lint", "Run ruff check through uv");
     lint_step.dependOn(&lint.step);
 
     const format = Run.command(b, uv_missing, &.{
-        "uv", "run", "--locked", "ruff", "format",
+        "uv", "run", "--project", "python", "--locked", "ruff", "format", "python",
     });
     const format_step = b.step(
         "python-format",
@@ -169,7 +175,9 @@ fn addPythonWorkflows(
     format_step.dependOn(&format.step);
 
     const format_check = Run.command(b, uv_missing, &.{
-        "uv", "run", "--locked", "ruff", "format", "--check",
+        "uv",       "run",  "--project", "python",
+        "--locked", "ruff", "format",    "--check",
+        "python",
     });
     const format_check_step = b.step(
         "python-format-check",
@@ -181,9 +189,8 @@ fn addPythonWorkflows(
     // hook invokes `zig build python-native` itself for a ReleaseSafe
     // bridge and sets the platform tag.
     const wheel = Run.command(b, uv_missing, &.{
-        "uv",                  "build",
-        "--wheel",             "--out-dir",
-        "zig-out/python/dist",
+        "uv",        "build",               "--wheel",
+        "--out-dir", "zig-out/python/dist", "python",
     });
     const wheel_step = b.step(
         "python-wheel",
@@ -195,20 +202,22 @@ fn addPythonWorkflows(
     // check, the full pytest suite with every format required, a wheel
     // and source distribution, and the installed-artifact release tests.
     const strict_pytest = Run.command(b, uv_missing, &.{
-        "uv", "run",         "--locked",     "pytest",
-        "-m", "not release", "python/tests",
+        "uv",           "run",    "--project", "python",
+        "--locked",     "pytest", "-m",        "not release",
+        "python/tests",
     });
     strict_pytest.step.dependOn(&stage.step);
     strict_pytest.setEnvironmentVariable("ZENFMT_REQUIRE_ALL_FORMATS", "1");
 
     const sdist = Run.command(b, uv_missing, &.{
-        "uv",                  "build",
-        "--sdist",             "--out-dir",
-        "zig-out/python/dist",
+        "uv",        "build",               "--sdist",
+        "--out-dir", "zig-out/python/dist", "python",
     });
 
     const release_tests = Run.command(b, uv_missing, &.{
-        "uv", "run", "--locked", "pytest", "-m", "release", "python/tests/release",
+        "uv",                   "run",    "--project", "python",
+        "--locked",             "pytest", "-m",        "release",
+        "python/tests/release",
     });
     release_tests.step.dependOn(&wheel.step);
     release_tests.step.dependOn(&sdist.step);
@@ -241,7 +250,7 @@ fn addPythonWorkflows(
     wheel_install.step.dependOn(&venv.step);
     const suite = Run.command(b, uv_missing, &.{
         "benchmarks/.venv-wheel/bin/python", "-I",
-        "benchmarks/python_api.py",          "--suite",
+        "python/benchmarks/python_api.py",   "--suite",
     });
     suite.step.dependOn(&wheel_install.step);
     suite.step.dependOn(&b.addInstallArtifact(cli, .{}).step);

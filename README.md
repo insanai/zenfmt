@@ -79,8 +79,12 @@ zig build python-wheel   # the host platform wheel into zig-out/python/dist
 zig build python-check   # the full release gate: lint, tests, wheel, sdist
 ```
 
-Development uses [uv](https://docs.astral.sh/uv/) for the environment and
-lockfile, Hatchling as the build backend, Ruff for lint/format, and pytest.
+The Python distribution is a self-contained uv project under `python/`
+(`pyproject.toml`, lockfile, packaging hook, sources, and tests); the
+repository root stays a pure Zig project and `zig build` remains the
+orchestrator. Development uses [uv](https://docs.astral.sh/uv/) for the
+environment and lockfile, Hatchling as the build backend, Ruff for
+lint/format, and pytest.
 
 Five properties drive the design, argued in ZDS 0002 and ZDS 0013:
 
