@@ -39,9 +39,19 @@
 
 // PDF renders diagrams directly; the experimental HTML export embeds them as
 // typeset frames so the figures survive on the bundle website.
-#let zds-figure(body) = context {
+// Typst renders a figure's text as glyph outlines when exporting to HTML, so
+// the drawing carries no text at all and is unreadable to a screen reader.
+// `alt` is therefore required rather than optional, and the site build fails
+// on a figure that does not declare one.
+#let zds-figure(body, alt: none) = context {
+  assert(
+    alt != none and alt != "",
+    message: "a zds-figure must declare alt text",
+  )
   if target() == "html" {
-    html.frame(align(center, body))
+    html.elem("figure", attrs: ("data-alt": alt))[
+      #html.frame(align(center, body))
+    ]
   } else {
     align(center, body)
   }
@@ -305,6 +315,7 @@ A conversion is a pipeline with a tree in the middle and an arbitrary number of
 transforms on it.
 
 #zds-figure(
+  alt: "The conversion pipeline left to right: input from a file or standard input, a reader chosen per input format, one AST of nested blocks and inlines, zero or more filters that map AST to AST, a writer chosen per output format, and output to a file or standard output. Two further outputs branch off the same conversion: Elm-style diagnostic reports, and an adjacent JSON manifest.",
   diagram(
     spacing: (15mm, 11mm),
     node-outset: 2pt,
@@ -2662,6 +2673,7 @@ or does non-UTF-8 plain text require an explicit `--input-encoding`?
 = Delivery Plan
 
 #zds-figure(
+  alt: "The delivery phases as a sequence, each with what it proves: phase 0 sets up the repository, build, and records; phase 1 the AST and engine with a text-to-markdown path, proving the AST; phase 2 the markdown and CSV readers, proving the format matrix; phase 3 filters and the pipeline, proving filters; phase 4 the ZIP, XML, and DOCX stack, proving containers; and phase 5 onward the remaining ODT, RTF, XLSX, AsciiDoc, and reStructuredText readers.",
   diagram(
     spacing: (19mm, 9mm),
     node-outset: 2pt,

@@ -26,9 +26,19 @@
 
 // These wireframes are semantic design artifacts, not screenshots. PDF
 // typesets them directly; HTML keeps each canvas as one accessible figure.
-#let zds-figure(body) = context {
+// Typst renders a figure's text as glyph outlines when exporting to HTML, so
+// the drawing carries no text at all and is unreadable to a screen reader.
+// `alt` is therefore required rather than optional, and the site build fails
+// on a figure that does not declare one.
+#let zds-figure(body, alt: none) = context {
+  assert(
+    alt != none and alt != "",
+    message: "a zds-figure must declare alt text",
+  )
   if target() == "html" {
-    html.frame(align(center, body))
+    html.elem("figure", attrs: ("data-alt": alt))[
+      #html.frame(align(center, body))
+    ]
   } else {
     align(center, body)
   }
@@ -553,7 +563,8 @@ Release 0.2.0 has five connected deliverables:
 #figure(
   placement: none,
   kind: image,
-  zds-figure(cetz.canvas(length: 1cm, {
+  zds-figure(
+    alt: "Browser conversion as a left-to-right chain: document bytes as a File or Uint8Array, a dedicated Web Worker that receives them by transfer and can be terminated to cancel, the zenfmt.wasm module built by Zig for a freestanding target with no filesystem and no network, and the resulting artifact ensemble of Markdown, reports, and manifest. Beneath the module, an arrow marks that it is the same default bundle the native CLI and the Python wheel use.",cetz.canvas(length: 1cm, {
     import cetz.draw: *
     rect((0, 2.4), (2.6, 3.7), fill: blue-light, stroke: 0.7pt + blue, radius: 0.12)
     content((1.3, 3.28), box-label([Document bytes], size: 8pt, weight: "bold"))
@@ -1118,7 +1129,8 @@ missing asset, size/digest disagreement, unsupported target label, or link to
 #figure(
   placement: none,
   kind: image,
-  zds-figure(downloads-wireframe),
+  zds-figure(
+    alt: "Wireframe of the download page. A header names the release version and date above links to release notes, checksums, and provenance. A full-width card leads with the browser WebAssembly target and its download button. Below it, three equal cards for macOS, Linux, and Windows name their architectures and libc choices, then a wider card for the Python library showing the install command, and a narrower one for verification by SHA-256 and attestation. A final row links all targets, the source archive, previous releases, and building from source.",downloads-wireframe),
   caption: [Download page. The current release and first-class WASM target lead;
     native and Python choices remain scannable, explicit, and verifiable.],
 )
@@ -1128,7 +1140,8 @@ missing asset, size/digest disagreement, unsupported target label, or link to
 #figure(
   placement: none,
   kind: image,
-  zds-figure(desktop-home-wireframe),
+  zds-figure(
+    alt: "Wireframe of the desktop homepage. A header carries the project name, the main navigation, a prominent help entry, and a theme selector. Below a headline and a one-line privacy promise, the converter workspace is two adjacent panels: a light panel on the left holding the drop target and the advanced options link, and a wider dark panel on the right showing the converted Markdown as read-only text with copy and download actions. A help strip runs beneath both, and under that the benchmark dashboard shows format coverage, a shared-corpus latency comparison, and provenance links.",desktop-home-wireframe),
   caption: [Desktop homepage. The adjacent dark panel is a wider visual
     “window” for readable Markdown, not a browser popup. Help and benchmark
     evidence sit inside the primary reading path.],
@@ -1143,7 +1156,8 @@ missing asset, size/digest disagreement, unsupported target label, or link to
 #figure(
   placement: none,
   kind: image,
-  zds-figure(docs-wireframe),
+  zds-figure(
+    alt: "Wireframe of the documentation shell. A header holds the project name, a search field, and the convert, download, and theme controls. The body is three columns: a fixed left tree listing the book chapters and the design records, a central article with its chapter title, a quick-path callout, prose, and a code block, and a right column holding the on-this-page table of contents above contextual help links. Previous and next navigation closes the article.",docs-wireframe),
   caption: [Book/ZDS documentation shell: global search, stable left tree,
     focused article, local table of contents, and contextual help.],
 )
@@ -1153,7 +1167,8 @@ missing asset, size/digest disagreement, unsupported target label, or link to
 #figure(
   placement: none,
   kind: image,
-  zds-figure(mobile-wireframe),
+  zds-figure(
+    alt: "Wireframe of the mobile layout. The same task order stacked in one column: header, headline, the source panel with a choose-file button, the dark read-only Markdown panel with a copy action, a help strip, and a compact benchmark snapshot, with the footer links last. Nothing depends on dragging.",mobile-wireframe),
   caption: [Mobile preserves the same task order by stacking input, output,
     help, and benchmark. No essential action depends on drag-and-drop.],
 )

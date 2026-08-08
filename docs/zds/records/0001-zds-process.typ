@@ -48,9 +48,19 @@
 
 // PDF renders the diagram directly; the experimental HTML export embeds it
 // as a typeset frame so the flowchart survives on the bundle website.
-#let zds-figure(body) = context {
+// Typst renders a figure's text as glyph outlines when exporting to HTML, so
+// the drawing carries no text at all and is unreadable to a screen reader.
+// `alt` is therefore required rather than optional, and the site build fails
+// on a figure that does not declare one.
+#let zds-figure(body, alt: none) = context {
+  assert(
+    alt != none and alt != "",
+    message: "a zds-figure must declare alt text",
+  )
   if target() == "html" {
-    html.frame(align(center, body))
+    html.elem("figure", attrs: ("data-alt": alt))[
+      #html.frame(align(center, body))
+    ]
   } else {
     align(center, body)
   }
@@ -155,6 +165,7 @@ global lock or remote numbering check just to start writing.
 == Local Workflow Diagram
 
 #zds-figure(
+  alt: "The record lifecycle as four numbered steps: create a draft with a placeholder number and the prediscussion state; iterate locally, revising until it is ready; assign a permanent number and register it, moving to discussion and open for review; and finally publish and commit.",
   diagram(
     spacing: (13mm, 9mm),
     node-outset: 2pt,
@@ -210,6 +221,7 @@ without adoption. The filled dot is the moment a contributor copies the
 template.
 
 #zds-figure(
+  alt: "The lifecycle states as a chain with the transition that leads to each: prediscussion (a local draft with a placeholder number) becomes discussion once a number is assigned, then accepted once the direction is agreed, then published as the current design record, then committed once implemented and descriptive of the system. From any state before committed a record may instead become abandoned — dropped, rejected, or superseded.",
   diagram(
     spacing: (14mm, 11mm),
     node-outset: 2pt,
@@ -445,6 +457,7 @@ numbering but maintainers assign numbers intentionally.
 == Numbering State Diagram
 
 #zds-figure(
+  alt: "The two tool flows against the same lifecycle: creating a placeholder draft, promoting it to discussion where the number is assigned, and thereafter publishing and committing, where only the state changes and the number never does.",
   diagram(
     spacing: (16mm, 9mm),
     node-outset: 2pt,

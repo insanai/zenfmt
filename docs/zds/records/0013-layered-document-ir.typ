@@ -41,9 +41,19 @@
 
 // PDF renders diagrams directly; the experimental HTML export embeds them as
 // typeset frames so the figures survive on the bundle website.
-#let zds-figure(body) = context {
+// Typst renders a figure's text as glyph outlines when exporting to HTML, so
+// the drawing carries no text at all and is unreadable to a screen reader.
+// `alt` is therefore required rather than optional, and the site build fails
+// on a figure that does not declare one.
+#let zds-figure(body, alt: none) = context {
+  assert(
+    alt != none and alt != "",
+    message: "a zds-figure must declare alt text",
+  )
   if target() == "html" {
-    html.frame(align(center, body))
+    html.elem("figure", attrs: ("data-alt": alt))[
+      #html.frame(align(center, body))
+    ]
   } else {
     align(center, body)
   }
@@ -476,6 +486,7 @@ design must not repeat:
 = Design Overview
 
 #zds-figure(
+  alt: "The layered IR: nineteen format readers take tokens in and produce trees out, feeding one semantic kernel. Facets, resources, and extensions attach to the kernel by entity identifier rather than to nodes directly. Filters transform the kernel; a lowering planner turns it into a plan the writers emit exactly, in degraded form, or refuse — and the losses and plan are recorded in the manifest.",
   diagram(
     spacing: (10mm, 8mm),
     node-outset: 2pt,
@@ -698,6 +709,7 @@ and accessibility text. `image` payloads and future embedded objects hold a
 array becomes the serialized view of this store.
 
 #zds-figure(
+  alt: "Stand-off binding drawn as two columns. On the left, three nodes: a paragraph with no entity row and therefore zero cost, a node carrying entity e17, and a table cell carrying entity e18. On the right, facet rows in a sorted index — a style facet binding e17 to Heading 2 in German, a revision facet binding e17 to an insertion with author and date, and a grid facet — each pointing at an entity rather than at a node.",
   diagram(
     spacing: (12mm, 9mm),
     node-outset: 2pt,
@@ -853,6 +865,7 @@ therefore bounds descriptors examined, which is the true unit of planning
 work.
 
 #zds-figure(
+  alt: "The lowering planner choosing among alternatives for an underline span. One alternative emits it exactly, but the markdown writer does not declare underline so it is excluded; the remaining alternatives degrade or refuse, and refusal wins only under a strict grade. The planner selects the surviving alternative with the least loss.",
   diagram(
     spacing: (13mm, 8mm),
     node-outset: 2pt,
@@ -1234,6 +1247,7 @@ Elm-style diagnostics for every refusal, and `zig build fmt-check` plus
 `zig build test` green at every landing point.
 
 #zds-figure(
+  alt: "The migration as seven numbered stages, each with the gate and the evidence that closes it: the kernel proved by an exhaustive schema test, the planner and the flow proof, the transform layer proved by the validator suite, the contracts stage carrying manifest v2 and the core repairs, all readers with facets attached and their records amended, and finally the surface — with golden diffs, report snapshots, and the lowering tests as standing evidence.",
   diagram(
     spacing: (11mm, 9mm),
     node-outset: 2pt,
