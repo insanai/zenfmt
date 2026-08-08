@@ -1,0 +1,43 @@
+[project]
+name = "zenfmt-site"
+version = "0.0.0"
+description = "The zenfmt static site assembler and its validators"
+requires-python = ">=3.10"
+# No runtime dependencies, deliberately.
+#
+# ZDS 0015 allows a locked third-party set here, and an earlier draft of this
+# plan named a templating engine and an HTML parser. Neither turned out to earn
+# its place: the documents being parsed are one generator's output rather than
+# the open web, and the pages being produced are a fixed set rather than
+# user-authored templates. The standard library covers both, and in exchange
+# `zig build site` needs no network, no wheel resolution, and no lockfile that
+# can drift from what CI installs — which is the same bargain the rest of this
+# repository already makes by having no Zig dependencies either.
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zenfmt_site"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["src"]
+include = ["src/**/*.py", "tests/**/*.py"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "S", "C4", "RET", "SIM", "RUF", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib --strict-markers --strict-config -q"
+filterwarnings = ["error"]

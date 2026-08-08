@@ -2,9 +2,10 @@
 .zig-cache/
 zig-out/
 docs/build/
-build/
+docs/packages/
 benchmarks/corpus/
 benchmarks/.anydoc/
+benchmarks/.browser/
 benchmarks/.venv-wheel/
 .venv/
 dist/
@@ -14,3 +15,10 @@ __pycache__/
 python/src/zenfmt/_native/*.so
 python/src/zenfmt/_native/*.dylib
 python/src/zenfmt/_native/*.dll
+
+# Note: there is no `build/` entry here, and there must not be one. The
+# repository-root `build/` directory holds the build graph's source — the
+# files `build.zig` imports as `build/modules.zig`, `build/wasm.zig`, and so
+# on — not build output. Ignoring it silently excludes them from the commit
+# and a fresh clone then fails to configure at all. Generated output lives in
+# `zig-out/` and `docs/build/`, both of which are ignored above.
