@@ -203,8 +203,8 @@ inside another.
   Everything a reader receives: `gpa` (the arena), `input` (bytes, or a
   file handle for `.seekable` readers, with `inputBytes()` as the
   whole-slice shim), `input_name`, `out` (the Emitter), `reports`,
-  `limits`, and `manifest_in` for carried data. A reader windows what it
-  needs; it never opens paths of its own.
+  `limits`, and `preservation()` for its version-compatible carried
+  namespace. A reader windows what it needs; it never opens paths of its own.
 ], source: [`core/src/plugin.zig`])
 
 == The obligations
@@ -313,9 +313,11 @@ build until someone decides its disposition. At run time the writer's
 emission sites record rule hits on `ctx.plan`; the engine prices the
 plan, gates the graded `--strict` predicate before anything is
 committed, and flushes one aggregated loss report per fired rule.
-A writer can also recover what its own reader preserved:
-`ctx.preservation("ai.insan.zenfmt.docx")` returns that namespace from
-the input's verified manifest.
+A writer can also recover what its own format library preserved:
+`ctx.preservation()` returns only that writer descriptor's namespace from
+the input's verified manifest, and only when `data_version` matches.
+`ctx.preservationAs(T, decode)` is the typed decoding path. The engine never
+gives a plugin a runtime namespace selector or another plugin's data.
 
 A writer walks views with the same sibling hop the validator uses, and
 it owns its output discipline completely. The Markdown writer's escaping
@@ -353,15 +355,16 @@ When a later conversion reads that Markdown file, the adjacent manifest
 is loaded and digest-checked, and every namespace is carried forward
 value-for-value. That includes namespaces from plugins this binary has
 never heard of. Your plugin's data is yours alone: the engine hands a
-reader only its own namespace, matched by `id` and gated by
-`data_version`, and re-encodes all of them canonically on the way out.
-A future DOCX writer could use those style ids to reconstruct what
-Markdown could not hold. The manifest is how it will remember.
+reader or writer only its own namespace, matched by descriptor `id` and
+gated by `data_version`, and re-encodes all namespaces canonically on the
+way out. A DOCX writer in the same format library can decode those style
+ids through `ctx.preservationAs`; no runtime plugin lookup is involved.
 
 #warning([Version your data like a wire format], [
-  `data_version` is compared before your data is returned to you. Bump
-  it whenever the JSON shape changes. Stale versions are dropped, which
-  is disappointing but safe. Guessing at old shapes is neither.
+  `data_version` is compared before your data is returned to a reader or
+  writer. Bump it whenever the JSON shape changes. Incompatible versions
+  remain opaque and are carried forward, but they are not handed to the
+  plugin for decoding. Guessing at old shapes is neither necessary nor safe.
 ])
 
 #teach_back([

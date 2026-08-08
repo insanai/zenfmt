@@ -1,13 +1,13 @@
 #let zds-number = "0003"
 #let zds-title = "The DOCX Reader"
-#let zds-state = "discussion"
+#let zds-state = "committed"
 #let zds-created = "2026-08-06"
 #let zds-discussion = "Mapping, omissions, and round-trip expectations for the DOCX reader"
 #let zds-labels = ("formats", "docx", "reader",)
 #let zds-authors = ("Zen Contributors <team@insan.ai>",)
 #let zds-category = "Format Record"
-#let zds-status = "Open for Discussion"
-#let zds-last-updated = "2026-08-06"
+#let zds-status = "Committed"
+#let zds-last-updated = "2026-08-08"
 
 #import "../../shared/zds.typ": zds-document
 

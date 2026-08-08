@@ -18,19 +18,22 @@ bytes. A converter is a parser farm, and parser farms are where memory
 bugs, hangs, and resource exhaustion live. zenfmt's answer is not
 cleverness. It is arithmetic: every allocation bounded, every loop
 bounded, every expansion budgeted, and every refusal explained to the
-person holding the file.
+person holding the file with the exact bound and a safe next action.
 
 #definition([The refusal philosophy], [
   When input crosses a limit, zenfmt refuses loudly, names the limit,
   and says what to do next. It never silently degrades security, never
-  retries with the check disabled, and never writes partial output.
+  retries with the check disabled, and never publishes a partial path
+  output. A direct API stream reports whether no bytes, a prefix, or the
+  complete artifact reached its caller.
 ])
 
 #checkpoint([reports], [
   Recall from chapter 1 that every diagnostic answers four questions:
   what happened, where, what zenfmt did about it, and what you can do.
-  Every refusal in this chapter is such a report, with a stable code you
-  can match in scripts.
+  That structure is only the floor: the direction must identify a concrete
+  correction, safe override, or containment action. Every refusal in this
+  chapter is such a report, with a stable code you can match in scripts.
 ])
 
 == The limits table
@@ -68,6 +71,7 @@ from the command line, with one exception explained below.
       manifest],
     [`max_report_samples`], [4], [locations one aggregated report lists
       before counting the rest],
+    [`max_reports_total`], [16 Ki], [distinct aggregated report groups],
     [`max_resources`], [256], [resources a reader may extract],
     [`max_resource_bytes`], [128 MiB], [total extracted resource bytes],
     [`max_nodes`], [16 Mi], [kernel nodes per document],
@@ -83,7 +87,7 @@ The exception: `max_depth` and `max_xml_depth` may be raised only to
 An override above the cap is refused as an invalid value. There is no
 flag that turns a bounded stack into an unbounded one.
 
-The last five rows are IR v2's additions (ZDS 0013). `max_nodes` and
+The IR v2 bounds near the bottom come from ZDS 0013. `max_nodes` and
 `max_decoded_text_bytes` bound the kernel itself, so a small compressed
 input cannot decode into an unbounded tree or text pool. A facet bomb,
 one paragraph carrying a million annotations, dies at `max_facet_rows`
@@ -194,11 +198,11 @@ reading a single banner.
 
 == Strict mode
 
-`--strict` turns warnings into failure. The check runs after the writer
-has produced bytes but before anything is committed, so a strict failure
-leaves no artifact, no manifest, and no media files. Pipelines that must
-not accept lossy conversions get a hard gate; interactive users keep the
-default, which converts and explains.
+`--strict` tests the selected lowering plan before the writer opens. A
+strict failure therefore sends no stream bytes and leaves no artifact,
+manifest, or media file. Pipelines that must not accept lossy conversions
+get a hard gate; interactive users keep the default, which converts and
+explains.
 
 == Running out of memory is not a crash
 
@@ -218,11 +222,13 @@ strange but valid document. It may not produce an invalid tree, and it
 may not hang, because every loop it runs is bounded by the limits table
 above.
 
-== Nothing partial ever lands
+== Nothing partial is published to a path
 
-The last defense is the commit protocol. A conversion that fails
-must leave the filesystem exactly as it found it, and a conversion that
-succeeds must never be observable half-done.
+The last defense is the commit protocol. A conversion that fails before
+publication leaves destination files as it found them, and a completion
+manifest is never observable before its whole artifact ensemble. Direct
+streams cannot be rolled back; their API result reports `untouched`,
+`partial`, or `complete` so callers can discard an incomplete prefix.
 
 #book_figure(
   [The commit order. Every write goes to an unpredictable temporary name
@@ -251,8 +257,12 @@ artifact is published by link, which fails if the destination exists and
 `--overwrite` was not given (`core.destination-exists`), or by replace
 when it was. Media files follow, under the artifact's own
 `<stem>_media` directory. The manifest publishes last. A crash at any
-step leaves either the previous state or the complete new state, plus
-temp files the next run ignores.
+point cannot leave a manifest claiming an incomplete ensemble is complete.
+A crash after artifact publication may leave new artifact or media files
+without a manifest—several filesystem renames cannot form one portable
+atomic transaction. Such an ensemble is deliberately uncertified; rerun
+with `--overwrite` to complete it. Temporary files are ignored by the next
+run.
 
 We promised the DOCTYPE banner told the truth. Here is the check:
 

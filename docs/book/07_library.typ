@@ -141,9 +141,11 @@ pub const ConvertOptions = struct {
 filesystem. The `name` field exists only for reports and format detection.
 `output` as `.writer` streams the artifact anywhere and skips every file
 side effect. No adjacent manifest is written, but `manifest_json` still
-carries it. Path output is transactional: temp files first, then the
-artifact renamed into place, then extracted media, then the manifest. A
-crash never leaves a half-converted file under the destination name.
+carries it. Path output stages complete temporary files, then publishes the
+artifact, extracted media, and finally the manifest. Each file is individually
+atomic, and the last manifest certifies the ensemble. A crash between renames
+can leave a complete artifact or media file without a manifest; that state is
+deliberately uncertified and a rerun with `--overwrite` repairs it.
 
 #warning([Strict is graded, and strict before commit], [
   `Strictness` has four values. `.off` converts and reports. `.content`

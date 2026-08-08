@@ -160,8 +160,13 @@ notes and warnings, which fail a conversion only under `--strict`.
     and `--overwrite` was not given.],
   [`core.file-operation-failed`], [error], [conversion], [An open, write,
     flush, or rename failed. The report names the operation and path.],
+  [`core.writer-output-failed`], [error], [conversion], [A writer or direct
+    output sink stopped during emission. The result says whether a streamed
+    prefix had already been delivered.],
   [`core.input-too-large`], [error], [limit], [The input exceeds
     `max_input_bytes`.],
+  [`core.invalid-limit-configuration`], [error], [limit], [A library caller
+    supplied a zero limit or exceeded a fixed hard cap.],
   [`core.invalid-document-tree`], [error], [conversion], [A plugin or
     filter produced a tree the validator rejects.],
   [`core.nested-table-flattened`], [warning], [none], [The
@@ -170,9 +175,24 @@ notes and warnings, which fail a conversion only under `--strict`.
     input manifest failed digest or schema checks and was ignored.],
   [`core.strict-refused`], [error], [conversion], [The graded `--strict`
     predicate refused the priced loss. Nothing was committed.],
+  [`core.strict-unavailable`], [error], [conversion], [The selected writer
+    has no total capability declaration, so strictness cannot be proved
+    before emission.],
   [`core.construct-refused`], [error], [conversion], [The document
     contains a construct the selected writer refuses to degrade in any
     mode.],
+  [`core.invalid-lowering-plan`], [error], [conversion], [A writer plugin
+    failed to provide a bounded, complete lowering plan.],
+  [`core.manifest-encoding-failed`], [error], [conversion], [Generated
+    metadata or preservation data violated the canonical JSON contract;
+    path output remains unpublished.],
+  [`core.invalid-preservation-data`], [error], [conversion], [A reader's
+    preservation JSON was malformed, oversized, or used a schema version
+    different from its descriptor.],
+  [`core.lowering-limit`], [error], [limit], [The bounded lowering planner
+    reached its alternatives, work, or depth limit before opening output.],
+  [`core.reports-truncated`], [note], [none], [The report-group budget was
+    reached and additional distinct groups were counted but omitted.],
   [`core.extension-mismatch`], [note], [none], [The file extension and
     the content signature disagreed; content evidence routed the file.],
   [`cli.usage`], [error], [usage], [The command line itself was invalid;
@@ -204,6 +224,8 @@ the writer degraded it deliberately, and the manifest says so.
     cells flatten into their first cell.],
   [`markdown.table-cell-flattened`], [note], [Block content inside a cell
     became one line.],
+  [`markdown.table-caption-degraded`], [note], [A table caption became one
+    flow line after the table because GFM has no caption association.],
   [`markdown.nested-table-dropped`], [warning], [A table inside a table
     cell cannot be written. Its text content was kept.],
   [`markdown.definition-list-degraded`], [note], [Definition lists render
@@ -446,6 +468,7 @@ walker stacks, and no input is worth an unbounded stack.
   [`max_manifest_depth`], [64], [JSON nesting in an accepted manifest.],
   [`max_report_samples`], [4], [Locations an aggregated report lists
     before counting the rest.],
+  [`max_reports_total`], [16 Ki], [Distinct aggregated report groups.],
   [`max_resources`], [256], [Resources a reader may extract from one
     document.],
   [`max_resource_bytes`], [128 MiB], [Total extracted resource bytes per

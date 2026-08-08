@@ -1,13 +1,13 @@
 #let zds-number = "0001"
 #let zds-title = "The Zen Discussion Process"
-#let zds-state = "published"
+#let zds-state = "committed"
 #let zds-created = "2026-08-06"
 #let zds-discussion = "Process document"
 #let zds-labels = ("documentation", "process",)
 #let zds-authors = ("Zen Contributors <team@insan.ai>",)
 #let zds-category = "Process Memo"
-#let zds-status = "Published"
-#let zds-last-updated = "2026-08-06"
+#let zds-status = "Committed"
+#let zds-last-updated = "2026-08-08"
 
 #import "../../shared/zds.typ": zds-document
 #import "@preview/fletcher:0.5.8" as fletcher: diagram, edge, node

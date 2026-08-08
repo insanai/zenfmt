@@ -375,8 +375,8 @@ zenfmt detects this variant by exact-consumption parsing.
       "wall_ms",
       "ms",
       3.6,
-      marker: 60,
-      marker_label: [60 ms: the competitors' runtime startup floor],
+      marker: 40,
+      marker_label: [40 ms: the competitors' runtime startup floor],
     )
   },
   caption: [
@@ -387,21 +387,21 @@ zenfmt detects this variant by exact-consumption parsing.
 )
 
 The log axis is doing real work, because the three tools live on
-different decades. zenfmt's bars cluster between 3 and 50 milliseconds.
+different decades. Most zenfmt bars cluster between 2 and 30 milliseconds;
+the 25,000-row CSV reaches 76 ms.
 That time is dominated by actual parsing. This is why the 2.5 MB
 `deck.ppt` costs no more than a small spreadsheet: the reader touches the
 text atoms it projects and skips the rest. The competitors' bars start
-near their runtime startup floor, about 60 ms for anydoc's Node launcher
+near their runtime startup floor, about 40 ms for anydoc's Node launcher
 and a similar amount for pandoc's runtime, before any document work
 happens. On large inputs with heavy structure, such as the EPUB book and
-the 850 KiB HTML page, pandoc climbs past 2 seconds.
+the 850 KiB HTML page, pandoc climbs past 1.2 seconds.
 
-One file remains where anydoc genuinely out-runs zenfmt: `data.csv`, with
-25,000 rows. zenfmt spends its extra milliseconds measuring every column
-so it can emit width-aligned GFM table pipes. anydoc emits ragged ones.
-The scaling is linear in rows for both tools. The alignment is a priced
-feature, not an accident, and a flag to skip it was judged not worth
-having.
+The closest race is `data.csv`, with 25,000 rows: 76 ms for zenfmt and
+82 ms for anydoc. zenfmt measures every column so it can emit width-aligned
+GFM table pipes; anydoc emits ragged ones. The scaling is linear in rows
+for both tools. Alignment remains a deliberate feature, but the reusable
+bounded-stack fix described below removed its former latency penalty.
 
 == Memory
 
@@ -430,12 +430,10 @@ inputs where memory matters.
 
 One more picture makes the distribution visible. Take each file both
 zenfmt and anydoc convert. Divide anydoc's median wall time by zenfmt's.
-Sort. The result is not one lucky file carrying an average. Thirteen of
-the 14 shared files land on the winning side of parity. The one that
-does not is `data.csv`, the price of column alignment, in its own color
-on the losing side. The spread tells you the rest: small files are
-dominated by the competitor's startup, and large files are dominated by
-parsing.
+Sort. The result is not one lucky file carrying an average. All 14 shared
+files land on the winning side of parity; `data.csv` is the closest at
+1.1x. The spread tells you the rest: small files are dominated by the
+competitor's startup, and large files are dominated by parsing.
 
 #figure(
   placement: auto,
@@ -453,9 +451,13 @@ The process benchmark treats each tool as a black box. A second harness,
 `zig build benchmark-stages`, opens zenfmt's box from inside the library:
 for each corpus file it times a conversion through a probe writer that
 emits nothing, which prices reading, tree building, validation, and the
-manifest, and then times the ordinary Markdown conversion. The difference
-is the rendering share. That difference is a derived number, not a direct
-measurement, and the results file says so in a `derived` field.
+manifest. A timed wrapper then measures the ordinary Markdown writer
+callback directly. The residual after subtracting both from total is the
+lowering share; it also includes the small writer setup and finalization
+difference. That residual is derived, not directly measured, and the
+results file says so in a `derived` field.
+For a focused profile, append `-- --file data.csv --iterations 25`;
+the default remains five runs over the full corpus.
 
 #let stages = json("/benchmarks/results/stages.json")
 #let stage_pick = ("data.csv", "page.html", "book.epub", "slides.pptx", "slides.odp", "deck.ppt", "report.docx", "sheet.xlsx")
@@ -466,20 +468,19 @@ measurement, and the results file says so in a `derived` field.
     columns: (2fr, 1fr, 1fr, 1fr, 1fr),
     align: (left, right, right, right, right),
     table.header(
-      [*File*], [*Read (ms)*], [*Render (ms)*], [*Total (ms)*],
-      [*Render share*],
+      [*File*], [*Read (ms)*], [*Lower (ms)*], [*Write (ms)*],
+      [*Total (ms)*],
     ),
     ..{
       let rows = ()
       for f in stages.files {
         if f.name in stage_pick {
-          let share = if f.full_ms > 0.0 { f.render_ms / f.full_ms * 100 } else { 0 }
           rows += (
             raw(f.name),
             [#calc.round(f.read_ms, digits: 2)],
-            [#calc.round(f.render_ms, digits: 2)],
+            [#calc.round(f.lowering_ms, digits: 2)],
+            [#calc.round(f.writer_ms, digits: 2)],
             [#calc.round(f.full_ms, digits: 2)],
-            [#calc.round(share, digits: 0)%],
           )
         }
       }
@@ -489,23 +490,24 @@ measurement, and the results file says so in a `derived` field.
   caption: [
     In-process stage split, median of #stages.iterations runs, for the
     eight files with the most work to split. Read covers parsing,
-    building, and validation; render is derived as total minus read.
+    building, and validation; write is measured inside the callback;
+    lower is the explicitly marked residual.
   ],
 )
 
-Two facts fall out. For the container formats, parsing dominates: an ODT
-or a PPTX spends nine-tenths of its time inside the archive and the XML,
-and the Markdown writer is almost free. The exception proves the model:
-`data.csv` spends three-quarters of its time rendering, because a
-633 KiB CSV becomes one enormous Markdown table whose column alignment
-is exactly the work anydoc skips. The loss in the previous section and
-the render share in this table are the same fact seen from two sides.
+Two facts fall out. Parsing dominates the container formats: an ODT or a
+PPTX spends almost all its time inside the archive and XML, and the
+Markdown writer is nearly free. The 633 KiB CSV now spends 63 ms reading,
+8 ms in the lowering residual, and 10 ms in the writer. Stage separation
+found the previous writer regression: a hard-cap-sized inline-close stack
+was being safety-initialized for every cell. Reusing one stack sized to
+`max_depth` made the table path faster and reduced its working memory.
 
 == Reading it honestly
 
 A benchmark this favorable deserves its caveats stated plainly.
 
-- *Startup is part of the story, but not all of it.* Subtract the 60 ms
+- *Startup is part of the story, but not all of it.* Subtract the 40 ms
   runtime floor from every anydoc bar, and its document work is
   competitive on small files. zenfmt's advantage there is the sum of
   native start and arena parsing. It is not evidence that the Rust code

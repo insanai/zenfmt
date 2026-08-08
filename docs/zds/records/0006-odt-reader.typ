@@ -1,13 +1,13 @@
 #let zds-number = "0006"
 #let zds-title = "The ODT Reader"
-#let zds-state = "discussion"
+#let zds-state = "committed"
 #let zds-created = "2026-08-06"
 #let zds-discussion = "Mapping, omissions, and round-trip expectations for the ODT reader"
 #let zds-labels = ("formats", "odt", "reader",)
 #let zds-authors = ("Zen Contributors <team@insan.ai>",)
 #let zds-category = "Format Record"
-#let zds-status = "Open for Discussion"
-#let zds-last-updated = "2026-08-06"
+#let zds-status = "Committed"
+#let zds-last-updated = "2026-08-08"
 
 #import "../../shared/zds.typ": zds-document
 

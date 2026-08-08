@@ -1,13 +1,13 @@
 #let zds-number = "0002"
 #let zds-title = "zenfmt: Architecture and Implementation"
-#let zds-state = "discussion"
+#let zds-state = "committed"
 #let zds-created = "2026-08-06"
 #let zds-discussion = "Architecture and first-release plan for the zenfmt document converter"
 #let zds-labels = ("architecture", "ast", "filters", "plugins", "formats",)
 #let zds-authors = ("Zen Contributors <team@insan.ai>",)
 #let zds-category = "Architectural Specification"
-#let zds-status = "Open for Discussion"
-#let zds-last-updated = "2026-08-06"
+#let zds-status = "Committed"
+#let zds-last-updated = "2026-08-08"
 
 #import "../../shared/zds.typ": zds-document
 #import "@preview/fletcher:0.5.8" as fletcher: diagram, edge, node

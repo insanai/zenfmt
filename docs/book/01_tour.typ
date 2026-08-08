@@ -189,6 +189,12 @@ log line addressed to a grep. Each report also carries a stable code, so
 scripts can match on meaning rather than on prose that may improve
 between releases.
 
+The four questions are a minimum structure, not the goal by themselves.
+The final answer must be usable: it names the exact limit, path, format,
+or construct involved and gives a concrete correction, often a command
+that can be copied. “Try again” or “check the input” does not qualify as
+a zenfmt direction unless the report also says what to check and why.
+
 #definition([Loss tier], [
   Every loss report classifies itself. *Degraded* means the content
   survived in a simpler form, like a merged cell's text sitting in its
@@ -235,8 +241,8 @@ $ zenfmt big.xlsx --limit max_input_bytes=2147483648
 
 Three behaviors deserve emphasis. First, overwriting is a refusal by
 default. If `report.md` exists, zenfmt reports it and exits 2 rather
-than clobbering it; `--overwrite` replaces the artifact and manifest
-together. Second, strict mode fails early and is graded. Bare `--strict`
+than clobbering it; `--overwrite` replaces each staged file and publishes
+the new manifest last. Second, strict mode fails early and is graded. Bare `--strict`
 refuses when the conversion would drop semantic content;
 `--strict=structure` also refuses structural degradation; and
 `--strict=exact` refuses any declared loss at all, styling included. In
@@ -373,8 +379,9 @@ before anything else may touch the tree, and proves them again after
 every filter stage. Filters are Zig transforms compiled into your binary
 (Chapter 7). The lowering plan records and prices every degradation the
 writer declares, which is where the graded `--strict` refusal happens.
-The writer renders Markdown deterministically. Commit writes the
-artifact, then any extracted media, then the manifest, atomically.
+The writer renders Markdown deterministically. Commit publishes the
+artifact, then any extracted media, then the manifest. Each rename is
+atomic; the manifest appears last and certifies the complete ensemble.
 Nothing in the middle knows what format the bytes came from. That
 ignorance is enforced at compile time, and it is the subject of
 Chapter 3.
