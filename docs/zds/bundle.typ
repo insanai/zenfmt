@@ -178,3 +178,16 @@
 #document("pdf/zds-0013-layered-document-ir.pdf")[
   #include "records/0013-layered-document-ir.typ"
 ]
+
+#document(
+  "zds/0014-python-library.html",
+  title: [ZDS 0014: The zenfmt Python Library: API and Implementation],
+  author: ("Zen Contributors",),
+  description: [Implementation blueprint for the Python API, native boundary, uv workflow, packaging, and release],
+)[
+  #include "records/0014-python-library.typ"
+]
+
+#document("pdf/zds-0014-python-library.pdf")[
+  #include "records/0014-python-library.typ"
+]
