@@ -28,7 +28,7 @@ def main() -> int:
     import zenfmt
 
     package_dir = Path(zenfmt.__file__).resolve()
-    print(f"zenfmt {zenfmt.__version__} from {package_dir.parent}")
+    print(f"zenfmt {zenfmt.__version__} from {package_dir.parent}", flush=True)
 
     formats = zenfmt.formats()
     readers = [f for f in formats if f.can_read]
@@ -84,7 +84,7 @@ def main() -> int:
         )
     assert all(results[i].startswith(f"# Doc {i}") for i in range(8))
 
-    print("smoke-ok")
+    print("smoke-ok", flush=True)
     return 0
 
 

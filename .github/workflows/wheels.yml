@@ -145,7 +145,7 @@ jobs:
             else
               venv_python="$RUNNER_TEMP/smoke-venv/Scripts/python.exe"
             fi
-            (cd "$RUNNER_TEMP" && "$venv_python" -I \
+            (cd "$RUNNER_TEMP" && "$venv_python" -u -X faulthandler -I \
               "$GITHUB_WORKSPACE/python/tests/release/smoke.py")
           done
       - name: Clean-install and smoke every supported CPython on musl
@@ -164,7 +164,7 @@ jobs:
                 uv venv --clear --python "$python_version" /runner-temp/smoke-venv
                 uv pip install --python /runner-temp/smoke-venv \
                   --no-index --find-links /workspace/dist zenfmt
-                /runner-temp/smoke-venv/bin/python -I \
+                /runner-temp/smoke-venv/bin/python -u -X faulthandler -I \
                   /workspace/python/tests/release/smoke.py
               done
             '
@@ -195,5 +195,6 @@ jobs:
           uv venv "$RUNNER_TEMP/standalone/venv"
           uv pip install --python "$RUNNER_TEMP/standalone/venv" \
             --no-index --find-links "$RUNNER_TEMP/standalone/dist" zenfmt
-          (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/standalone/venv/bin/python" -I \
+          (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/standalone/venv/bin/python" \
+            -u -X faulthandler -I \
             "$GITHUB_WORKSPACE/python/tests/release/smoke.py")

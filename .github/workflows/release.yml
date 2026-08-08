@@ -166,7 +166,8 @@ jobs:
             test "$attempt" -lt 10
             sleep 30
           done
-          (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/published/bin/python" -I \
+          (cd "$RUNNER_TEMP" && "$RUNNER_TEMP/published/bin/python" \
+            -u -X faulthandler -I \
             "$GITHUB_WORKSPACE/python/tests/release/smoke.py")
 
   github-release:

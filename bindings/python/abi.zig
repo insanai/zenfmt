@@ -90,7 +90,12 @@ export fn zenfmt_py_capabilities(out_len: ?*u64) ?[*]const u8 {
 
 export fn zenfmt_py_convert(request: ?*const Request) ?*Result {
     const value = request orelse return null;
-    return result_mod.convert(std.heap.smp_allocator, value);
+    // The bridge is loaded into an existing interpreter as a shared object.
+    // `smp_allocator` stores per-thread state in the library's ELF TLS and
+    // faults when that DSO is loaded by musl. The page allocator is
+    // thread-safe and has no DSO-local TLS; the conversion arenas above it
+    // amortize page mappings while preserving independent result ownership.
+    return result_mod.convert(std.heap.page_allocator, value);
 }
 
 export fn zenfmt_py_result_status(result: ?*const Result) u32 {
