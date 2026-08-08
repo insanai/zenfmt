@@ -17,6 +17,14 @@ pub const status_success: u32 = 0;
 pub const status_failed: u32 = 1;
 pub const status_invalid_request: u32 = 2;
 
+// Python does not promise a native stack size for threads created by
+// `threading` (musl commonly gives them a much smaller stack than the process
+// main thread). The engine's bounded, fixed-capacity validation frames need a
+// normal Zig-sized stack even for shallow documents. Run the whole native
+// conversion on a bridge-owned thread so behavior never depends on the
+// embedding thread's platform-specific stack policy.
+const conversion_stack_size = std.Thread.SpawnConfig.default_stack_size;
+
 pub const Result = struct {
     gpa: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -48,6 +56,43 @@ pub fn convert(
     gpa: std.mem.Allocator,
     request: *const abi.Request,
 ) ?*Result {
+    const result = create(gpa) orelse return null;
+    fill(result, request) catch {
+        result.destroy();
+        return null;
+    };
+    return result;
+}
+
+/// The exported bridge entry point. Unlike direct Zig tests, an embedding
+/// caller may invoke us from a thread with a small native stack.
+pub fn convertThreaded(
+    gpa: std.mem.Allocator,
+    request: *const abi.Request,
+) ?*Result {
+    const result = create(gpa) orelse return null;
+
+    var task: ConversionTask = .{
+        .result = result,
+        .request = request,
+    };
+    const thread = std.Thread.spawn(
+        .{ .stack_size = conversion_stack_size },
+        ConversionTask.run,
+        .{&task},
+    ) catch {
+        result.destroy();
+        return null;
+    };
+    thread.join();
+    if (task.failed) {
+        result.destroy();
+        return null;
+    }
+    return result;
+}
+
+fn create(gpa: std.mem.Allocator) ?*Result {
     const result = gpa.create(Result) catch return null;
     result.* = .{
         .gpa = gpa,
@@ -57,12 +102,20 @@ pub fn convert(
         .exit_class = @intFromEnum(core.report.ExitClass.usage),
         .reports_json = "[]",
     };
-    fill(result, request) catch {
-        result.destroy();
-        return null;
-    };
     return result;
 }
+
+const ConversionTask = struct {
+    result: *Result,
+    request: *const abi.Request,
+    failed: bool = false,
+
+    fn run(task: *ConversionTask) void {
+        fill(task.result, task.request) catch {
+            task.failed = true;
+        };
+    }
+};
 
 fn fill(result: *Result, request: *const abi.Request) error{OutOfMemory}!void {
     const arena = result.arena.allocator();
@@ -79,12 +132,9 @@ fn fill(result: *Result, request: *const abi.Request) error{OutOfMemory}!void {
         },
     };
 
-    // The embedding caller owns concurrency. `ctypes` releases the GIL for
-    // the conversion call, so separate Python threads already execute
-    // independent conversions concurrently. Running async I/O immediately
-    // on that calling thread avoids a redundant worker pool per conversion
-    // and its large native stacks (which overflowed in musl's loader/runtime
-    // combination for the complete default format bundle).
+    // The bridge-owned conversion thread provides concurrency between
+    // independent Python calls. Async I/O runs immediately on that same
+    // thread, avoiding a redundant worker pool per conversion.
     var threaded = std.Io.Threaded.init(result.gpa, .{
         .async_limit = .nothing,
     });
@@ -168,3 +218,36 @@ test "reports serialize with exit_class included" {
     defer parsed.deinit();
     try std.testing.expectEqual(@as(usize, 1), parsed.value.array.items.len);
 }
+
+test "exported conversion is safe from a small embedding stack" {
+    const options_json =
+        \\{"schema":1,"input":{"kind":"bytes","name":"note.md"},
+        \\"output":{"kind":"memory","artifact_name":"note.md"}}
+    ;
+    const request: abi.Request = .{
+        .options_json = .{ .ptr = options_json.ptr, .len = options_json.len },
+        .input_bytes = .{ .ptr = "# T\n".ptr, .len = 4 },
+        .input_path = .{ .ptr = null, .len = 0 },
+        .output_path = .{ .ptr = null, .len = 0 },
+    };
+    var task: SmallStackTest = .{ .request = &request };
+    const thread = try std.Thread.spawn(
+        .{ .stack_size = 128 * 1024 },
+        SmallStackTest.run,
+        .{&task},
+    );
+    thread.join();
+    try std.testing.expect(task.success);
+}
+
+const SmallStackTest = struct {
+    request: *const abi.Request,
+    success: bool = false,
+
+    fn run(task: *SmallStackTest) void {
+        const result = convertThreaded(std.heap.smp_allocator, task.request) orelse
+            return;
+        defer result.destroy();
+        task.success = result.status == status_success;
+    }
+};

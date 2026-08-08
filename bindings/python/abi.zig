@@ -90,7 +90,7 @@ export fn zenfmt_py_capabilities(out_len: ?*u64) ?[*]const u8 {
 
 export fn zenfmt_py_convert(request: ?*const Request) ?*Result {
     const value = request orelse return null;
-    return result_mod.convert(std.heap.smp_allocator, value);
+    return result_mod.convertThreaded(std.heap.smp_allocator, value);
 }
 
 export fn zenfmt_py_result_status(result: ?*const Result) u32 {
