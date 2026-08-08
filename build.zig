@@ -19,6 +19,7 @@ const python = @import("build/python.zig");
 const benchmark = @import("build/benchmark.zig");
 const docs = @import("build/docs.zig");
 const wasm = @import("build/wasm.zig");
+const site = @import("build/site.zig");
 
 /// The canonical monorepo version (ZDS 0014): one `build.zig.zon` value
 /// embedded in the CLI, the Python bridge, the browser module, and the
@@ -86,8 +87,17 @@ pub fn build(b: *std.Build) void {
         python_steps.benchmark_python,
     );
 
-    _ = wasm.add(b, optimize, build_info_module, test_step);
-    docs.add(b, target, optimize, test_step, docs.options(b));
+    const wasm_steps = wasm.add(b, optimize, build_info_module, test_step);
+    const docs_step = docs.add(b, target, optimize, test_step, docs.options(b));
+    site.add(
+        b,
+        test_step,
+        python_steps.uv,
+        version,
+        wasm_steps.build,
+        wasm_steps.capabilities,
+        docs_step,
+    );
     addExamples(b, test_step);
     addFormatting(b, python_steps);
 }
@@ -172,6 +182,7 @@ fn addTests(
         "tests/lowering.zig",
         "tests/oom.zig",
         "tests/docs_sync.zig",
+        "tests/reports.zig",
         // The browser bundle is a host variant, not a target: its parity and
         // reachability run natively and cheaply, so `zig build test` covers
         // them without any WebAssembly compilation.
@@ -220,4 +231,9 @@ fn addFormatting(b: *std.Build, steps: python.Steps) void {
     const apply = b.addFmt(.{ .paths = &fmt_paths });
     const apply_step = b.step("fmt", "Format the Zig sources in place");
     apply_step.dependOn(&apply.step);
+
+    // The site tooling is a separate uv project with its own Ruff settings,
+    // so it gets its own invocation rather than being swept into the
+    // library's.
+    site.addFormatting(b, steps.uv, check_step, apply_step);
 }

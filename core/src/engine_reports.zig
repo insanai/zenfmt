@@ -684,6 +684,14 @@ pub fn pathFailure(
     path: []const u8,
     err: anyerror,
 ) error{OutOfMemory}!Report {
+    // The direction is chosen from the error at run time, so it cannot live
+    // in an anonymous array literal: `&.{pathDirection(err)}` would point at
+    // stack memory that dies with this function, and the renderer reads it
+    // long afterwards. Every other report in this file gets away with that
+    // form only because its directions are compile-time constants, which Zig
+    // promotes to static data.
+    const directions = try arena.alloc(report.Direction, 1);
+    directions[0] = pathDirection(err);
     return .{
         .severity = .err,
         .code = "core.file-operation-failed",
@@ -698,7 +706,7 @@ pub fn pathFailure(
             "started, no manifest was left claiming that the incomplete " ++
             "output ensemble was complete.",
         .context = .{ .path = .{ .path = path, .operation = operation } },
-        .directions = &.{pathDirection(err)},
+        .directions = directions,
     };
 }
 
