@@ -232,7 +232,9 @@ test "exported conversion is safe from a small embedding stack" {
     };
     var task: SmallStackTest = .{ .request = &request };
     const thread = try std.Thread.spawn(
-        .{ .stack_size = 128 * 1024 },
+        // Small enough to exercise the boundary while leaving room for the
+        // statically linked test executable's TLS on glibc runners.
+        .{ .stack_size = 512 * 1024 },
         SmallStackTest.run,
         .{&task},
     );
