@@ -10,7 +10,8 @@ const reader_mod = @import("reader.zig");
 const container_xml =
     \\<?xml version="1.0"?>
     \\<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-    \\<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+    \\<rootfiles><rootfile full-path="OEBPS/content.opf"
+    \\ media-type="application/oebps-package+xml"/></rootfiles>
     \\</container>
 ;
 
@@ -72,7 +73,6 @@ fn convertEpub(arena: std.mem.Allocator, bytes: []const u8) !Converted {
         .input = .{ .bytes = bytes },
         .input_name = "book.epub",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try reader_mod.read(&ctx);
@@ -93,7 +93,6 @@ fn failingConvert(arena: std.mem.Allocator, bytes: []const u8) ![]const core.Rep
         .input = .{ .bytes = bytes },
         .input_name = "book.epub",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try testing.expectError(error.Malformed, reader_mod.read(&ctx));

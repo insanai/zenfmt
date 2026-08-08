@@ -71,7 +71,6 @@ fn convertPptx(
         .input = .{ .bytes = archive_bytes },
         .input_name = "test.pptx",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -290,7 +289,6 @@ test "embedded picture bytes register in the resource store" {
         .input = .{ .bytes = archive_bytes },
         .input_name = "test.pptx",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

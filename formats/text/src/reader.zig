@@ -82,7 +82,6 @@ test "paragraphs split on blank lines and lines soft-break" {
         .input = .{ .bytes = "one line\ntwo line\r\n\n\t \nsecond para\n" },
         .input_name = "test.txt",
         .reports = &reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -113,7 +112,6 @@ test "invalid utf-8 is refused with a report" {
         .input = .{ .bytes = "ok\n\xff\xfe bad" },
         .input_name = "bad.txt",
         .reports = &reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try testing.expectError(error.Malformed, read(&ctx));

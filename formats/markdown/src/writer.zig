@@ -16,7 +16,26 @@ const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("zenfmt_core");
 const ast = core.ast;
+const support = @import("writer_support.zig");
+const inline_output = @import("writer_inline.zig");
+const InlineMode = support.InlineMode;
+const FrameKind = support.FrameKind;
+const Frame = support.Frame;
+const TableBuffer = support.TableBuffer;
+const longestRun = support.longestRun;
 
+const InlineDelimiters = struct {
+    open: []const u8 = "",
+    close: []const u8 = "",
+    styled: bool = false,
+};
+
+const InlineClose = struct {
+    end: u32,
+    text: []const u8,
+    open_start: u32,
+    styled: bool,
+};
 pub const writer = core.Writer(.{
     .id = "ai.insan.zenfmt.markdown",
     .format = "markdown",
@@ -26,47 +45,14 @@ pub const writer = core.Writer(.{
 });
 
 pub fn write(ctx: *core.WriteContext) core.WriteError!void {
-    var renderer: Renderer = .{
-        .gpa = ctx.gpa,
-        .doc = ctx.doc,
-        .out = ctx.out,
-        .reports = ctx.reports,
-        .limits = ctx.limits,
-        .plan = ctx.plan,
-    };
+    var renderer = try Renderer.init(ctx);
     defer renderer.deinit();
     try renderer.renderForest(ctx.doc.body, null);
     try renderer.renderNotes();
 }
-
-const InlineMode = enum { multiline, single_line, table_cell };
-
-const FrameKind = enum {
-    quote,
-    container,
-    extension,
-    figure,
-    caption,
-    list,
-    list_item,
-    definition_list,
-    definition_entry,
-    definition_body,
-};
-
-const Frame = struct {
-    kind: FrameKind,
-    end: u32,
-    prefix_restore: u32,
-    emitted_child: bool = false,
-    /// List bookkeeping; meaningful only for `.list`.
-    tight: bool = false,
-    ordered: bool = false,
-    next_number: i64 = 1,
-    delimiter: core.payload.NumberDelimiter = .period,
-};
-
 const Renderer = struct {
+    const no_note = std.math.maxInt(u32);
+
     gpa: std.mem.Allocator,
     doc: *const ast.Document,
     out: *std.Io.Writer,
@@ -83,17 +69,48 @@ const Renderer = struct {
     pending_marker: ?[]const u8 = null,
     inline_buffer: std.ArrayList(u8) = .empty,
     cell_buffer: std.ArrayList(u8) = .empty,
-    /// Note payload rows in order of first reference; index+1 is the label.
-    notes: std.ArrayList(ast.BlockRange) = .empty,
-    frames: [core.limits.max_depth_hard_cap]Frame = undefined,
+    /// Note payload indices in order of first reference; index+1 is the label.
+    notes: std.ArrayList(u32) = .empty,
+    /// Payload index to label, so repeated and cyclic references cannot grow
+    /// the note work list. Empty for documents without note payloads.
+    note_labels: []u32,
+    frames: []Frame,
+    inline_closes: []InlineClose,
     depth: u32 = 0,
     emitted_root: bool = false,
+    fn init(ctx: *core.WriteContext) core.WriteError!Renderer {
+        const count = ctx.doc.store.block_ranges.items.len;
+        const labels: []u32 = if (count == 0)
+            &.{}
+        else
+            try ctx.gpa.alloc(u32, count);
+        errdefer if (labels.len > 0) ctx.gpa.free(labels);
+        const frames = try ctx.gpa.alloc(Frame, ctx.limits.max_depth);
+        errdefer ctx.gpa.free(frames);
+        const inline_closes = try ctx.gpa.alloc(InlineClose, ctx.limits.max_depth);
+        errdefer ctx.gpa.free(inline_closes);
+        @memset(labels, no_note);
+        return .{
+            .gpa = ctx.gpa,
+            .doc = ctx.doc,
+            .out = ctx.out,
+            .reports = ctx.reports,
+            .limits = ctx.limits,
+            .plan = ctx.plan,
+            .note_labels = labels,
+            .frames = frames,
+            .inline_closes = inline_closes,
+        };
+    }
 
     fn deinit(r: *Renderer) void {
         r.prefix.deinit(r.gpa);
         r.inline_buffer.deinit(r.gpa);
         r.cell_buffer.deinit(r.gpa);
         r.notes.deinit(r.gpa);
+        if (r.note_labels.len > 0) r.gpa.free(r.note_labels);
+        r.gpa.free(r.frames);
+        r.gpa.free(r.inline_closes);
     }
 
     /// Records one degradation at an emission site. Under the engine the
@@ -106,7 +123,6 @@ const Renderer = struct {
             try r.reports.add(capabilities_mod.rules[@intFromEnum(id)].note());
         }
     }
-
     // -------------------------------------------------------- line output
 
     fn writeLine(r: *Renderer, line: []const u8) core.WriteError!void {
@@ -158,123 +174,160 @@ const Renderer = struct {
 
     /// Renders one block forest. `initial_marker` labels the first line —
     /// a footnote definition marker; block prefixes come from frames.
-    fn renderForest(r: *Renderer, range: ast.BlockRange, initial_marker: ?[]const u8) core.WriteError!void {
+    fn renderForest(
+        r: *Renderer,
+        range: ast.BlockRange,
+        initial_marker: ?[]const u8,
+    ) core.WriteError!void {
         assert(r.depth == 0);
-        if (initial_marker) |marker| {
-            try r.prefix.appendNTimes(r.gpa, ' ', marker.len);
-            try r.setPendingMarker(marker);
-        }
-        const prefix_base = if (initial_marker) |m| r.prefix.items.len - m.len else r.prefix.items.len;
-
-        const slice = r.doc.store.blocks.slice();
-        const tags = slice.items(.tag);
-        const lengths = slice.items(.subtree_len);
-
+        if (initial_marker) |marker| try r.beginMarkedForest(marker);
+        const prefix_base = if (initial_marker) |marker|
+            r.prefix.items.len - marker.len
+        else
+            r.prefix.items.len;
         var cursor = range.startRaw();
-        const end = range.endRaw();
-        while (cursor < end) {
-            while (r.depth > 0 and r.frames[r.depth - 1].end == cursor) {
-                r.prefix.shrinkRetainingCapacity(r.frames[r.depth - 1].prefix_restore);
-                r.depth -= 1;
-            }
+        while (cursor < range.endRaw()) {
+            r.closeBlockFrames(cursor);
             try r.separate();
-
-            const tag = tags[cursor];
-            const subtree_len = lengths[cursor];
-            switch (tag) {
-                .paragraph, .plain => {
-                    const view = r.doc.block(@enumFromInt(cursor));
-                    const inlines = switch (view.content) {
-                        .paragraph, .plain => |value| value,
-                        else => unreachable,
-                    };
-                    const buffer = try r.renderInlines(inlines, .multiline);
-                    try r.writeBufferLines(buffer);
-                    cursor += 1;
-                },
-                .heading => try r.renderHeading(cursor, &cursor),
-                .code_block => try r.renderCodeBlock(cursor, &cursor),
-                .raw_block => try r.renderRawBlock(cursor, &cursor),
-                .thematic_break => {
-                    try r.writeLine("---");
-                    cursor += 1;
-                },
-                .line_block => {
-                    try r.renderLineBlock(cursor);
-                    cursor += subtree_len;
-                },
-                .table => {
-                    try r.renderTable(cursor);
-                    cursor += subtree_len;
-                },
-                .definition_term => {
-                    const term = r.doc.blockAs(@enumFromInt(cursor), .definition_term).?;
-                    const buffer = try r.renderInlines(term, .single_line);
-                    const bold = try std.fmt.allocPrint(r.gpa, "**{s}**", .{buffer});
-                    defer r.gpa.free(bold);
-                    try r.writeLine(bold);
-                    cursor += 1;
-                },
-                .quote => {
-                    try r.push(.quote, cursor + subtree_len);
-                    try r.prefix.appendSlice(r.gpa, "> ");
-                    cursor += 1;
-                },
-                .container => {
-                    try r.reportContainerAttrs(cursor);
-                    try r.push(.container, cursor + subtree_len);
-                    cursor += 1;
-                },
-                .extension => {
-                    // Markdown declares no extension namespaces: the
-                    // source-neutral fallback subtree renders and the
-                    // extension identity is reported as a loss.
-                    try r.hit(.extension_fallback);
-                    try r.push(.extension, cursor + subtree_len);
-                    cursor += 1;
-                },
-                .figure => {
-                    try r.push(.figure, cursor + subtree_len);
-                    cursor += 1;
-                },
-                .caption => {
-                    try r.push(.caption, cursor + subtree_len);
-                    cursor += 1;
-                },
-                .definition_list => {
-                    try r.reportDefinitionList();
-                    try r.push(.definition_list, cursor + subtree_len);
-                    cursor += 1;
-                },
-                .definition_entry => {
-                    try r.push(.definition_entry, cursor + subtree_len);
-                    cursor += 1;
-                },
-                .definition_body => {
-                    try r.push(.definition_body, cursor + subtree_len);
-                    cursor += 1;
-                },
-                .list => {
-                    try r.pushList(cursor);
-                    cursor += 1;
-                },
-                .list_item => {
-                    try r.pushListItem(cursor);
-                    cursor += 1;
-                },
-                // Table structure is consumed by `renderTable`; the walker
-                // skips the whole subtree, so these never surface here, and
-                // the validator guarantees their placement.
-                .line, .table_head, .table_body, .table_foot, .table_row, .table_cell => unreachable,
-            }
+            try r.renderBlock(&cursor);
         }
+        r.closeAllBlockFrames();
+        assert(r.pending_marker == null or range.len == 0);
+        r.pending_marker = null;
+        r.prefix.shrinkRetainingCapacity(prefix_base);
+    }
+
+    fn beginMarkedForest(r: *Renderer, marker: []const u8) core.WriteError!void {
+        assert(marker.len > 0);
+        try r.prefix.appendNTimes(r.gpa, ' ', marker.len);
+        try r.setPendingMarker(marker);
+    }
+
+    fn closeBlockFrames(r: *Renderer, cursor: u32) void {
+        while (r.depth > 0 and r.frames[r.depth - 1].end == cursor) {
+            r.prefix.shrinkRetainingCapacity(r.frames[r.depth - 1].prefix_restore);
+            r.depth -= 1;
+        }
+    }
+
+    fn closeAllBlockFrames(r: *Renderer) void {
         while (r.depth > 0) {
             r.prefix.shrinkRetainingCapacity(r.frames[r.depth - 1].prefix_restore);
             r.depth -= 1;
         }
-        assert(r.pending_marker == null or range.len == 0);
-        r.pending_marker = null;
-        r.prefix.shrinkRetainingCapacity(prefix_base);
+    }
+
+    fn renderBlock(r: *Renderer, cursor: *u32) core.WriteError!void {
+        const tag = r.doc.store.blocks.items(.tag)[cursor.*];
+        switch (tag) {
+            .paragraph,
+            .plain,
+            .heading,
+            .code_block,
+            .raw_block,
+            .thematic_break,
+            .line_block,
+            .table,
+            .definition_term,
+            => try r.renderLeafBlock(tag, cursor),
+            .quote,
+            .container,
+            .extension,
+            .figure,
+            .caption,
+            .definition_list,
+            .definition_entry,
+            .definition_body,
+            .list,
+            .list_item,
+            => try r.renderContainerBlock(tag, cursor),
+            .line,
+            .table_head,
+            .table_body,
+            .table_foot,
+            .table_row,
+            .table_cell,
+            => unreachable,
+        }
+    }
+
+    fn renderLeafBlock(
+        r: *Renderer,
+        tag: ast.BlockTag,
+        cursor: *u32,
+    ) core.WriteError!void {
+        const subtree_len = r.doc.store.blocks.items(.subtree_len)[cursor.*];
+        switch (tag) {
+            .paragraph, .plain => {
+                const view = r.doc.block(@enumFromInt(cursor.*));
+                const inlines = switch (view.content) {
+                    .paragraph, .plain => |value| value,
+                    else => unreachable,
+                };
+                try r.writeBufferLines(try r.renderInlines(inlines, .multiline));
+                cursor.* += 1;
+            },
+            .heading => try r.renderHeading(cursor.*, cursor),
+            .code_block => try r.renderCodeBlock(cursor.*, cursor),
+            .raw_block => try r.renderRawBlock(cursor.*, cursor),
+            .thematic_break => {
+                try r.writeLine("---");
+                cursor.* += 1;
+            },
+            .line_block => {
+                try r.renderLineBlock(cursor.*);
+                cursor.* += subtree_len;
+            },
+            .table => {
+                try r.renderTable(cursor.*);
+                cursor.* += subtree_len;
+            },
+            .definition_term => try r.renderDefinitionTerm(cursor),
+            else => unreachable,
+        }
+    }
+
+    fn renderDefinitionTerm(r: *Renderer, cursor: *u32) core.WriteError!void {
+        const term = r.doc.blockAs(@enumFromInt(cursor.*), .definition_term).?;
+        const buffer = try r.renderInlines(term, .single_line);
+        const bold = try std.fmt.allocPrint(r.gpa, "**{s}**", .{buffer});
+        defer r.gpa.free(bold);
+        try r.writeLine(bold);
+        cursor.* += 1;
+    }
+
+    fn renderContainerBlock(
+        r: *Renderer,
+        tag: ast.BlockTag,
+        cursor: *u32,
+    ) core.WriteError!void {
+        const end = cursor.* + r.doc.store.blocks.items(.subtree_len)[cursor.*];
+        switch (tag) {
+            .quote => {
+                try r.push(.quote, end);
+                try r.prefix.appendSlice(r.gpa, "> ");
+            },
+            .container => {
+                try r.reportContainerAttrs(cursor.*);
+                try r.push(.container, end);
+            },
+            .extension => {
+                try r.hit(.extension_fallback);
+                try r.push(.extension, end);
+            },
+            .figure => try r.push(.figure, end),
+            .caption => try r.push(.caption, end),
+            .definition_list => {
+                try r.reportDefinitionList();
+                try r.push(.definition_list, end);
+            },
+            .definition_entry => try r.push(.definition_entry, end),
+            .definition_body => try r.push(.definition_body, end),
+            .list => try r.pushList(cursor.*),
+            .list_item => try r.pushListItem(cursor.*),
+            else => unreachable,
+        }
+        cursor.* += 1;
     }
 
     /// A blank line between siblings, except within a tight list — between
@@ -399,7 +452,8 @@ const Renderer = struct {
         const raw = r.doc.blockAs(@enumFromInt(index), .raw_block).?;
         const format = r.doc.text(raw.format);
         if (std.mem.eql(u8, format, "markdown") or std.mem.eql(u8, format, "html")) {
-            var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, r.doc.text(raw.text), "\n"), '\n');
+            const text = std.mem.trimEnd(u8, r.doc.text(raw.text), "\n");
+            var lines = std.mem.splitScalar(u8, text, '\n');
             while (lines.next()) |line| try r.writeLine(line);
         } else {
             try r.hit(.raw_dropped);
@@ -428,20 +482,13 @@ const Renderer = struct {
 
     fn renderTable(r: *Renderer, index: u32) core.WriteError!void {
         const table = r.doc.blockAs(@enumFromInt(index), .table).?;
-        const alignments = r.doc.store.columns.items[table.columns.start .. table.columns.start + table.columns.len];
+        const column_end = table.columns.start + table.columns.len;
+        const alignments = r.doc.store.columns.items[table.columns.start..column_end];
 
-        // Collect the rendered text of every cell, rows in order.
-        var rows: std.ArrayList([]const []const u8) = .empty;
-        defer {
-            for (rows.items) |row| {
-                for (row) |cell| r.gpa.free(cell);
-                r.gpa.free(row);
-            }
-            rows.deinit(r.gpa);
-        }
+        // One contiguous byte buffer avoids an arena allocation per cell.
+        var rendered: TableBuffer = .{};
+        defer rendered.deinit(r.gpa);
         var caption: ?ast.BlockRange = null;
-        var spans_noted = false;
-
         var sections = r.doc.blockChildren(@enumFromInt(index));
         while (sections.next()) |section| {
             switch (r.doc.blockTag(section)) {
@@ -452,16 +499,19 @@ const Renderer = struct {
                 .table_head, .table_body, .table_foot => {
                     var section_rows = r.doc.blockChildren(section);
                     while (section_rows.next()) |row| {
-                        try rows.append(r.gpa, try r.renderRow(row, &spans_noted));
+                        try r.renderRow(row, &rendered);
                     }
                 },
                 else => unreachable,
             }
         }
-        if (rows.items.len == 0) return;
+        if (rendered.rows.items.len == 0) {
+            if (caption) |blocks| try r.writeCaption(blocks, false);
+            return;
+        }
 
         var column_count: usize = alignments.len;
-        for (rows.items) |row| column_count = @max(column_count, row.len);
+        for (rendered.rows.items) |row| column_count = @max(column_count, row.len);
         assert(column_count > 0);
 
         // Common column widths, capped so one long cell does not pad the
@@ -470,50 +520,43 @@ const Renderer = struct {
         defer r.gpa.free(widths);
         for (widths, 0..) |*width, column| {
             width.* = 3;
-            for (rows.items) |row| {
-                if (column < row.len) width.* = @max(width.*, row[column].len);
+            for (rendered.rows.items) |row_range| {
+                const row = rendered.row(row_range);
+                if (column < row.len) {
+                    width.* = @max(width.*, row[column].len);
+                }
             }
             width.* = @min(width.*, max_column_pad);
         }
 
-        try r.writeTableRow(rows.items[0], widths);
+        try r.writeTableRow(&rendered, rendered.rows.items[0], widths);
         try r.writeSeparatorRow(alignments, widths);
-        for (rows.items[1..]) |row| try r.writeTableRow(row, widths);
-
-        if (caption) |blocks| {
-            try r.writeBlank();
-            var walked: u32 = blocks.startRaw();
-            const lengths = r.doc.store.blocks.items(.subtree_len);
-            var first = true;
-            while (walked < blocks.endRaw()) {
-                if (!first) try r.writeBlank();
-                first = false;
-                try r.renderFlattenedBlock(walked, &spans_noted);
-                walked += lengths[walked];
-            }
+        for (rendered.rows.items[1..]) |row| {
+            try r.writeTableRow(&rendered, row, widths);
         }
+
+        if (caption) |blocks| try r.writeCaption(blocks, true);
     }
 
-    fn renderRow(r: *Renderer, row: ast.BlockIndex, spans_noted: *bool) core.WriteError![]const []const u8 {
-        var cells: std.ArrayList([]const u8) = .empty;
-        errdefer {
-            for (cells.items) |cell| r.gpa.free(cell);
-            cells.deinit(r.gpa);
-        }
+    fn renderRow(
+        r: *Renderer,
+        row: ast.BlockIndex,
+        rendered: *TableBuffer,
+    ) core.WriteError!void {
+        const start = rendered.beginRow();
         var children = r.doc.blockChildren(row);
         while (children.next()) |cell_index| {
             const cell = r.doc.blockAs(cell_index, .table_cell).?;
-            if ((cell.col_span > 1 or cell.row_span > 1) and !spans_noted.*) {
-                spans_noted.* = true;
+            if (cell.col_span > 1 or cell.row_span > 1) {
                 try r.hit(.cell_span);
             }
-            try cells.append(r.gpa, try r.renderCellText(cell.blocks));
+            try rendered.appendCell(r.gpa, try r.renderCellText(cell.blocks));
             var extra: u32 = 1;
             while (extra < cell.col_span) : (extra += 1) {
-                try cells.append(r.gpa, try r.gpa.dupe(u8, ""));
+                try rendered.appendCell(r.gpa, "");
             }
         }
-        return cells.toOwnedSlice(r.gpa);
+        try rendered.finishRow(r.gpa, start);
     }
 
     /// A GFM cell is one line of inline text. Multiple blocks, or any block
@@ -522,79 +565,174 @@ const Renderer = struct {
     fn renderCellText(r: *Renderer, blocks: ast.BlockRange) core.WriteError![]const u8 {
         r.cell_buffer.clearRetainingCapacity();
         const lengths = r.doc.store.blocks.items(.subtree_len);
-        const tags = r.doc.store.blocks.items(.tag);
-
-        var flattened = false;
-        var block_count: u32 = 0;
         var cursor = blocks.startRaw();
         while (cursor < blocks.endRaw()) {
-            const tag = tags[cursor];
-            block_count += 1;
-            if (block_count > 1) try r.cell_buffer.appendSlice(r.gpa, " ");
-            switch (tag) {
-                .paragraph, .plain => {
-                    const view = r.doc.block(@enumFromInt(cursor));
-                    const inlines = switch (view.content) {
-                        .paragraph, .plain => |value| value,
-                        else => unreachable,
-                    };
-                    const rendered = try r.renderInlines(inlines, .table_cell);
-                    try r.cell_buffer.appendSlice(r.gpa, rendered);
-                    if (tag == .paragraph and block_count > 1) flattened = true;
-                },
-                .table => {
-                    try r.cell_buffer.appendSlice(r.gpa, "(nested table)");
-                    try r.hit(.nested_table);
-                    flattened = true;
-                },
-                else => {
-                    // Non-paragraph structure: keep its inline text only.
-                    const view = r.doc.block(@enumFromInt(cursor));
-                    switch (view.content) {
-                        .code_block => |text_range| {
-                            try r.cell_buffer.append(r.gpa, '`');
-                            try r.cell_buffer.appendSlice(r.gpa, r.doc.text(text_range));
-                            try r.cell_buffer.append(r.gpa, '`');
-                        },
-                        .heading => |heading| {
-                            const rendered = try r.renderInlines(heading.inlines, .table_cell);
-                            try r.cell_buffer.appendSlice(r.gpa, rendered);
-                        },
-                        else => {},
-                    }
-                    flattened = true;
-                },
+            if (r.doc.blockTag(@enumFromInt(cursor)) == .table) {
+                try r.appendCellPiece("(nested table)", false);
+                try r.hit(.nested_table);
+                cursor += lengths[cursor];
+            } else {
+                try r.appendCellBlock(cursor);
+                cursor += 1;
             }
-            cursor += lengths[cursor];
         }
-        if (block_count > 1 or flattened) {
+        if (capabilities_mod.cellNeedsFlattening(r.doc, blocks)) {
             try r.hit(.cell_flattened);
         }
-        // A cell is one line: any soft break became a space in table_cell
-        // mode already.
+        assert(cursor == blocks.endRaw());
         assert(std.mem.indexOfScalar(u8, r.cell_buffer.items, '\n') == null);
-        return r.gpa.dupe(u8, r.cell_buffer.items);
+        return r.cell_buffer.items;
     }
 
-    fn renderFlattenedBlock(r: *Renderer, index: u32, spans_noted: *bool) core.WriteError!void {
-        _ = spans_noted;
-        const view = r.doc.block(@enumFromInt(index));
+    fn appendCellBlock(r: *Renderer, index: u32) core.WriteError!void {
+        const block_index: ast.BlockIndex = @enumFromInt(index);
+        const view = r.doc.block(block_index);
+        if (cellInlineContent(view)) |inlines| {
+            const rendered = try r.renderInlines(inlines, .table_cell);
+            try r.appendCellPiece(rendered, false);
+            return;
+        }
         switch (view.content) {
-            .paragraph, .plain => |inlines| {
-                const buffer = try r.renderInlines(inlines, .multiline);
-                try r.writeBufferLines(buffer);
+            .code_block => |text| try r.appendCellLiteral(r.doc.text(text), true),
+            .raw_block => |raw| try r.appendCellRaw(raw),
+            .container => try r.reportContainerAttrs(index),
+            .extension => try r.hit(.extension_fallback),
+            .definition_list => try r.reportDefinitionList(),
+            .list => |list| {
+                if (list.kind == .ordered and list.style != .decimal) {
+                    try r.hit(.number_style);
+                }
             },
             else => {},
         }
     }
 
-    fn writeTableRow(r: *Renderer, row: []const []const u8, widths: []const usize) core.WriteError!void {
+    fn appendCellRaw(r: *Renderer, raw: core.payload.Raw) core.WriteError!void {
+        const format = r.doc.text(raw.format);
+        if (std.mem.eql(u8, format, "markdown") or
+            std.mem.eql(u8, format, "html"))
+        {
+            try r.appendCellLiteral(r.doc.text(raw.text), false);
+        } else {
+            try r.hit(.raw_dropped);
+        }
+    }
+
+    fn appendCellLiteral(
+        r: *Renderer,
+        text: []const u8,
+        code: bool,
+    ) core.WriteError!void {
+        if (!code) return r.appendCellPiece(text, true);
+        try r.beginCellPiece();
+        try r.cell_buffer.append(r.gpa, '`');
+        try r.appendCellBytes(text, true);
+        try r.cell_buffer.append(r.gpa, '`');
+    }
+
+    fn appendCellPiece(
+        r: *Renderer,
+        text: []const u8,
+        escape_pipe: bool,
+    ) core.WriteError!void {
+        if (text.len == 0) return;
+        try r.beginCellPiece();
+        try r.appendCellBytes(text, escape_pipe);
+    }
+
+    fn beginCellPiece(r: *Renderer) core.WriteError!void {
+        if (r.cell_buffer.items.len > 0 and
+            r.cell_buffer.items[r.cell_buffer.items.len - 1] != ' ')
+        {
+            try r.cell_buffer.append(r.gpa, ' ');
+        }
+    }
+
+    fn appendCellBytes(
+        r: *Renderer,
+        text: []const u8,
+        escape_pipe: bool,
+    ) core.WriteError!void {
+        const special = if (escape_pipe) "\n\r\t|" else "\n\r\t";
+        if (std.mem.indexOfAny(u8, text, special) == null) {
+            try r.cell_buffer.appendSlice(r.gpa, text);
+            return;
+        }
+        var pending_space = false;
+        for (text) |byte| switch (byte) {
+            '\n', '\r', '\t' => pending_space = true,
+            '|' => {
+                if (pending_space) try r.appendCellSpace();
+                pending_space = false;
+                if (escape_pipe) try r.cell_buffer.append(r.gpa, '\\');
+                try r.cell_buffer.append(r.gpa, '|');
+            },
+            else => {
+                if (pending_space) try r.appendCellSpace();
+                pending_space = false;
+                try r.cell_buffer.append(r.gpa, byte);
+            },
+        };
+    }
+
+    fn appendCellSpace(r: *Renderer) core.WriteError!void {
+        if (r.cell_buffer.items.len == 0 or
+            r.cell_buffer.items[r.cell_buffer.items.len - 1] == ' ')
+        {
+            return;
+        }
+        try r.cell_buffer.append(r.gpa, ' ');
+    }
+
+    fn cellInlineContent(view: core.BlockView) ?ast.InlineRange {
+        return switch (view.content) {
+            .paragraph, .plain, .line, .definition_term => |inlines| inlines,
+            .heading => |heading| heading.inlines,
+            else => null,
+        };
+    }
+
+    fn renderCaption(r: *Renderer, blocks: ast.BlockRange) core.WriteError!void {
+        r.cell_buffer.clearRetainingCapacity();
+        const lengths = r.doc.store.blocks.items(.subtree_len);
+        var cursor = blocks.startRaw();
+        while (cursor < blocks.endRaw()) {
+            if (r.doc.blockTag(@enumFromInt(cursor)) == .table) {
+                try r.appendCellPiece("(nested table)", false);
+                try r.hit(.nested_table);
+                cursor += lengths[cursor];
+            } else {
+                try r.appendCellBlock(cursor);
+                cursor += 1;
+            }
+        }
+        assert(cursor == blocks.endRaw());
+        try r.writeLine(r.cell_buffer.items);
+    }
+
+    fn writeCaption(
+        r: *Renderer,
+        blocks: ast.BlockRange,
+        after_table: bool,
+    ) core.WriteError!void {
+        if (after_table) try r.writeBlank();
+        try r.hit(.table_caption);
+        try r.renderCaption(blocks);
+    }
+
+    fn writeTableRow(
+        r: *Renderer,
+        rendered: *const TableBuffer,
+        row_range: TableBuffer.Range,
+        widths: []const usize,
+    ) core.WriteError!void {
+        const row = rendered.row(row_range);
         var line: std.ArrayList(u8) = .empty;
         defer line.deinit(r.gpa);
         try line.append(r.gpa, '|');
         for (widths, 0..) |width, column| {
             try line.append(r.gpa, ' ');
-            const cell = if (column < row.len) row[column] else "";
+            const cell = if (column < row.len) rendered.text(row[column]) else "";
             try line.appendSlice(r.gpa, cell);
             if (cell.len < width) try line.appendNTimes(r.gpa, ' ', width - cell.len);
             try line.appendSlice(r.gpa, " |");
@@ -641,269 +779,199 @@ const Renderer = struct {
     // ------------------------------------------------------------- notes
 
     fn renderNotes(r: *Renderer) core.WriteError!void {
+        assert(r.notes.items.len <= r.note_labels.len);
         var i: usize = 0;
         while (i < r.notes.items.len) : (i += 1) {
-            const range = r.notes.items[i];
+            const range = r.doc.store.block_ranges.items[r.notes.items[i]];
             var marker_buffer: [24]u8 = undefined;
             const marker = std.fmt.bufPrint(&marker_buffer, "[^{d}]: ", .{i + 1}) catch unreachable;
             // The forest's own root separation emits the blank line before
             // the definition.
             try r.renderForest(range, marker);
         }
+        assert(i <= r.note_labels.len);
     }
 
     // ----------------------------------------------------------- inlines
 
     /// Renders an inline forest into the reused buffer and returns it. The
     /// result is valid until the next call.
-    fn renderInlines(r: *Renderer, range: ast.InlineRange, mode: InlineMode) core.WriteError![]const u8 {
+    fn renderInlines(
+        r: *Renderer,
+        range: ast.InlineRange,
+        mode: InlineMode,
+    ) core.WriteError![]const u8 {
         r.inline_buffer.clearRetainingCapacity();
-
         const slice = r.doc.store.inlines.slice();
         const tags = slice.items(.tag);
         const lengths = slice.items(.subtree_len);
-
-        const Close = struct {
-            end: u32,
-            text: []const u8,
-            /// For emphasis-like pairs: where the opening delimiter began,
-            /// so edge spaces can move outside it — `** not**` does not
-            /// parse as strong, `**not**` does.
-            open_start: u32 = 0,
-            styled: bool = false,
-        };
-        var closes: [core.limits.max_depth_hard_cap]Close = undefined;
+        const payloads = slice.items(.payload);
+        const closes = r.inline_closes;
         var close_depth: u32 = 0;
-
         var cursor = range.startRaw();
-        const end = range.endRaw();
-        while (cursor < end) {
+        while (cursor < range.endRaw()) {
             while (close_depth > 0 and closes[close_depth - 1].end == cursor) {
-                try r.appendClose(closes[close_depth - 1]);
+                try inline_output.appendClose(r, closes[close_depth - 1]);
                 close_depth -= 1;
             }
             const tag = tags[cursor];
             const subtree_len = lengths[cursor];
             const view = r.doc.inlineView(@enumFromInt(cursor));
-
-            var open_text: ?[]const u8 = null;
-            var close_text: ?[]const u8 = null;
-            switch (view.content) {
-                .text => |text_range| try r.escapeText(r.doc.text(text_range), mode),
-                .space => try r.inline_buffer.append(r.gpa, ' '),
-                .soft_break => switch (mode) {
-                    .multiline => try r.inline_buffer.append(r.gpa, '\n'),
-                    .single_line, .table_cell => try r.inline_buffer.append(r.gpa, ' '),
-                },
-                .hard_break => switch (mode) {
-                    .multiline => try r.inline_buffer.appendSlice(r.gpa, "\\\n"),
-                    .single_line, .table_cell => try r.inline_buffer.append(r.gpa, ' '),
-                },
-                .emphasis => {
-                    open_text = "_";
-                    close_text = "_";
-                },
-                .strong => {
-                    open_text = "**";
-                    close_text = "**";
-                },
-                .strikethrough => {
-                    open_text = "~~";
-                    close_text = "~~";
-                },
-                .superscript, .subscript, .underline, .small_caps => {
-                    try r.hit(.style_dropped);
-                },
-                .span => {},
-                .extension => try r.hit(.extension_fallback),
-                .quote => |quote| {
-                    const mark: []const u8 = switch (quote.kind) {
-                        .single => "'",
-                        .double => "\"",
-                    };
-                    open_text = mark;
-                    close_text = mark;
-                },
-                .code => |text_range| try r.renderCodeSpan(r.doc.text(text_range), mode),
-                .math => |math| {
-                    const mark: []const u8 = switch (math.kind) {
-                        .inline_math => "$",
-                        .display => "$$",
-                    };
-                    try r.inline_buffer.appendSlice(r.gpa, mark);
-                    try r.inline_buffer.appendSlice(r.gpa, r.doc.text(math.text));
-                    try r.inline_buffer.appendSlice(r.gpa, mark);
-                },
-                .raw => |raw| {
-                    const format = r.doc.text(raw.format);
-                    if (std.mem.eql(u8, format, "markdown") or std.mem.eql(u8, format, "html")) {
-                        try r.inline_buffer.appendSlice(r.gpa, r.doc.text(raw.text));
-                    } else {
-                        try r.hit(.raw_dropped);
-                    }
-                },
-                .link => |target| {
-                    open_text = "[";
-                    close_text = try r.linkSuffix(target.url, target.title);
-                },
-                .image => |target| {
-                    open_text = "![";
-                    close_text = try r.linkSuffix(target.url, target.title);
-                },
-                .note => |blocks| {
-                    try r.notes.append(r.gpa, blocks);
-                    var label: [24]u8 = undefined;
-                    const text = std.fmt.bufPrint(&label, "[^{d}]", .{r.notes.items.len}) catch unreachable;
-                    try r.inline_buffer.appendSlice(r.gpa, text);
-                },
-                .citation => |citation| {
-                    _ = citation;
-                    try r.hit(.citation_dropped);
-                },
-            }
-
             if (core.payload.inlineHasChildren(tag)) {
-                const open_start: u32 = @intCast(r.inline_buffer.items.len);
-                if (open_text) |text| try r.inline_buffer.appendSlice(r.gpa, text);
-                assert(close_depth < r.limits.max_depth);
-                const styled = switch (view.content) {
-                    .emphasis, .strong, .strikethrough => true,
-                    else => false,
-                };
-                closes[close_depth] = .{
-                    .end = cursor + subtree_len,
-                    .text = close_text orelse "",
-                    .open_start = open_start,
-                    .styled = styled,
-                };
-                close_depth += 1;
+                const delimiters = try r.renderInlineContainer(view);
+                try r.pushInlineClose(
+                    closes,
+                    &close_depth,
+                    cursor + subtree_len,
+                    delimiters,
+                );
                 cursor += 1;
             } else {
+                try r.renderInlineLeaf(view, payloads[cursor], mode);
                 cursor += subtree_len;
             }
         }
         while (close_depth > 0) {
-            try r.appendClose(closes[close_depth - 1]);
+            try inline_output.appendClose(r, closes[close_depth - 1]);
             close_depth -= 1;
         }
         return r.inline_buffer.items;
     }
 
-    /// Emits a closing delimiter. For emphasis-like pairs, edge spaces
-    /// move outside the delimiters — `**not **` does not parse as strong —
-    /// and a pair left empty disappears entirely.
-    fn appendClose(r: *Renderer, close: anytype) core.WriteError!void {
-        if (!close.styled) {
-            try r.inline_buffer.appendSlice(r.gpa, close.text);
-            return;
-        }
-        const buffer = &r.inline_buffer;
-        // Styled pairs use the same text on both sides: `_`, `**`, `~~`.
-        const delim_len = close.text.len;
-        assert(delim_len <= 2);
-        assert(close.open_start + delim_len <= buffer.items.len);
+    fn pushInlineClose(
+        r: *Renderer,
+        closes: []InlineClose,
+        depth: *u32,
+        end: u32,
+        delimiters: InlineDelimiters,
+    ) core.WriteError!void {
+        assert(depth.* < r.limits.max_depth);
+        const start: u32 = @intCast(r.inline_buffer.items.len);
+        try r.inline_buffer.appendSlice(r.gpa, delimiters.open);
+        closes[depth.*] = .{
+            .end = end,
+            .text = delimiters.close,
+            .open_start = start,
+            .styled = delimiters.styled,
+        };
+        depth.* += 1;
+    }
 
-        // Trailing spaces slide out past the closing delimiter.
-        var trailing: usize = 0;
-        while (buffer.items.len - trailing > close.open_start + delim_len and
-            buffer.items[buffer.items.len - trailing - 1] == ' ')
+    fn renderInlineLeaf(
+        r: *Renderer,
+        view: core.InlineView,
+        payload_index: u32,
+        mode: InlineMode,
+    ) core.WriteError!void {
+        switch (view.content) {
+            .text => |text| try inline_output.escapeText(
+                r,
+                r.doc.text(text),
+                mode == .table_cell,
+            ),
+            .space => try r.inline_buffer.append(r.gpa, ' '),
+            .soft_break => try r.renderBreak(mode, false),
+            .hard_break => try r.renderBreak(mode, true),
+            .code => |text| try inline_output.renderCodeSpan(
+                r,
+                r.doc.text(text),
+                mode == .table_cell,
+            ),
+            .math => |math| try r.renderMath(math),
+            .raw => |raw| try r.renderRawInline(raw),
+            .note => try r.renderNoteReference(payload_index),
+            else => unreachable,
+        }
+    }
+
+    fn renderBreak(r: *Renderer, mode: InlineMode, hard: bool) core.WriteError!void {
+        switch (mode) {
+            .multiline => if (hard)
+                try r.inline_buffer.appendSlice(r.gpa, "\\\n")
+            else
+                try r.inline_buffer.append(r.gpa, '\n'),
+            .single_line, .table_cell => try r.inline_buffer.append(r.gpa, ' '),
+        }
+    }
+
+    fn renderMath(r: *Renderer, math: core.payload.Math) core.WriteError!void {
+        const mark: []const u8 = switch (math.kind) {
+            .inline_math => "$",
+            .display => "$$",
+        };
+        try r.inline_buffer.appendSlice(r.gpa, mark);
+        try r.inline_buffer.appendSlice(r.gpa, r.doc.text(math.text));
+        try r.inline_buffer.appendSlice(r.gpa, mark);
+    }
+
+    fn renderRawInline(r: *Renderer, raw: core.payload.Raw) core.WriteError!void {
+        const format = r.doc.text(raw.format);
+        if (std.mem.eql(u8, format, "markdown") or
+            std.mem.eql(u8, format, "html"))
         {
-            trailing += 1;
-        }
-        buffer.items.len -= trailing;
-
-        // Leading spaces swap with the opening delimiter.
-        var leading: usize = 0;
-        while (close.open_start + delim_len + leading < buffer.items.len and
-            buffer.items[close.open_start + delim_len + leading] == ' ')
-        {
-            leading += 1;
-        }
-        if (leading > 0) {
-            var delimiter: [2]u8 = undefined;
-            @memcpy(delimiter[0..delim_len], buffer.items[close.open_start..][0..delim_len]);
-            @memset(buffer.items[close.open_start..][0..leading], ' ');
-            @memcpy(buffer.items[close.open_start + leading ..][0..delim_len], delimiter[0..delim_len]);
-        }
-
-        const content_start = close.open_start + leading + delim_len;
-        if (buffer.items.len == content_start) {
-            // Nothing left inside: the pair disappears, its spaces stay.
-            buffer.items.len = close.open_start + leading;
+            try r.inline_buffer.appendSlice(r.gpa, r.doc.text(raw.text));
         } else {
-            try buffer.appendSlice(r.gpa, close.text);
+            try r.hit(.raw_dropped);
         }
-        try buffer.appendNTimes(r.gpa, ' ', trailing);
     }
 
-    /// `](url "title")`, with the URL wrapped in angle brackets only when
-    /// it needs them.
-    fn linkSuffix(r: *Renderer, url_range: ast.ByteRange, title_range: ast.ByteRange) core.WriteError![]const u8 {
-        const url = r.doc.text(url_range);
-        const title = r.doc.text(title_range);
-        var suffix: std.ArrayList(u8) = .empty;
-        defer suffix.deinit(r.gpa);
-        try suffix.appendSlice(r.gpa, "](");
-        const needs_brackets = std.mem.indexOfAny(u8, url, " <>\n") != null;
-        if (needs_brackets) try suffix.append(r.gpa, '<');
-        for (url) |byte| {
-            if (!needs_brackets and (byte == '(' or byte == ')')) {
-                try suffix.append(r.gpa, '\\');
-            }
-            try suffix.append(r.gpa, byte);
+    fn renderNoteReference(r: *Renderer, note: u32) core.WriteError!void {
+        assert(note < r.note_labels.len);
+        var label_index = r.note_labels[note];
+        if (label_index == no_note) {
+            assert(r.notes.items.len < r.note_labels.len);
+            label_index = @intCast(r.notes.items.len);
+            try r.notes.append(r.gpa, note);
+            r.note_labels[note] = label_index;
         }
-        if (needs_brackets) try suffix.append(r.gpa, '>');
-        if (title.len > 0) {
-            try suffix.appendSlice(r.gpa, " \"");
-            for (title) |byte| {
-                if (byte == '"') try suffix.append(r.gpa, '\\');
-                try suffix.append(r.gpa, byte);
-            }
-            try suffix.append(r.gpa, '"');
-        }
-        try suffix.append(r.gpa, ')');
-        return suffix.toOwnedSlice(r.gpa);
+        var label: [24]u8 = undefined;
+        const text = std.fmt.bufPrint(&label, "[^{d}]", .{label_index + 1}) catch unreachable;
+        try r.inline_buffer.appendSlice(r.gpa, text);
     }
 
-    fn renderCodeSpan(r: *Renderer, text: []const u8, mode: InlineMode) core.WriteError!void {
-        const fence_len = longestRun(text, '`') + 1;
-        const pad = text.len == 0 or text[0] == '`' or text[text.len - 1] == '`' or
-            text[0] == ' ' or text[text.len - 1] == ' ';
-        try r.inline_buffer.appendNTimes(r.gpa, '`', fence_len);
-        if (pad) try r.inline_buffer.append(r.gpa, ' ');
-        for (text) |byte| {
-            if (mode == .table_cell and byte == '|') {
-                try r.inline_buffer.appendSlice(r.gpa, "\\|");
-            } else {
-                try r.inline_buffer.append(r.gpa, byte);
-            }
-        }
-        if (pad) try r.inline_buffer.append(r.gpa, ' ');
-        try r.inline_buffer.appendNTimes(r.gpa, '`', fence_len);
-    }
-
-    /// The minimum escaping that preserves meaning at this position.
-    fn escapeText(r: *Renderer, text: []const u8, mode: InlineMode) core.WriteError!void {
-        for (text, 0..) |byte, i| {
-            const at_line_start = r.inline_buffer.items.len == 0 or
-                r.inline_buffer.items[r.inline_buffer.items.len - 1] == '\n';
-            const escape = switch (byte) {
-                '\\', '`', '*', '[', ']' => true,
-                '_' => atWordBoundary(text, i),
-                '#', '>', '+', '-' => at_line_start,
-                '.', ')' => at_line_start_number: {
-                    // "1." or "1)" at a line start opens an ordered list.
-                    break :at_line_start_number startsOrderedList(r.inline_buffer.items, text, i);
-                },
-                '!' => i + 1 < text.len and text[i + 1] == '[',
-                '|' => mode == .table_cell,
-                '<' => true,
-                '&' => looksLikeEntity(text[i..]),
-                else => false,
-            };
-            if (escape) try r.inline_buffer.append(r.gpa, '\\');
-            try r.inline_buffer.append(r.gpa, byte);
-        }
+    fn renderInlineContainer(
+        r: *Renderer,
+        view: core.InlineView,
+    ) core.WriteError!InlineDelimiters {
+        return switch (view.content) {
+            .emphasis => .{ .open = "_", .close = "_", .styled = true },
+            .strong => .{ .open = "**", .close = "**", .styled = true },
+            .strikethrough => .{ .open = "~~", .close = "~~", .styled = true },
+            .superscript, .subscript, .underline, .small_caps => value: {
+                try r.hit(.style_dropped);
+                break :value .{};
+            },
+            .span => .{},
+            .extension => value: {
+                try r.hit(.extension_fallback);
+                break :value .{};
+            },
+            .quote => |quote| quote: {
+                const mark: []const u8 = if (quote.kind == .single) "'" else "\"";
+                break :quote .{ .open = mark, .close = mark };
+            },
+            .link => |target| .{
+                .open = "[",
+                .close = try inline_output.linkSuffix(
+                    r,
+                    r.doc.text(target.url),
+                    r.doc.text(target.title),
+                ),
+            },
+            .image => |target| .{
+                .open = "![",
+                .close = try inline_output.linkSuffix(
+                    r,
+                    r.doc.text(target.url),
+                    r.doc.text(target.title),
+                ),
+            },
+            .citation => value: {
+                try r.hit(.citation_dropped);
+                break :value .{};
+            },
+            else => unreachable,
+        };
     }
 
     fn reportContainerAttrs(r: *Renderer, index: u32) core.WriteError!void {
@@ -916,50 +984,6 @@ const Renderer = struct {
         try r.hit(.definition_list);
     }
 };
-
-fn atWordBoundary(text: []const u8, i: usize) bool {
-    const before_ok = i == 0 or !std.ascii.isAlphanumeric(text[i - 1]);
-    const after_ok = i + 1 >= text.len or !std.ascii.isAlphanumeric(text[i + 1]);
-    return before_ok or after_ok;
-}
-
-fn startsOrderedList(buffer: []const u8, text: []const u8, i: usize) bool {
-    // The characters before position i on this line must all be digits,
-    // with at least one, in this text run and back through the buffer.
-    if (i == 0) return false;
-    var j = i;
-    var digits: usize = 0;
-    while (j > 0 and std.ascii.isDigit(text[j - 1])) {
-        j -= 1;
-        digits += 1;
-    }
-    if (digits == 0 or j != 0) return false;
-    // The run must begin the output line.
-    return buffer.len == 0 or buffer[buffer.len - 1] == '\n';
-}
-
-fn looksLikeEntity(rest: []const u8) bool {
-    assert(rest.len > 0 and rest[0] == '&');
-    var i: usize = 1;
-    if (i < rest.len and rest[i] == '#') i += 1;
-    const start = i;
-    while (i < rest.len and std.ascii.isAlphanumeric(rest[i])) i += 1;
-    return i > start and i < rest.len and rest[i] == ';';
-}
-
-fn longestRun(text: []const u8, byte: u8) usize {
-    var longest: usize = 0;
-    var current: usize = 0;
-    for (text) |candidate| {
-        if (candidate == byte) {
-            current += 1;
-            longest = @max(longest, current);
-        } else {
-            current = 0;
-        }
-    }
-    return longest;
-}
 
 // The capability declaration and rule table (ZDS 0013) live in
 // `capabilities.zig`; the report constructors in `writer_reports.zig`;

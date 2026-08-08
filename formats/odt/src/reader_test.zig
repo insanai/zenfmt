@@ -31,7 +31,6 @@ fn convertOdt(arena: std.mem.Allocator, content: []const u8) !Converted {
         .input = .{ .bytes = archive_bytes },
         .input_name = "test.odt",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -103,7 +102,8 @@ test "footnotes are captured and re-emitted after the body" {
 
     const converted = try convertOdt(arena, content_prefix ++
         \\<office:body><office:text>
-        \\<text:p>Text<text:note text:note-class="footnote"><text:note-citation>1</text:note-citation>
+        \\<text:p>Text<text:note
+        \\ text:note-class="footnote"><text:note-citation>1</text:note-citation>
         \\<text:note-body><text:p>The note.</text:p></text:note-body></text:note> after.</text:p>
         \\</office:text></office:body></office:document-content>
     );
@@ -193,7 +193,6 @@ fn convertArchive(arena: std.mem.Allocator, archive_bytes: []const u8) !Converte
         .input = .{ .bytes = archive_bytes },
         .input_name = "test.odt",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

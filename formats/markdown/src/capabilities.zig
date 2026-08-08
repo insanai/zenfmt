@@ -26,6 +26,7 @@ pub const RuleId = enum(u16) {
     number_style,
     definition_list,
     container_attrs,
+    table_caption,
 };
 
 pub const rules = [_]lowering.Rule{
@@ -79,22 +80,27 @@ pub const rules = [_]lowering.Rule{
         .cost = .{ 0, 0, 1, 0, 0, 0 },
         .note = writer_reports.containerAttrsNote,
     },
+    .{
+        .name = "table-caption",
+        .cost = .{ 0, 1, 0, 0, 0, 0 },
+        .note = writer_reports.tableCaptionNote,
+    },
 };
 
 pub const capabilities: lowering.Capabilities = .{
     .exact_blocks = &.{
-        .plain,     .paragraph, .line_block,     .heading,    .code_block,
-        .quote,     .list,      .thematic_break, .figure,     .line,
-        .list_item, .caption,   .table_head,     .table_foot, .table_row,
+        .plain,   .paragraph,      .line_block, .heading,   .code_block,
+        .quote,   .thematic_break, .figure,     .line,      .list_item,
+        .caption, .table_head,     .table_foot, .table_row,
     },
     // Lowered blocks: the emission sites hit the rules above under the
     // conditions the renderer already decides (nested tables, flattened
     // cells, non-decimal numbering, attributed containers, raw formats
     // Markdown cannot carry, extension fallbacks).
     .lowered_blocks = &.{
-        .raw_block,       .definition_list, .definition_entry, .definition_term,
-        .definition_body, .table,           .table_body,       .table_cell,
-        .container,       .extension,
+        .raw_block,       .list,  .definition_list, .definition_entry, .definition_term,
+        .definition_body, .table, .table_body,      .table_cell,       .container,
+        .extension,
     },
     .exact_inlines = &.{
         .text,          .space, .soft_break, .hard_break, .emphasis, .strong,
@@ -108,7 +114,149 @@ pub const capabilities: lowering.Capabilities = .{
     .rules = &rules,
     .facets = &.{},
     .extensions = &.{},
+    .propose = propose,
 };
+
+fn propose(
+    context: *const lowering.ProposalContext,
+    node: lowering.Node,
+    alternatives: *lowering.Alternatives,
+) lowering.PlanError!void {
+    switch (node) {
+        .block => |index| try proposeBlock(context, index, alternatives),
+        .@"inline" => |index| try proposeInline(context, index, alternatives),
+    }
+}
+
+fn proposeBlock(
+    context: *const lowering.ProposalContext,
+    index: core.BlockIndex,
+    alternatives: *lowering.Alternatives,
+) lowering.PlanError!void {
+    const doc = context.doc;
+    switch (doc.blockTag(index)) {
+        .raw_block => {
+            const raw = doc.blockAs(index, .raw_block).?;
+            const format = doc.text(raw.format);
+            if (isMarkdownRaw(format)) return alternatives.add(lowering.Alternative.exact(0));
+            try addLoss(alternatives, .omit, .raw_dropped);
+        },
+        .definition_list => try addLoss(alternatives, .emit_degraded, .definition_list),
+        .table => {
+            if (context.hasBlockAncestor(index, .table)) {
+                try addLoss(alternatives, .emit_text, .nested_table);
+            } else if (tableHasCaption(doc, index)) {
+                try addLoss(alternatives, .emit_degraded, .table_caption);
+            } else {
+                try alternatives.add(lowering.Alternative.exact(0));
+            }
+        },
+        .table_cell => try proposeCell(doc, index, alternatives),
+        .container => {
+            if (doc.block(index).attrs == .none) {
+                try alternatives.add(lowering.Alternative.exact(0));
+            } else {
+                try addLoss(alternatives, .splice_children, .container_attrs);
+            }
+        },
+        .extension => try addLoss(alternatives, .splice_children, .extension_fallback),
+        .list => {
+            const list = doc.blockAs(index, .list).?;
+            if (list.kind == .ordered and list.style != .decimal) {
+                try addLoss(alternatives, .emit_degraded, .number_style);
+            } else {
+                try alternatives.add(lowering.Alternative.exact(0));
+            }
+        },
+        // Normalized table and definition structure carries no additional
+        // loss beyond the public ancestor that introduced it.
+        .definition_entry,
+        .definition_term,
+        .definition_body,
+        .table_body,
+        => try alternatives.add(lowering.Alternative.exact(0)),
+        else => return error.InvalidPlan,
+    }
+}
+
+fn proposeCell(
+    doc: *const core.Document,
+    index: core.BlockIndex,
+    alternatives: *lowering.Alternatives,
+) lowering.PlanError!void {
+    const cell = doc.blockAs(index, .table_cell).?;
+    var losses: [lowering.max_losses_per_alternative]u16 = undefined;
+    var count: u32 = 0;
+    if (cell.row_span > 1 or cell.col_span > 1) {
+        losses[count] = @intFromEnum(RuleId.cell_span);
+        count += 1;
+    }
+    if (cellNeedsFlattening(doc, cell.blocks)) {
+        losses[count] = @intFromEnum(RuleId.cell_flattened);
+        count += 1;
+    }
+    if (count == 0) return alternatives.add(lowering.Alternative.exact(0));
+    try alternatives.add(lowering.Alternative.degraded(.emit_degraded, 1, losses[0..count]));
+}
+
+pub fn cellNeedsFlattening(doc: *const core.Document, blocks: core.ast.BlockRange) bool {
+    var roots = doc.blockRoots(blocks);
+    var count: u32 = 0;
+    while (roots.next()) |root| {
+        count += 1;
+        const tag = doc.blockTag(root);
+        if (tag != .paragraph and tag != .plain) return true;
+    }
+    return count > 1;
+}
+
+fn tableHasCaption(doc: *const core.Document, index: core.BlockIndex) bool {
+    var children = doc.blockChildren(index);
+    while (children.next()) |child| {
+        if (doc.blockTag(child) == .caption) return true;
+    }
+    return false;
+}
+
+fn proposeInline(
+    context: *const lowering.ProposalContext,
+    index: core.InlineIndex,
+    alternatives: *lowering.Alternatives,
+) lowering.PlanError!void {
+    const doc = context.doc;
+    switch (doc.inlineTag(index)) {
+        .underline,
+        .small_caps,
+        .superscript,
+        .subscript,
+        => try addLoss(alternatives, .splice_children, .style_dropped),
+        .raw => {
+            const raw = doc.inlineAs(index, .raw).?;
+            if (isMarkdownRaw(doc.text(raw.format))) {
+                try alternatives.add(lowering.Alternative.exact(0));
+            } else {
+                try addLoss(alternatives, .omit, .raw_dropped);
+            }
+        },
+        .citation => try addLoss(alternatives, .splice_children, .citation_dropped),
+        .extension => try addLoss(alternatives, .splice_children, .extension_fallback),
+        else => return error.InvalidPlan,
+    }
+}
+
+fn addLoss(
+    alternatives: *lowering.Alternatives,
+    operation: lowering.Operation,
+    rule: RuleId,
+) lowering.PlanError!void {
+    const id: u16 = @intFromEnum(rule);
+    try alternatives.add(lowering.Alternative.degraded(operation, id + 1, &.{id}));
+}
+
+fn isMarkdownRaw(format: []const u8) bool {
+    const std = @import("std");
+    return std.mem.eql(u8, format, "markdown") or std.mem.eql(u8, format, "html");
+}
 
 comptime {
     capabilities.validate();

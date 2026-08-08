@@ -22,7 +22,6 @@ fn convertRtf(arena: std.mem.Allocator, bytes: []const u8) !Converted {
         .input = .{ .bytes = bytes },
         .input_name = "test.rtf",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try reader_mod.read(&ctx);
@@ -59,7 +58,11 @@ test "paragraphs, toggles, and inheritance" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1\\ansi Plain {\\b bold {\\i both}} back\\par Second\\par}");
+    const converted = try convertRtf(
+        arena,
+        "{\\rtf1\\ansi Plain {\\b bold {\\i both}} " ++
+            "back\\par Second\\par}",
+    );
     try testing.expectEqual(@as(u32, 2), countTag(converted.doc, .paragraph));
     try testing.expectEqual(@as(u32, 1), countInlineTag(converted.doc, .strong));
     try testing.expectEqual(@as(u32, 1), countInlineTag(converted.doc, .emphasis));
@@ -81,7 +84,11 @@ test "destinations and the font table never reach the output" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1{\\fonttbl{\\f0 Calibri;}}{\\*\\generator Riched20;}Visible\\par}");
+    const converted = try convertRtf(
+        arena,
+        "{\\rtf1{\\fonttbl{\\f0 Calibri;}}" ++
+            "{\\*\\generator Riched20;}Visible\\par}",
+    );
     const text = converted.doc.store.text.items;
     try testing.expect(std.mem.indexOf(u8, text, "Calibri") == null);
     try testing.expect(std.mem.indexOf(u8, text, "Riched20") == null);
@@ -127,10 +134,12 @@ test "list items with rising and falling levels nest" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1\\pard{\\listtext \\'b7\\tab}\\ls1\\ilvl0 One\\par " ++
+    const input = "{\\rtf1\\pard{\\listtext \\'b7\\tab}" ++
+        "\\ls1\\ilvl0 One\\par " ++
         "\\pard{\\listtext \\'b7\\tab}\\ls1\\ilvl1 Sub\\par " ++
         "\\pard{\\listtext \\'b7\\tab}\\ls1\\ilvl0 Two\\par " ++
-        "\\pard Done\\par}");
+        "\\pard Done\\par}";
+    const converted = try convertRtf(arena, input);
     try testing.expectEqual(@as(u32, 2), countTag(converted.doc, .list));
     try testing.expectEqual(@as(u32, 3), countTag(converted.doc, .list_item));
     const text = converted.doc.store.text.items;
@@ -143,8 +152,10 @@ test "digit markers make an ordered list" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1\\pard{\\listtext 1.\\tab}\\ls2\\ilvl0 First\\par " ++
-        "\\pard{\\listtext 2.\\tab}\\ls2\\ilvl0 Second\\par \\pard\\par}");
+    const input = "{\\rtf1\\pard{\\listtext 1.\\tab}" ++
+        "\\ls2\\ilvl0 First\\par " ++
+        "\\pard{\\listtext 2.\\tab}\\ls2\\ilvl0 Second\\par \\pard\\par}";
+    const converted = try convertRtf(arena, input);
     try testing.expectEqual(@as(u32, 1), countTag(converted.doc, .list));
     try testing.expectEqual(@as(u32, 2), countTag(converted.doc, .list_item));
     try testing.expectEqual(core.payload.ListKind.ordered, converted.doc.store.lists.items[0].kind);
@@ -155,8 +166,10 @@ test "old-style pn numbering makes an ordered list" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1\\pard{\\*\\pn\\pnlvlbody\\pndec\\pnstart1}First\\par " ++
-        "\\pard{\\*\\pn\\pnlvlbody\\pndec\\pnstart1}Second\\par \\pard\\par}");
+    const input = "{\\rtf1\\pard{\\*\\pn\\pnlvlbody\\pndec" ++
+        "\\pnstart1}First\\par " ++
+        "\\pard{\\*\\pn\\pnlvlbody\\pndec\\pnstart1}Second\\par \\pard\\par}";
+    const converted = try convertRtf(arena, input);
     try testing.expectEqual(@as(u32, 1), countTag(converted.doc, .list));
     try testing.expectEqual(@as(u32, 2), countTag(converted.doc, .list_item));
     try testing.expectEqual(core.payload.ListKind.ordered, converted.doc.store.lists.items[0].kind);
@@ -167,7 +180,8 @@ test "hyperlink fields become links with display text" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1 See {\\field{\\*\\fldinst HYPERLINK \"https://ziglang.org\"}" ++
+    const converted = try convertRtf(arena, "{\\rtf1 See {\\field{\\*\\fldinst " ++
+        "HYPERLINK \"https://ziglang.org\"}" ++
         "{\\fldrslt the site}} now\\par}");
     try testing.expectEqual(@as(u32, 1), countInlineTag(converted.doc, .link));
     const text = converted.doc.store.text.items;
@@ -182,7 +196,11 @@ test "footnotes reference at the site and carry their body" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1 A claim{\\footnote \\pard The evidence.\\par} stands\\par}");
+    const converted = try convertRtf(
+        arena,
+        "{\\rtf1 A claim{\\footnote \\pard " ++
+            "The evidence.\\par} stands\\par}",
+    );
     try testing.expectEqual(@as(u32, 1), countInlineTag(converted.doc, .note));
     try testing.expectEqual(@as(usize, 1), converted.doc.store.block_ranges.items.len);
     const text = converted.doc.store.text.items;
@@ -196,7 +214,8 @@ test "outline levels become headings" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const converted = try convertRtf(arena, "{\\rtf1\\pard\\outlinelevel0 Title\\par \\pard\\outlinelevel1 Section\\par " ++
+    const converted = try convertRtf(arena, "{\\rtf1\\pard\\outlinelevel0 Title\\par " ++
+        "\\pard\\outlinelevel1 Section\\par " ++
         "\\pard Body text\\par}");
     try testing.expectEqual(@as(u32, 2), countTag(converted.doc, .heading));
     try testing.expectEqual(@as(u32, 1), countTag(converted.doc, .paragraph));

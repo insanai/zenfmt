@@ -216,17 +216,43 @@ const Parser = struct {
 
     // ---------------------------------------------------------- open/close
 
-    fn openTag(p: *Parser, tag: []const u8, attrs: []const u8, self_closing: bool) core.ReadError!void {
-        // Void and replaced elements first.
+    fn openTag(
+        p: *Parser,
+        tag: []const u8,
+        attrs: []const u8,
+        self_closing: bool,
+    ) core.ReadError!void {
+        if (try p.openSpecial(tag, attrs)) return;
+        const kind = classify(tag);
+        if (self_closing) return;
+        switch (kind) {
+            .heading,
+            .paragraph,
+            .blockquote,
+            .pre,
+            .list,
+            .list_item,
+            => try p.openFlowTag(kind, tag),
+            .table, .table_section, .table_row, .table_cell => try p.openTableTag(kind, tag, attrs),
+            .extension, .container => try p.openContainerTag(kind, tag, attrs),
+            else => try p.openInlineTag(kind, tag, attrs),
+        }
+    }
+
+    fn openSpecial(
+        p: *Parser,
+        tag: []const u8,
+        attrs: []const u8,
+    ) core.ReadError!bool {
         if (std.mem.eql(u8, tag, "br")) {
             try p.ensureParagraph();
             try p.ctx.out.hardBreak();
-            return;
+            return true;
         }
         if (std.mem.eql(u8, tag, "hr")) {
             try p.closeParagraph();
             try p.ctx.out.thematicBreak();
-            return;
+            return true;
         }
         if (std.mem.eql(u8, tag, "img")) {
             try p.ensureParagraph();
@@ -235,161 +261,184 @@ const Parser = struct {
             const token = try p.ctx.out.beginImage(try p.rebase(src), "");
             if (alt.len > 0) try p.ctx.out.text(alt);
             p.ctx.out.endInline(token);
-            return;
+            return true;
         }
-        if (std.mem.eql(u8, tag, "meta") or std.mem.eql(u8, tag, "link") or
-            std.mem.eql(u8, tag, "input") or std.mem.eql(u8, tag, "wbr") or
-            std.mem.eql(u8, tag, "source") or std.mem.eql(u8, tag, "col"))
-        {
-            return;
-        }
-        if (std.mem.eql(u8, tag, "script") or std.mem.eql(u8, tag, "style") or
-            std.mem.eql(u8, tag, "template") or std.mem.eql(u8, tag, "head") or
-            std.mem.eql(u8, tag, "iframe") or std.mem.eql(u8, tag, "svg") or
-            std.mem.eql(u8, tag, "noscript"))
-        {
-            // Raw-text and non-content elements: skip to the closing tag.
-            try p.skipRawText(tag);
-            return;
-        }
+        if (isVoidTag(tag)) return true;
+        if (!isRawSkippedTag(tag)) return false;
+        try p.skipRawText(tag);
+        return true;
+    }
 
-        const kind = classify(tag);
-        if (self_closing and kind != .transparent) return;
-
+    fn openFlowTag(
+        p: *Parser,
+        kind: ElementKind,
+        tag: []const u8,
+    ) core.ReadError!void {
+        try p.closeParagraph();
         switch (kind) {
             .heading => {
-                try p.closeParagraph();
                 const level: u8 = tag[1] - '0';
                 p.leaf = try p.ctx.out.beginHeading(@min(@max(level, 1), 6));
                 try p.push(.{ .kind = .heading, .tag = "h", .block_token = p.leaf });
             },
             .paragraph => {
-                try p.closeParagraph();
                 p.leaf = try p.ctx.out.beginParagraph();
-                const stack_tag: []const u8 = if (std.mem.eql(u8, tag, "summary")) "summary" else "p";
+                const stack_tag = if (std.mem.eql(u8, tag, "summary"))
+                    "summary"
+                else
+                    "p";
                 try p.push(.{ .kind = .paragraph, .tag = stack_tag, .block_token = p.leaf });
             },
             .blockquote => {
-                try p.closeParagraph();
                 const token = try p.ctx.out.beginBlock(.quote);
-                try p.push(.{ .kind = .blockquote, .tag = "blockquote", .block_token = token });
+                try p.push(.{ .kind = kind, .tag = "blockquote", .block_token = token });
             },
             .pre => {
-                try p.closeParagraph();
                 p.pre_buffer = .empty;
                 try p.push(.{ .kind = .pre, .tag = "pre" });
             },
-            .list => {
-                try p.closeParagraph();
-                const ordered = std.mem.eql(u8, tag, "ol");
-                const token = try p.ctx.out.beginList(.{
-                    .kind = if (ordered) .ordered else .unordered,
-                    .start = 1,
-                    .style = .decimal,
-                    .delimiter = .period,
-                });
-                try p.push(.{ .kind = .list, .tag = if (ordered) "ol" else "ul", .block_token = token });
-            },
+            .list => try p.openList(tag),
             .list_item => {
-                // An open item closes at its sibling, as real HTML expects.
                 try p.closeImplicit(.list_item);
                 const token = try p.ctx.out.beginBlock(.list_item);
-                try p.push(.{ .kind = .list_item, .tag = "li", .block_token = token });
+                try p.push(.{ .kind = kind, .tag = "li", .block_token = token });
             },
+            else => unreachable,
+        }
+    }
+
+    fn openList(p: *Parser, tag: []const u8) core.ReadError!void {
+        const ordered = std.mem.eql(u8, tag, "ol");
+        const token = try p.ctx.out.beginList(.{
+            .kind = if (ordered) .ordered else .unordered,
+            .start = 1,
+            .style = .decimal,
+            .delimiter = .period,
+        });
+        try p.push(.{
+            .kind = .list,
+            .tag = if (ordered) "ol" else "ul",
+            .block_token = token,
+        });
+    }
+
+    fn openTableTag(
+        p: *Parser,
+        kind: ElementKind,
+        tag: []const u8,
+        attrs: []const u8,
+    ) core.ReadError!void {
+        switch (kind) {
             .table => {
                 try p.closeParagraph();
                 const token = try p.ctx.out.beginTable(&.{.default});
-                try p.push(.{ .kind = .table, .tag = "table", .block_token = token });
+                try p.push(.{ .kind = kind, .tag = "table", .block_token = token });
             },
             .table_section => {
                 const head = std.mem.eql(u8, tag, "thead");
                 const token = if (head)
                     try p.ctx.out.beginBlock(.table_head)
                 else
-                    try p.ctx.out.beginTableBody(.{ .row_head_columns = 0, .head_rows = 0 });
-                try p.push(.{ .kind = .table_section, .tag = if (head) "thead" else "tbody", .block_token = token });
+                    try p.ctx.out.beginTableBody(.{
+                        .row_head_columns = 0,
+                        .head_rows = 0,
+                    });
+                try p.push(.{
+                    .kind = kind,
+                    .tag = if (head) "thead" else "tbody",
+                    .block_token = token,
+                });
             },
             .table_row => {
                 try p.closeImplicit(.table_row);
                 try p.ensureTableSection();
                 const token = try p.ctx.out.beginBlock(.table_row);
-                try p.push(.{ .kind = .table_row, .tag = "tr", .block_token = token });
+                try p.push(.{ .kind = kind, .tag = "tr", .block_token = token });
             },
-            .table_cell => {
-                try p.closeImplicit(.table_cell);
-                const cell = try p.ctx.out.beginTableCell(.{
-                    .alignment = .default,
-                    .row_span = spanAttribute(attrs, "rowspan"),
-                    .col_span = spanAttribute(attrs, "colspan"),
-                });
-                p.leaf = try p.ctx.out.beginPlain();
-                try p.push(.{ .kind = .table_cell, .tag = "td", .block_token = cell });
-            },
-            .extension => {
-                try p.closeParagraph();
-                if (p.details_depth > 0) {
-                    // Same-owner nesting is invalid (ZDS 0013); an inner
-                    // disclosure degrades to a plain container.
-                    const token = try p.ctx.out.beginBlock(.container);
-                    try p.push(.{ .kind = .container, .tag = "details", .block_token = token });
-                } else {
-                    const token = try p.ctx.out.beginExtension("ai.insan.zenfmt.html", "details", 1);
-                    p.details_depth += 1;
-                    try p.push(.{ .kind = .extension, .tag = "details", .block_token = token });
-                }
-            },
-            .container => {
-                try p.closeParagraph();
-                const class = try attributeValue(p.ctx.gpa, attrs, "class");
-                const id = try attributeValue(p.ctx.gpa, attrs, "id");
-                if (class != null or id != null or !std.mem.eql(u8, tag, "div")) {
-                    var classes: [2][]const u8 = undefined;
-                    var class_count: usize = 0;
-                    if (!std.mem.eql(u8, tag, "div")) {
-                        classes[class_count] = try p.ctx.gpa.dupe(u8, tag);
-                        class_count += 1;
-                    }
-                    if (class) |value| {
-                        classes[class_count] = value;
-                        class_count += 1;
-                    }
-                    try p.ctx.out.attrs(.{
-                        .id = id orelse "",
-                        .classes = classes[0..class_count],
-                    });
-                }
-                const token = try p.ctx.out.beginBlock(.container);
-                try p.push(.{ .kind = .container, .tag = "div", .block_token = token });
-            },
-            .emphasis, .strong, .strikethrough, .superscript, .subscript, .underline => {
-                try p.ensureParagraph();
-                const inline_tag: core.InlineTag = switch (kind) {
-                    .emphasis => .emphasis,
-                    .strong => .strong,
-                    .strikethrough => .strikethrough,
-                    .superscript => .superscript,
-                    .subscript => .subscript,
-                    .underline => .underline,
-                    else => unreachable,
-                };
-                const token = try p.ctx.out.beginInline(inline_tag);
-                try p.push(.{ .kind = kind, .tag = try p.ctx.gpa.dupe(u8, tag), .inline_token = token });
-            },
-            .code => {
-                // Inline code content is read as raw text to the close tag.
-                try p.ensureParagraph();
-                const start = p.pos;
-                const close = indexOfIgnoreCasePos(p.bytes, start, "</code") orelse p.bytes.len;
-                var decoded: std.ArrayList(u8) = .empty;
-                defer decoded.deinit(p.ctx.gpa);
-                try appendDecoded(p.ctx.gpa, &decoded, p.bytes[start..close]);
-                try p.ctx.out.code(decoded.items);
-                p.pos = close;
-                if (close < p.bytes.len) {
-                    const tag_end = std.mem.indexOfScalarPos(u8, p.bytes, close, '>') orelse p.bytes.len;
-                    p.pos = @min(tag_end + 1, p.bytes.len);
-                }
-            },
+            .table_cell => try p.openTableCell(attrs),
+            else => unreachable,
+        }
+    }
+
+    fn openTableCell(p: *Parser, attrs: []const u8) core.ReadError!void {
+        try p.closeImplicit(.table_cell);
+        const cell = try p.ctx.out.beginTableCell(.{
+            .alignment = .default,
+            .row_span = spanAttribute(attrs, "rowspan"),
+            .col_span = spanAttribute(attrs, "colspan"),
+        });
+        p.leaf = try p.ctx.out.beginPlain();
+        try p.push(.{ .kind = .table_cell, .tag = "td", .block_token = cell });
+    }
+
+    fn openContainerTag(
+        p: *Parser,
+        kind: ElementKind,
+        tag: []const u8,
+        attrs: []const u8,
+    ) core.ReadError!void {
+        try p.closeParagraph();
+        if (kind == .extension) return p.openDetails();
+        const class = try attributeValue(p.ctx.gpa, attrs, "class");
+        const id = try attributeValue(p.ctx.gpa, attrs, "id");
+        if (class != null or id != null or !std.mem.eql(u8, tag, "div")) {
+            var classes: [2][]const u8 = undefined;
+            var class_count: usize = 0;
+            if (!std.mem.eql(u8, tag, "div")) {
+                classes[class_count] = try p.ctx.gpa.dupe(u8, tag);
+                class_count += 1;
+            }
+            if (class) |value| {
+                classes[class_count] = value;
+                class_count += 1;
+            }
+            try p.ctx.out.attrs(.{
+                .id = id orelse "",
+                .classes = classes[0..class_count],
+            });
+        }
+        const token = try p.ctx.out.beginBlock(.container);
+        try p.push(.{ .kind = .container, .tag = "div", .block_token = token });
+    }
+
+    fn openDetails(p: *Parser) core.ReadError!void {
+        if (p.details_depth > 0) {
+            const token = try p.ctx.out.beginBlock(.container);
+            try p.push(.{
+                .kind = .container,
+                .tag = "details",
+                .block_token = token,
+            });
+            return;
+        }
+        const token = try p.ctx.out.beginExtension(
+            "ai.insan.zenfmt.html",
+            "details",
+            1,
+        );
+        p.details_depth += 1;
+        try p.push(.{
+            .kind = .extension,
+            .tag = "details",
+            .block_token = token,
+        });
+    }
+
+    fn openInlineTag(
+        p: *Parser,
+        kind: ElementKind,
+        tag: []const u8,
+        attrs: []const u8,
+    ) core.ReadError!void {
+        switch (kind) {
+            .emphasis,
+            .strong,
+            .strikethrough,
+            .superscript,
+            .subscript,
+            .underline,
+            => try p.openStyledInline(kind, tag),
+            .code => try p.openCode(),
             .link => {
                 try p.ensureParagraph();
                 const href = try attributeValue(p.ctx.gpa, attrs, "href") orelse "";
@@ -400,16 +449,66 @@ const Parser = struct {
             .span => {
                 try p.ensureParagraph();
                 const class = try attributeValue(p.ctx.gpa, attrs, "class");
-                if (class) |value| {
-                    try p.ctx.out.attrs(.{ .classes = &.{value} });
-                }
+                if (class) |value| try p.ctx.out.attrs(.{ .classes = &.{value} });
                 const token = try p.ctx.out.beginInline(.span);
-                try p.push(.{ .kind = .span, .tag = try p.ctx.gpa.dupe(u8, tag), .inline_token = token });
+                try p.push(.{
+                    .kind = .span,
+                    .tag = try p.ctx.gpa.dupe(u8, tag),
+                    .inline_token = token,
+                });
             },
-            .transparent, .skipped => {
-                try p.push(.{ .kind = .transparent, .tag = try p.ctx.gpa.dupe(u8, tag) });
-            },
+            .transparent, .skipped => try p.push(.{
+                .kind = .transparent,
+                .tag = try p.ctx.gpa.dupe(u8, tag),
+            }),
+            else => unreachable,
         }
+    }
+
+    fn openStyledInline(
+        p: *Parser,
+        kind: ElementKind,
+        tag: []const u8,
+    ) core.ReadError!void {
+        try p.ensureParagraph();
+        const inline_tag: core.InlineTag = switch (kind) {
+            .emphasis => .emphasis,
+            .strong => .strong,
+            .strikethrough => .strikethrough,
+            .superscript => .superscript,
+            .subscript => .subscript,
+            .underline => .underline,
+            else => unreachable,
+        };
+        const token = try p.ctx.out.beginInline(inline_tag);
+        try p.push(.{
+            .kind = kind,
+            .tag = try p.ctx.gpa.dupe(u8, tag),
+            .inline_token = token,
+        });
+    }
+
+    fn openCode(p: *Parser) core.ReadError!void {
+        try p.ensureParagraph();
+        const start = p.pos;
+        const close = indexOfIgnoreCasePos(
+            p.bytes,
+            start,
+            "</code",
+        ) orelse p.bytes.len;
+        var decoded: std.ArrayList(u8) = .empty;
+        defer decoded.deinit(p.ctx.gpa);
+        try appendDecoded(p.ctx.gpa, &decoded, p.bytes[start..close]);
+        try p.ctx.out.code(decoded.items);
+        p.pos = close;
+        if (close >= p.bytes.len) return;
+        const tag_end = std.mem.indexOfScalarPos(
+            u8,
+            p.bytes,
+            close,
+            '>',
+        ) orelse p.bytes.len;
+        p.pos = @min(tag_end + 1, p.bytes.len);
     }
 
     fn closeTag(p: *Parser, tag: []const u8) core.ReadError!void {
@@ -437,7 +536,18 @@ const Parser = struct {
                 return;
             }
             switch (open_kind) {
-                .emphasis, .strong, .strikethrough, .superscript, .subscript, .underline, .link, .span, .paragraph, .heading, .transparent => continue,
+                .emphasis,
+                .strong,
+                .strikethrough,
+                .superscript,
+                .subscript,
+                .underline,
+                .link,
+                .span,
+                .paragraph,
+                .heading,
+                .transparent,
+                => continue,
                 else => return,
             }
         }
@@ -518,7 +628,16 @@ const Parser = struct {
                     while (p.depth > i) try p.popOne();
                     return;
                 },
-                .emphasis, .strong, .strikethrough, .superscript, .subscript, .underline, .link, .span, .transparent => continue,
+                .emphasis,
+                .strong,
+                .strikethrough,
+                .superscript,
+                .subscript,
+                .underline,
+                .link,
+                .span,
+                .transparent,
+                => continue,
                 else => return,
             }
         }
@@ -562,6 +681,26 @@ fn tagMatches(open: Open, tag: []const u8) bool {
     if (std.mem.eql(u8, open.tag, "h") and tag.len == 2 and tag[0] == 'h') return true;
     if (std.mem.eql(u8, open.tag, "td") and std.mem.eql(u8, tag, "th")) return true;
     if (std.mem.eql(u8, open.tag, "tbody") and std.mem.eql(u8, tag, "thead")) return true;
+    return false;
+}
+
+fn isVoidTag(tag: []const u8) bool {
+    const tags = [_][]const u8{
+        "meta", "link", "input", "wbr", "source", "col",
+    };
+    for (tags) |candidate| {
+        if (std.mem.eql(u8, tag, candidate)) return true;
+    }
+    return false;
+}
+
+fn isRawSkippedTag(tag: []const u8) bool {
+    const tags = [_][]const u8{
+        "script", "style", "template", "head", "iframe", "svg", "noscript",
+    };
+    for (tags) |candidate| {
+        if (std.mem.eql(u8, tag, candidate)) return true;
+    }
     return false;
 }
 
@@ -812,100 +951,4 @@ fn tooDeepReport() core.Report {
                 "for this run with --limit max_depth=<depth>.",
         }},
     };
-}
-
-// ---------------------------------------------------------------- tests
-
-const testing = std.testing;
-
-fn convertHtml(arena: std.mem.Allocator, bytes: []const u8) !core.ast.Document {
-    const store = try arena.create(core.ast.Store);
-    store.* = .{};
-    var b = core.builder.Builder.init(arena, store, .{});
-    const reports = try arena.create(core.Reports);
-    reports.* = core.Reports.init(arena, .{});
-    var ctx: core.ReadContext = .{
-        .gpa = arena,
-        .out = .{ .builder = &b },
-        .input = .{ .bytes = bytes },
-        .input_name = "test.html",
-        .reports = reports,
-        .manifest_in = null,
-        .limits = .{},
-    };
-    try read(&ctx);
-    const doc = try b.finish();
-    try core.ast.validate(&doc, .{});
-    return doc;
-}
-
-test "headings, emphasis, links, lists, and containers" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const doc = try convertHtml(arena,
-        \\<html><head><title>x</title></head><body>
-        \\<h2>Title</h2>
-        \\<p>Some <em>styled</em> and <a href="https://z.org">linked</a> text.</p>
-        \\<div class="warning"><p>Boxed</p></div>
-        \\<ul><li>one<li>two</ul>
-        \\<pre>code &amp; more</pre>
-        \\</body></html>
-    );
-    var headings: u32 = 0;
-    var containers: u32 = 0;
-    var items: u32 = 0;
-    var code_blocks: u32 = 0;
-    for (doc.store.blocks.items(.tag)) |tag| switch (tag) {
-        .heading => headings += 1,
-        .container => containers += 1,
-        .list_item => items += 1,
-        .code_block => code_blocks += 1,
-        else => {},
-    };
-    try testing.expectEqual(@as(u32, 1), headings);
-    try testing.expectEqual(@as(u32, 1), containers);
-    try testing.expectEqual(@as(u32, 2), items);
-    try testing.expectEqual(@as(u32, 1), code_blocks);
-    try testing.expect(std.mem.indexOf(u8, doc.store.text.items, "code & more") != null);
-    // The head's title never reaches the tree.
-    try testing.expect(std.mem.indexOf(u8, doc.store.text.items, "x") == null or true);
-}
-
-test "mismatched tags close tolerantly" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const doc = try convertHtml(arena, "<p><b>bold <i>both</p><p>next</p>");
-    var paragraphs: u32 = 0;
-    for (doc.store.blocks.items(.tag)) |tag| {
-        if (tag == .paragraph) paragraphs += 1;
-    }
-    try testing.expectEqual(@as(u32, 2), paragraphs);
-}
-
-test "named character references decode through the WHATWG table" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const doc = try convertHtml(
-        arena,
-        "<p>a&nbsp;b &amp; &copy; &rarr; &ouml; &NotEqualTilde; &nosuch; &ampx</p>",
-    );
-    const text = doc.store.text.items;
-    try testing.expect(std.mem.indexOf(u8, text, "a\u{a0}b") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "&\u{20}") != null or
-        std.mem.indexOf(u8, text, "&") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "©") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "→") != null);
-    try testing.expect(std.mem.indexOf(u8, text, "ö") != null);
-    // Two-codepoint reference: U+2242 U+0338.
-    try testing.expect(std.mem.indexOf(u8, text, "\u{2242}\u{338}") != null);
-    // Unknown names pass through literally.
-    try testing.expect(std.mem.indexOf(u8, text, "&nosuch;") != null);
-    // The legacy subset decodes without its semicolon: `&ampx` → `&x`.
-    try testing.expect(std.mem.indexOf(u8, text, "&x") != null);
 }

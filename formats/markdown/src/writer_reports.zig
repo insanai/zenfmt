@@ -12,7 +12,7 @@ pub fn styleDroppedNote(style: []const u8) core.Report {
         .problem = "This document uses underline, small caps, superscript, " ++
             "or subscript styling, which CommonMark cannot spell.",
         .consequence = "The styled text was kept; the styling was dropped.",
-        .loss = .degraded,
+        .loss = .presentation,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document if the exact styling " ++
@@ -37,12 +37,12 @@ pub fn containerAttrsNote() core.Report {
             "plain syntax for an attributed container.",
         .consequence = "The container's content was kept; its " ++
             "attributes were dropped.",
-        .loss = .degraded,
+        .loss = .presentation,
         .directions = &.{.{
-            .title = "Keep the source",
-            .explanation = "Keep the source document if the container " ++
-                "roles matter; a future --markdown-divs option will " ++
-                "emit fenced divs instead.",
+            .title = "Choose which representation is authoritative",
+            .explanation = "Keep the source and its adjacent manifest if " ++
+                "the container roles matter. If Markdown is authoritative, " ++
+                "remove the id, classes, and attributes before converting.",
         }},
     };
 }
@@ -56,7 +56,7 @@ pub fn definitionListNote() core.Report {
             "has no definition-list syntax.",
         .consequence = "Each term was emitted as a bold paragraph and " ++
             "each definition as ordinary paragraphs below it.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document if the exact " ++
@@ -75,7 +75,7 @@ pub fn extensionFallbackNote() core.Report {
         .consequence = "The extension's source-neutral fallback content " ++
             "was written; the extension identity and any behavior it " ++
             "implied were dropped.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document, or convert with a " ++
@@ -94,7 +94,7 @@ pub fn citationDroppedNote() core.Report {
             "has no citation syntax.",
         .consequence = "The citation's visible text was kept; the " ++
             "structured reference data was dropped.",
-        .loss = .degraded,
+        .loss = .presentation,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document if the citation data " ++
@@ -130,11 +130,29 @@ pub fn cellFlattenedNote() core.Report {
             "that is not a paragraph, and a GFM pipe-table cell is a " ++
             "single line of inline text.",
         .consequence = "The cell's content was flattened onto one line.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document if the cell's block " ++
                 "structure matters.",
+        }},
+    };
+}
+
+pub fn tableCaptionNote() core.Report {
+    return .{
+        .severity = .note,
+        .code = "markdown.table-caption-degraded",
+        .title = "TABLE CAPTION MOVED INTO FLOW",
+        .problem = "This table has a caption, and a GFM pipe table has no " ++
+            "syntax that associates caption blocks with the table.",
+        .consequence = "The caption content was flattened onto one line " ++
+            "after the table; its association and block structure were dropped.",
+        .loss = .structural,
+        .directions = &.{.{
+            .title = "Choose a format with table captions",
+            .explanation = "Keep the source, or select a target writer that " ++
+                "declares table-caption support, if the association matters.",
         }},
     };
 }
@@ -167,7 +185,7 @@ pub fn spanNote() core.Report {
             "GFM pipe table has no merged cells.",
         .consequence = "Merged content was placed in the first cell of " ++
             "its span and the remaining positions were left empty.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document if the merged-cell " ++
@@ -185,7 +203,7 @@ pub fn numberStyleNote() core.Report {
             "numerals, and Markdown ordered lists use decimal numbers.",
         .consequence = "The list was renumbered decimally from its " ++
             "recorded start.",
-        .loss = .degraded,
+        .loss = .presentation,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document if the numbering " ++

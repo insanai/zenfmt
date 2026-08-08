@@ -43,7 +43,8 @@ const NumberKind = enum { general, date, percent };
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
+    const source = ooxml.zipSource(ctx);
+    var archive = ooxml.zip.Archive.openSource(arena, source, ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -65,7 +66,11 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
     const rels = blk: {
         const bytes = extract(&archive, arena, "xl/_rels/workbook.bin.rels", ctx) orelse
             break :blk ooxml.Relationships.empty;
-        break :blk ooxml.parseRelationships(arena, bytes, ctx.limits) catch ooxml.Relationships.empty;
+        break :blk ooxml.parseRelationships(
+            arena,
+            bytes,
+            ctx.limits,
+        ) catch ooxml.Relationships.empty;
     };
     const workbook = extract(&archive, arena, "xl/workbook.bin", ctx) orelse {
         try ctx.reports.add(notWorkbookReport());
@@ -417,7 +422,8 @@ fn formatSerialDate(arena: std.mem.Allocator, serial: f64) ![]const u8 {
     const z = days + 719468;
     const era = @divFloor(z, 146097);
     const day_of_era: u64 = @intCast(z - era * 146097);
-    const year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    const year_of_era = (day_of_era - day_of_era / 1460 +
+        day_of_era / 36524 - day_of_era / 146096) / 365;
     const year = @as(i64, @intCast(year_of_era)) + era * 400;
     const day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     const month_prime = (5 * day_of_year + 2) / 153;
@@ -766,7 +772,11 @@ fn buildXlsb(arena: std.mem.Allocator, shape: BundleShape) ![]const u8 {
     });
 }
 
-fn convertXlsb(arena: std.mem.Allocator, bytes: []const u8, reports: *core.Reports) !core.ast.Document {
+fn convertXlsb(
+    arena: std.mem.Allocator,
+    bytes: []const u8,
+    reports: *core.Reports,
+) !core.ast.Document {
     const store = try arena.create(core.ast.Store);
     store.* = .{};
     var b = core.builder.Builder.init(arena, store, .{});
@@ -776,7 +786,6 @@ fn convertXlsb(arena: std.mem.Allocator, bytes: []const u8, reports: *core.Repor
         .input = .{ .bytes = bytes },
         .input_name = "test.xlsb",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

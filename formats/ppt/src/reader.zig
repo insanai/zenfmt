@@ -315,7 +315,6 @@ fn convertPpt(
         .input = .{ .bytes = bytes },
         .input_name = "test.ppt",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

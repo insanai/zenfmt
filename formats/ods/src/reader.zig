@@ -32,7 +32,8 @@ const max_rows_per_sheet = 65536;
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
+    const source = ooxml.zipSource(ctx);
+    var archive = ooxml.zip.Archive.openSource(arena, source, ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -499,7 +500,7 @@ fn formulaNote() core.Report {
         .problem = "Some cells hold formulas with no cached result, and " ++
             "zenfmt does not evaluate formulas.",
         .consequence = "Those cells are empty in the output.",
-        .loss = .degraded,
+        .loss = .dropped,
         .directions = &.{.{
             .title = "Recalculate and re-save",
             .explanation = "Open the spreadsheet, let it recalculate, " ++
@@ -530,7 +531,6 @@ fn convertOds(arena: std.mem.Allocator, content: []const u8) !ConvertResult {
         .input = .{ .bytes = archive_bytes },
         .input_name = "test.ods",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

@@ -24,7 +24,6 @@ fn convertPdf(arena: std.mem.Allocator, bytes: []const u8) !Converted {
         .input = .{ .bytes = bytes },
         .input_name = "test.pdf",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try reader_mod.reader.read(&ctx);
@@ -144,7 +143,6 @@ test "encrypted pdf refuses with its code" {
         .input = .{ .bytes = bytes },
         .input_name = "secret.pdf",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try testing.expectError(error.Malformed, reader_mod.reader.read(&ctx));
@@ -167,7 +165,6 @@ test "not a pdf refuses with its code" {
         .input = .{ .bytes = "not a pdf at all" },
         .input_name = "nope.pdf",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try testing.expectError(error.Malformed, reader_mod.reader.read(&ctx));
@@ -330,7 +327,8 @@ test "xref stream and object stream documents load" {
     const obj5_at = out.items.len;
     try out.print(
         arena,
-        "5 0 obj\n<< /Type /ObjStm /N 3 /First {d} /Length {d} >>\nstream\n{s}\nendstream\nendobj\n",
+        "5 0 obj\n<< /Type /ObjStm /N 3 /First {d} /Length {d} >>\n" ++
+            "stream\n{s}\nendstream\nendobj\n",
         .{ header.len, objstm_payload.len, objstm_payload },
     );
     // Object 6: the cross-reference stream (W [1 4 2], entries 0..6).

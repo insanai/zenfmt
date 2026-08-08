@@ -28,7 +28,6 @@ fn convertDocx(arena: std.mem.Allocator, archive_bytes: []const u8) !Converted {
         .input = .{ .bytes = archive_bytes },
         .input_name = "test.docx",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -114,7 +113,9 @@ test "embedded image bytes register with the resource store" {
             .name = "word/_rels/document.xml.rels",
             .data =
             \\<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-            \\<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/>
+            \\<Relationship Id="rId7"
+            \\ Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+            \\ Target="media/image1.png"/>
             \\</Relationships>
             ,
         },

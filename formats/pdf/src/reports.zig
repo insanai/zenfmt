@@ -189,7 +189,7 @@ pub fn projectionNote() core.Report {
             "and footers are not reconstructed.",
         .consequence = "The output is a linear projection of each page " ++
             "in drawing order.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Prefer the source document when you have it",
             .explanation = "If this PDF was exported from Word or another " ++

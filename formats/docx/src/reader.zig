@@ -694,9 +694,13 @@ pub const Machine = struct {
                 .done => return,
                 .element_start => |child| {
                     for (child.attributes) |attribute| {
-                        if (std.mem.eql(u8, attribute.name.local, "embed") and embed_id == null) {
+                        if (std.mem.eql(u8, attribute.name.local, "embed") and
+                            embed_id == null)
+                        {
                             embed_id = try m.arena.dupe(u8, attribute.value);
-                        } else if (std.mem.eql(u8, attribute.name.local, "descr") and description == null) {
+                        } else if (std.mem.eql(u8, attribute.name.local, "descr") and
+                            description == null)
+                        {
                             description = try m.arena.dupe(u8, attribute.value);
                         }
                     }
@@ -946,17 +950,29 @@ pub const Machine = struct {
         while (it.next()) |key| try ids.append(m.arena, key.*);
         std.mem.sort([]const u8, ids.items, {}, stringLessThan);
 
-        var stream = core.json.WriteStream.init(m.arena);
+        const data = encodePluginData(m.arena, ids.items) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.Malformed,
+        };
+        m.ctx.own_plugin_data = .{
+            .version = 1,
+            .data = data,
+        };
+    }
+
+    fn encodePluginData(
+        arena: std.mem.Allocator,
+        ids: []const []const u8,
+    ) core.json.WriteError![]const u8 {
+        var stream = core.json.WriteStream.init(arena);
+        defer stream.deinit();
         try stream.beginObject();
         try stream.field("paragraph_style_ids");
         try stream.beginArray();
-        for (ids.items) |id| try stream.string(id);
+        for (ids) |id| try stream.string(id);
         try stream.endArray();
         try stream.endObject();
-        m.ctx.own_plugin_data = .{
-            .version = 1,
-            .data = try stream.toOwnedSlice(),
-        };
+        return stream.toOwnedSlice();
     }
 };
 

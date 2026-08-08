@@ -47,7 +47,7 @@ pub fn unknownWordNote() core.Report {
             "tolerant by design.",
         .consequence = "The unknown instructions were skipped; their text " ++
             "content, if any, was kept.",
-        .loss = .degraded,
+        .loss = .presentation,
         .directions = &.{.{
             .title = "Check the output",
             .explanation = "Skim the output for anything missing or " ++
@@ -104,7 +104,7 @@ pub fn nestedTableNote() core.Report {
             "table cannot keep its structure.",
         .consequence = "The nested table's text was folded into its " ++
             "parent cell.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source RTF if the nested layout " ++

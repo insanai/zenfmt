@@ -485,7 +485,6 @@ fn convertAdoc(arena: std.mem.Allocator, bytes: []const u8) !core.ast.Document {
         .input = .{ .bytes = bytes },
         .input_name = "test.adoc",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -553,7 +552,6 @@ test "include is refused with a report" {
         .input = .{ .bytes = "include::/etc/passwd[]\n\ntext\n" },
         .input_name = "evil.adoc",
         .reports = &reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

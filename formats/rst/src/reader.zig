@@ -99,7 +99,12 @@ const Parser = struct {
         if (p.literal) |*literal| literal.content.deinit(p.ctx.gpa);
     }
 
-    fn addLine(p: *Parser, line: []const u8, previous: ?[]const u8, next: ?[]const u8) core.ReadError!void {
+    fn addLine(
+        p: *Parser,
+        line: []const u8,
+        previous: ?[]const u8,
+        next: ?[]const u8,
+    ) core.ReadError!void {
         if (p.heading_underline_pending) {
             p.heading_underline_pending = false;
             return;
@@ -118,7 +123,8 @@ const Parser = struct {
             const indent = indentWidth(line);
             if (literal.indent == null and indent > 0) literal.indent = indent;
             if (literal.indent != null and indent >= literal.indent.?) {
-                try literal.content.appendSlice(p.ctx.gpa, line[@min(literal.indent.?, line.len)..]);
+                const content_start = @min(literal.indent.?, line.len);
+                try literal.content.appendSlice(p.ctx.gpa, line[content_start..]);
                 try literal.content.append(p.ctx.gpa, '\n');
                 return;
             }
@@ -472,7 +478,6 @@ fn convertRst(arena: std.mem.Allocator, bytes: []const u8) !core.ast.Document {
         .input = .{ .bytes = bytes },
         .input_name = "test.rst",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

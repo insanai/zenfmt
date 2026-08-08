@@ -67,7 +67,7 @@ pub fn mediaLimitNote() core.Report {
             "limits allow to be extracted.",
         .consequence = "Pictures past the limit keep their archive path " ++
             "references; their bytes were not extracted.",
-        .loss = .degraded,
+        .loss = .dropped,
         .directions = &.{.{
             .title = "Raise the limit",
             .explanation = "Raise --limit max_resources or " ++
@@ -86,7 +86,7 @@ pub fn mergedCellNote() core.Report {
             "columns, and Markdown tables have no merged cells.",
         .consequence = "Each merged region keeps its content in the " ++
             "top-left cell; the covered cells are absent from the output.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source presentation if the " ++

@@ -427,7 +427,7 @@ fn stylesNote() core.Report {
         .problem = "This document carries no readable stylesheet, so " ++
             "heading styles cannot be identified.",
         .consequence = "Headings appear as plain paragraphs in the output.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Convert via .docx",
             .explanation = "Open the file in Word and save as .docx; the " ++
@@ -444,7 +444,7 @@ fn tablesNote(count: u32) core.Report {
         .problem = "The document places text in tables, and this reader " ++
             "does not reconstruct the legacy table grid.",
         .consequence = "Each table cell appears as its own paragraph.",
-        .loss = .degraded,
+        .loss = .structural,
         .count = count,
         .directions = &.{.{
             .title = "Convert via .docx",
@@ -582,7 +582,6 @@ fn convertDoc(arena: std.mem.Allocator, bytes: []const u8) !core.ast.Document {
         .input = .{ .bytes = bytes },
         .input_name = "test.doc",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -755,7 +754,6 @@ test "an encrypted document is refused with its own code" {
         .input = .{ .bytes = bytes },
         .input_name = "locked.doc",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try testing.expectError(error.Malformed, read(&ctx));

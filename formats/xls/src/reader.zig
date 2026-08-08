@@ -137,7 +137,13 @@ const Globals = struct {
             try cfb.utf16LeToUtf8(g.arena, &name, data[8..end]);
         } else {
             const end = @min(data.len, 8 + @as(usize, cch));
-            for (data[8..end]) |byte| try appendCodepoint(g.arena, &name, cfb.cp1252ToUnicode(byte));
+            for (data[8..end]) |byte| {
+                try appendCodepoint(
+                    g.arena,
+                    &name,
+                    cfb.cp1252ToUnicode(byte),
+                );
+            }
         }
         try g.sheets.append(g.arena, .{
             .name = name.items,
@@ -233,7 +239,16 @@ fn readSheet(
             },
             rec_labelsst, rec_label, rec_number, rec_rk, rec_mulrk, rec_boolerr, rec_formula => {
                 pending_formula = null;
-                try sheetCell(ctx, arena, &iter, record, globals, &cells, &pending_formula, formula_noted);
+                try sheetCell(
+                    ctx,
+                    arena,
+                    &iter,
+                    record,
+                    globals,
+                    &cells,
+                    &pending_formula,
+                    formula_noted,
+                );
             },
             else => {},
         }
@@ -415,7 +430,8 @@ fn formatSerialDate(arena: std.mem.Allocator, serial: f64, date1904: bool) ![]co
     const z = days + 719468;
     const era = @divFloor(z, 146097);
     const day_of_era: u64 = @intCast(z - era * 146097);
-    const year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    const year_of_era = (day_of_era - day_of_era / 1460 +
+        day_of_era / 36524 - day_of_era / 146096) / 365;
     const year = @as(i64, @intCast(year_of_era)) + era * 400;
     const day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     const month_prime = (5 * day_of_year + 2) / 153;
@@ -742,7 +758,7 @@ fn formulaNote() core.Report {
         .problem = "Some cells hold formulas with no cached result, and " ++
             "zenfmt does not evaluate formulas.",
         .consequence = "Those cells are empty in the output.",
-        .loss = .degraded,
+        .loss = .dropped,
         .directions = &.{.{
             .title = "Recalculate and re-save",
             .explanation = "Open the workbook, let it recalculate, save, " ++
@@ -845,11 +861,20 @@ fn buildWorkbook(arena: std.mem.Allocator, encrypted: bool, biff5: bool) ![]cons
     var stream: std.ArrayList(u8) = .empty;
     try stream.appendSlice(arena, globals.items);
     try stream.appendSlice(arena, sheet.items);
-    std.mem.writeInt(u32, stream.items[boundsheet_at..][0..4], @intCast(globals.items.len), .little);
+    std.mem.writeInt(
+        u32,
+        stream.items[boundsheet_at..][0..4],
+        @intCast(globals.items.len),
+        .little,
+    );
     return cfb.buildFile(arena, &.{.{ .name = "Workbook", .data = stream.items }});
 }
 
-fn convertXls(arena: std.mem.Allocator, bytes: []const u8, reports: *core.Reports) !core.ast.Document {
+fn convertXls(
+    arena: std.mem.Allocator,
+    bytes: []const u8,
+    reports: *core.Reports,
+) !core.ast.Document {
     const store = try arena.create(core.ast.Store);
     store.* = .{};
     var b = core.builder.Builder.init(arena, store, .{});
@@ -859,7 +884,6 @@ fn convertXls(arena: std.mem.Allocator, bytes: []const u8, reports: *core.Report
         .input = .{ .bytes = bytes },
         .input_name = "test.xls",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

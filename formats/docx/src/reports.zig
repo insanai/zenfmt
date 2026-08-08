@@ -207,7 +207,7 @@ pub fn mergedCellNote() core.Report {
             "columns.",
         .consequence = "Merged content sits in its first cell; the " ++
             "covered positions are empty.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source document if the merged-cell " ++
@@ -250,7 +250,7 @@ pub fn degradedNote(
         .title = title,
         .problem = problem,
         .consequence = consequence,
-        .loss = .degraded,
+        .loss = .presentation,
         .directions = &.{.{
             .title = "Keep the source",
             .explanation = "Keep the source DOCX if those details matter.",
@@ -258,7 +258,11 @@ pub fn degradedNote(
     };
 }
 
-pub fn addCounted(reports: *core.Reports, template: core.Report, count: u32) error{OutOfMemory}!void {
+pub fn addCounted(
+    reports: *core.Reports,
+    template: core.Report,
+    count: u32,
+) error{OutOfMemory}!void {
     var value = template;
     value.count = count;
     try reports.add(value);

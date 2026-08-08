@@ -31,7 +31,6 @@ fn convertOdp(arena: std.mem.Allocator, content: []const u8) !ConvertResult {
         .input = .{ .bytes = archive_bytes },
         .input_name = "test.odp",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -224,7 +223,8 @@ test "declared header rows map to table_head, covered cells fold" {
         \\<table:table-cell><text:p>h2</text:p></table:table-cell>
         \\</table:table-row></table:table-header-rows>
         \\<table:table-row>
-        \\<table:table-cell table:number-columns-spanned="2"><text:p>wide</text:p></table:table-cell>
+        \\<table:table-cell table:number-columns-spanned="2">
+        \\<text:p>wide</text:p></table:table-cell>
         \\<table:covered-table-cell/>
         \\</table:table-row>
         \\</table:table></draw:frame>

@@ -24,7 +24,8 @@ const r_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationship
 
 fn read(ctx: *core.ReadContext) core.ReadError!void {
     const arena = ctx.gpa;
-    var archive = ooxml.zip.Archive.openSource(arena, ooxml.zipSource(ctx), ctx.limits) catch |err| {
+    const source = ooxml.zipSource(ctx);
+    var archive = ooxml.zip.Archive.openSource(arena, source, ctx.limits) catch |err| {
         try ctx.reports.add(archiveReport());
         return switch (err) {
             error.OutOfMemory => error.OutOfMemory,
@@ -46,7 +47,11 @@ fn read(ctx: *core.ReadContext) core.ReadError!void {
     const workbook_rels = blk: {
         const bytes = extract(&archive, arena, "xl/_rels/workbook.xml.rels", ctx) orelse
             break :blk ooxml.Relationships.empty;
-        break :blk ooxml.parseRelationships(arena, bytes, ctx.limits) catch ooxml.Relationships.empty;
+        break :blk ooxml.parseRelationships(
+            arena,
+            bytes,
+            ctx.limits,
+        ) catch ooxml.Relationships.empty;
     };
 
     const workbook_bytes = extract(&archive, arena, "xl/workbook.xml", ctx) orelse {
@@ -371,7 +376,11 @@ fn readSheet(
                                 .sheet = name,
                                 .row = row_index,
                                 .col = emitted_in_row,
-                                .value_type = gridValueType(cell_type, cell_kind, value_buffer.items),
+                                .value_type = gridValueType(
+                                    cell_type,
+                                    cell_kind,
+                                    value_buffer.items,
+                                ),
                                 .formula = formula_buffer.items,
                                 .cached = value_buffer.items,
                             }
@@ -481,7 +490,8 @@ fn formatSerialDate(arena: std.mem.Allocator, serial: f64) ![]const u8 {
     const z = days + 719468;
     const era = @divFloor(z, 146097);
     const day_of_era: u64 = @intCast(z - era * 146097);
-    const year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    const year_of_era = (day_of_era - day_of_era / 1460 +
+        day_of_era / 36524 - day_of_era / 146096) / 365;
     const year = @as(i64, @intCast(year_of_era)) + era * 400;
     const day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     const month_prime = (5 * day_of_year + 2) / 153;
@@ -545,7 +555,7 @@ fn formulaNote() core.Report {
         .problem = "Some cells hold formulas with no cached result, and " ++
             "zenfmt does not evaluate formulas.",
         .consequence = "Those cells are empty in the output.",
-        .loss = .degraded,
+        .loss = .dropped,
         .directions = &.{.{
             .title = "Recalculate and re-save",
             .explanation = "Open the spreadsheet, let it recalculate, " ++
@@ -605,7 +615,6 @@ test "self-closing rows and cells keep the table balanced" {
         .input = .{ .bytes = bytes },
         .input_name = "grid.xlsx",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
@@ -665,7 +674,6 @@ test "grid facets carry coordinates, formula source, and cached values" {
         .input = .{ .bytes = bytes },
         .input_name = "grid.xlsx",
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);

@@ -237,7 +237,7 @@ fn raggedRowNote() core.Report {
             "first row.",
         .consequence = "The row was kept as-is; the rendered table pads " ++
             "or truncates its columns to stay rectangular.",
-        .loss = .degraded,
+        .loss = .structural,
         .directions = &.{.{
             .title = "Check the source data",
             .explanation = "Check the source data for missing or extra " ++
@@ -262,7 +262,6 @@ fn parseCsv(arena: std.mem.Allocator, bytes: []const u8, name: []const u8) !core
         .input = .{ .bytes = bytes },
         .input_name = name,
         .reports = reports,
-        .manifest_in = null,
         .limits = .{},
     };
     try read(&ctx);
