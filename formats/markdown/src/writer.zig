@@ -42,6 +42,7 @@ pub const writer = core.Writer(.{
     .extensions = &.{ "md", "markdown" },
     .write = write,
     .capabilities = &capabilities_mod.capabilities,
+    .emits = .utf8_text,
 });
 
 pub fn write(ctx: *core.WriteContext) core.WriteError!void {

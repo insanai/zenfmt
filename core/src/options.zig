@@ -19,8 +19,20 @@ pub const InputSpec = union(enum) {
 pub const OutputSpec = union(enum) {
     /// Written atomically, with `<path>.zenfmt.json` beside it.
     path: []const u8,
-    /// Streamed; the manifest is only returned in `Conversion`.
+    /// Streamed; the manifest is only returned in `Conversion`. Embedded
+    /// resources are not projected in this mode.
     writer: *std.Io.Writer,
+    /// Staged in conversion-owned memory with the same resource naming,
+    /// target rewriting, digests, and manifest as path publication; the
+    /// result carries the complete ensemble (ZDS 0014).
+    memory: Memory,
+
+    pub const Memory = struct {
+        /// Artifact basename used in the manifest and for deterministic
+        /// `<stem>_media/` resource naming. Must not contain a directory
+        /// separator.
+        artifact_name: []const u8,
+    };
 };
 
 pub const ConvertOptions = struct {

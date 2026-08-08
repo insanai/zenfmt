@@ -157,6 +157,42 @@ pub fn inputTooLarge(
     };
 }
 
+pub fn outputTooLarge(
+    arena: std.mem.Allocator,
+    artifact_name: []const u8,
+    limit_values: Limits,
+) error{OutOfMemory}!Report {
+    return .{
+        .severity = .err,
+        .code = "core.output-too-large",
+        .title = "OUTPUT EXCEEDS THE SIZE LIMIT",
+        .problem = try std.fmt.allocPrint(
+            arena,
+            "Emitting `{s}` reached max_output_bytes ({d}) before the " ++
+                "writer finished.",
+            .{ artifact_name, limit_values.max_output_bytes },
+        ),
+        .consequence = "The conversion stopped before accepting another " ++
+            "output byte, and no artifact or manifest was published.",
+        .context = .{ .path = .{
+            .path = artifact_name,
+            .operation = "write the converted artifact",
+        } },
+        .exit_class = .limit,
+        .directions = try directionsSlice(arena, .{
+            .title = "Raise the limit if the output size is expected",
+            .explanation = try std.fmt.allocPrint(
+                arena,
+                "If an artifact this large is expected, retry with --limit " ++
+                    "max_output_bytes={d} or a larger exact byte count. The " ++
+                    "converter may then hold or write up to that amount; " ++
+                    "otherwise split or shrink the source document.",
+                .{limit_values.max_output_bytes * 2},
+            ),
+        }),
+    };
+}
+
 pub fn invalidLimitConfiguration(
     arena: std.mem.Allocator,
     name: []const u8,
@@ -713,7 +749,7 @@ pub fn commitFailure(
     if (err == error.PathAlreadyExists) {
         const output_path = switch (options.output) {
             .path => |p| p,
-            .writer => path,
+            .writer, .memory => path,
         };
         return .{
             .severity = .err,

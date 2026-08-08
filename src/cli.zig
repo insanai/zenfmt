@@ -14,7 +14,7 @@ const assert = std.debug.assert;
 const Io = std.Io;
 const zenfmt = @import("root.zig");
 
-const version_text = "zenfmt 0.0.0\n";
+const version_text = "zenfmt " ++ @import("zenfmt_build").version ++ "\n";
 
 const exit_ok: u8 = 0;
 const exit_conversion: u8 = 1;

@@ -44,6 +44,48 @@ pub const TrackingWriter = struct {
     }
 };
 
+/// A zero-buffer forwarding writer that refuses the byte that would cross
+/// `limit` (ZDS 0014, `max_output_bytes`). The rejected drain forwards
+/// nothing; `exceeded` distinguishes the limit from an ordinary write
+/// failure.
+pub const LimitedWriter = struct {
+    out: *std.Io.Writer,
+    limit: u64,
+    count: u64 = 0,
+    exceeded: bool = false,
+    writer: std.Io.Writer,
+
+    pub fn init(out: *std.Io.Writer, limit: u64) LimitedWriter {
+        return .{
+            .out = out,
+            .limit = limit,
+            .writer = .{
+                .buffer = &.{},
+                .vtable = &.{ .drain = drain },
+            },
+        };
+    }
+
+    fn drain(
+        writer: *std.Io.Writer,
+        data: []const []const u8,
+        splat: usize,
+    ) std.Io.Writer.Error!usize {
+        const limited: *LimitedWriter = @alignCast(
+            @fieldParentPtr("writer", writer),
+        );
+        assert(writer.end == 0);
+        const incoming = std.Io.Writer.countSplat(data, splat);
+        if (incoming > limited.limit - limited.count) {
+            limited.exceeded = true;
+            return error.WriteFailed;
+        }
+        const accepted = try limited.out.writeSplatHeader(&.{}, data, splat);
+        limited.count += accepted;
+        return accepted;
+    }
+};
+
 pub fn failureState(
     path_output: bool,
     tracking: ?*const TrackingWriter,

@@ -86,6 +86,20 @@ fn outOfMemoryConversion(
     };
 }
 
+/// An embedded artifact resource file, as planned for path or memory
+/// publication.
+pub const ResourceFile = resource_output.File;
+
+/// The complete in-memory artifact ensemble of a successful `.memory`
+/// conversion (ZDS 0014): artifact bytes plus every embedded resource, with
+/// the same deterministic naming, target rewriting, and digests as path
+/// publication. All bytes are arena-owned by the conversion.
+pub const MemoryEnsemble = struct {
+    artifact_name: []const u8,
+    artifact: []const u8,
+    resources: []const ResourceFile,
+};
+
 /// The result of a conversion. Never an error union: expected failures are
 /// `.status == .failed` with structured reports, so the explanation is not
 /// discarded at the exact moment an embedding application needs it.
@@ -96,6 +110,13 @@ pub const Conversion = struct {
     /// beside the artifact; on stream output this is the only copy.
     manifest_json: ?[]const u8,
     exit_class: report.ExitClass,
+    /// The complete artifact ensemble; non-null only for a successful
+    /// `.memory` conversion. Failure never populates it.
+    ensemble: ?MemoryEnsemble = null,
+    /// Canonical reader format id selected by the engine; set on success.
+    source_format: ?[]const u8 = null,
+    /// Canonical writer format id selected by the engine; set on success.
+    output_format: ?[]const u8 = null,
     /// What the caller's stream received (ZDS 0013, Core Contract
     /// Repairs): `.none` for path output, otherwise whether the stream got
     /// nothing, a partial prefix, or the complete artifact. A failed
@@ -160,7 +181,7 @@ pub fn Bundle(comptime spec: anytype) type {
             );
             var stream: Conversion.StreamState = switch (options.output) {
                 .writer => .untouched,
-                .path => .none,
+                .path, .memory => .none,
             };
             if (invalid_limit) |field| {
                 const value = invalidLimitConfiguration(
@@ -182,12 +203,14 @@ pub fn Bundle(comptime spec: anytype) type {
                 };
             }
 
+            var extra: SelectedOutput = .{};
             const manifest_json = run(
                 arena,
                 io,
                 options,
                 &reports,
                 &stream,
+                &extra,
             ) catch |err| switch (err) {
                 error.OutOfMemory => {
                     return outOfMemoryConversion(gpa, &arena_instance, stream);
@@ -212,10 +235,22 @@ pub fn Bundle(comptime spec: anytype) type {
                 .reports = final,
                 .manifest_json = manifest_json,
                 .exit_class = .conversion,
+                .ensemble = extra.ensemble,
+                .source_format = extra.source_format,
+                .output_format = extra.output_format,
                 .stream = stream,
                 .arena_state = arena_instance.state,
             };
         }
+
+        /// Success-only result data threaded out of the static conversion
+        /// path: the selected format ids and, for `.memory` output, the
+        /// staged ensemble.
+        const SelectedOutput = struct {
+            ensemble: ?MemoryEnsemble = null,
+            source_format: ?[]const u8 = null,
+            output_format: ?[]const u8 = null,
+        };
 
         fn run(
             arena: std.mem.Allocator,
@@ -223,6 +258,7 @@ pub fn Bundle(comptime spec: anytype) type {
             options: ConvertOptions,
             reports: *Reports,
             stream: *Conversion.StreamState,
+            extra: *SelectedOutput,
         ) RunError![]const u8 {
             var input = try resolveInput(arena, io, options, reports);
             defer input.deinit(io);
@@ -242,6 +278,7 @@ pub fn Bundle(comptime spec: anytype) type {
                                 &input,
                                 reports,
                                 stream,
+                                extra,
                             );
                         }
                     }
@@ -262,6 +299,7 @@ pub fn Bundle(comptime spec: anytype) type {
             input: *ResolvedInput,
             reports: *Reports,
             stream: *Conversion.StreamState,
+            extra: *SelectedOutput,
         ) RunError![]const u8 {
             const adjacent = try adjacent_manifest.load(
                 arena,
@@ -310,6 +348,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 result.own_plugin_data,
                 reports,
                 stream,
+                extra,
             );
         }
 
@@ -427,13 +466,20 @@ pub fn Bundle(comptime spec: anytype) type {
             own_plugin_data: ?plugin.ReadContext.OwnPluginData,
             reports: *Reports,
             stream: *Conversion.StreamState,
+            extra: *SelectedOutput,
         ) RunError![]const u8 {
             const media_plan: []const resource_output.File = switch (options.output) {
                 .path => |path| try resource_output.plan(arena, path, doc),
+                .memory => |memory| try resource_output.plan(
+                    arena,
+                    memory.artifact_name,
+                    doc,
+                ),
                 .writer => &.{},
             };
             const artifact_name = switch (options.output) {
                 .path => |path| std.fs.path.basename(path),
+                .memory => |memory| memory.artifact_name,
                 .writer => "stdout",
             };
             var plan_storage = try preparePlan(
@@ -446,7 +492,7 @@ pub fn Bundle(comptime spec: anytype) type {
             );
             var atomic: ?Io.File.Atomic = null;
             defer if (atomic) |*af| af.deinit(io);
-            const digest = try renderArtifact(
+            const rendered = try renderArtifact(
                 writer_descriptor,
                 arena,
                 io,
@@ -470,7 +516,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 own_plugin_data,
                 reports,
                 media_plan,
-                digest,
+                rendered.digest,
             );
             try publishPath(
                 arena,
@@ -482,6 +528,15 @@ pub fn Bundle(comptime spec: anytype) type {
                 &atomic,
                 reports,
             );
+            extra.source_format = reader_descriptor.format;
+            extra.output_format = writer_descriptor.format;
+            if (options.output == .memory) {
+                extra.ensemble = .{
+                    .artifact_name = artifact_name,
+                    .artifact = rendered.memory_bytes.?,
+                    .resources = media_plan,
+                };
+            }
             return manifest_json;
         }
 
@@ -609,6 +664,13 @@ pub fn Bundle(comptime spec: anytype) type {
             return error.Failed;
         }
 
+        /// A rendered artifact: the digest always, plus the arena-owned
+        /// bytes when the destination was memory.
+        const RenderedArtifact = struct {
+            digest: manifest.DigestHex,
+            memory_bytes: ?[]const u8,
+        };
+
         fn renderArtifact(
             comptime descriptor: plugin.WriterDescriptor,
             arena: std.mem.Allocator,
@@ -621,16 +683,23 @@ pub fn Bundle(comptime spec: anytype) type {
             stream: *Conversion.StreamState,
             plan: *?lowering.Plan,
             atomic: *?Io.File.Atomic,
-        ) RunError!manifest.DigestHex {
+        ) RunError!RenderedArtifact {
             const Blake3 = std.crypto.hash.Blake3;
             const destination: artifact_output.Destination = switch (options.output) {
                 .writer => |value| .{ .writer = value },
                 .path => |value| .{ .path = value },
+                .memory => .{ .memory = arena },
             };
             var sink: artifact_output.Sink = .{};
-            sink.open(io, destination, options.overwrite, atomic) catch |err| {
+            sink.open(
+                io,
+                destination,
+                options.overwrite,
+                options.limits.max_output_bytes,
+                atomic,
+            ) catch |err| {
                 const path = switch (options.output) {
-                    .writer => artifact_name,
+                    .writer, .memory => artifact_name,
                     .path => |value| value,
                 };
                 try reports.add(try pathFailure(
@@ -662,10 +731,20 @@ pub fn Bundle(comptime spec: anytype) type {
             };
             descriptor.write(&context) catch |err| {
                 stream.* = stream_output.failureState(
-                    options.output == .path,
+                    options.output != .writer,
                     sink.tracker(),
                 );
-                if (err == error.OutOfMemory) return error.OutOfMemory;
+                if (err == error.OutOfMemory or sink.memoryOom()) {
+                    return error.OutOfMemory;
+                }
+                if (sink.outputLimitExceeded()) {
+                    try reports.add(try outputTooLarge(
+                        arena,
+                        artifact_name,
+                        options.limits,
+                    ));
+                    return error.Failed;
+                }
                 try reports.add(try writerFailure(
                     arena,
                     descriptor.format,
@@ -699,13 +778,22 @@ pub fn Bundle(comptime spec: anytype) type {
             plan: *?lowering.Plan,
             sink: *artifact_output.Sink,
             hashed: *Io.Writer.Hashed(std.crypto.hash.Blake3),
-        ) RunError!manifest.DigestHex {
+        ) RunError!RenderedArtifact {
             if (plan.*) |*selected| selected.assertEmissionComplete();
             hashed.writer.flush() catch |err| {
                 stream.* = stream_output.failureState(
-                    options.output == .path,
+                    options.output != .writer,
                     sink.tracker(),
                 );
+                if (sink.memoryOom()) return error.OutOfMemory;
+                if (sink.outputLimitExceeded()) {
+                    try reports.add(try outputTooLarge(
+                        arena,
+                        artifact_name,
+                        options.limits,
+                    ));
+                    return error.Failed;
+                }
                 try reports.add(try writerFailure(
                     arena,
                     format,
@@ -726,7 +814,13 @@ pub fn Bundle(comptime spec: anytype) type {
                 return error.Failed;
             };
             if (options.output == .writer) stream.* = .complete;
-            return manifest.digestHexFromHasher(&hashed.hasher);
+            return .{
+                .digest = manifest.digestHexFromHasher(&hashed.hasher),
+                .memory_bytes = if (options.output == .memory)
+                    sink.memoryBytes()
+                else
+                    null,
+            };
         }
 
         fn buildManifest(
@@ -747,7 +841,11 @@ pub fn Bundle(comptime spec: anytype) type {
             try metadata.writeMetaMap(arena, doc, doc.meta, &meta_stream);
             const meta_json = try meta_stream.toOwnedSlice();
             const media = switch (options.output) {
-                .path => try resource_output.manifestEntries(arena, doc, media_plan),
+                .path, .memory => try resource_output.manifestEntries(
+                    arena,
+                    doc,
+                    media_plan,
+                ),
                 .writer => &.{},
             };
             const consumed = if (writer.capabilities) |caps| caps.facets else &.{};
@@ -761,6 +859,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 .artifact = .{
                     .name = switch (options.output) {
                         .path => |path| std.fs.path.basename(path),
+                        .memory => |memory| memory.artifact_name,
                         .writer => "stdout",
                     },
                     .format = writer.format,
@@ -796,7 +895,7 @@ pub fn Bundle(comptime spec: anytype) type {
             reports: *Reports,
         ) RunError!void {
             const path = switch (options.output) {
-                .writer => return,
+                .writer, .memory => return,
                 .path => |value| value,
             };
             var failure: publication.Failure = .{};
@@ -943,6 +1042,7 @@ const FormatRole = engine_reports.FormatRole;
 const reportUnknownFormat = engine_reports.reportUnknownFormat;
 const reportUndetectable = engine_reports.reportUndetectable;
 const inputTooLarge = engine_reports.inputTooLarge;
+const outputTooLarge = engine_reports.outputTooLarge;
 const invalidLimitConfiguration = engine_reports.invalidLimitConfiguration;
 const staleManifest = engine_reports.staleManifest;
 const invalidTreeReport = engine_reports.invalidTreeReport;

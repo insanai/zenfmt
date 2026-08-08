@@ -15,6 +15,8 @@ pub const default_output_format = Default.default_output_format;
 
 pub const ConvertOptions = core.ConvertOptions;
 pub const Conversion = core.Conversion;
+pub const MemoryEnsemble = core.MemoryEnsemble;
+pub const ResourceFile = core.ResourceFile;
 pub const InputSpec = core.InputSpec;
 pub const OutputSpec = core.OutputSpec;
 pub const Status = core.Status;

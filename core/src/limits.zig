@@ -60,6 +60,10 @@ pub const Limits = struct {
     /// Maximum decoded text pool bytes, distinct from `max_input_bytes`, so
     /// a small compressed input cannot decode into an unbounded pool.
     max_decoded_text_bytes: u64 = 256 * 1024 * 1024,
+    /// Maximum artifact bytes a writer may emit, checked at the shared
+    /// artifact sink before another byte is accepted, in every output mode
+    /// (ZDS 0014). Input-side limits do not bound artifact bytes themselves.
+    max_output_bytes: u64 = 512 * 1024 * 1024,
     /// Maximum lowering alternatives a writer may declare per construct;
     /// the choice DAG stays a bush, not a thicket (ZDS 0013).
     max_lowering_alternatives: u32 = 8,

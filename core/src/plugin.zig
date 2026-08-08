@@ -160,6 +160,11 @@ pub const ReaderDescriptor = struct {
     read: *const fn (ctx: *ReadContext) ReadError!void,
 };
 
+/// What a writer's artifact bytes are: UTF-8 text or arbitrary binary.
+/// Capability metadata reports it so an embedding can decode text output
+/// without guessing an encoding (ZDS 0014).
+pub const Emission = enum { utf8_text, binary };
+
 pub const WriterDescriptor = struct {
     id: []const u8,
     format: []const u8,
@@ -170,6 +175,8 @@ pub const WriterDescriptor = struct {
     /// engine builds a lowering plan, prices its loss, and gates graded
     /// strict before anything is committed.
     capabilities: ?*const lowering.Capabilities = null,
+    /// Whether the artifact is UTF-8 text or arbitrary bytes.
+    emits: Emission = .utf8_text,
 };
 
 pub const ReaderOptions = struct {
@@ -191,6 +198,7 @@ pub const WriterOptions = struct {
     data_version: u32 = 0,
     write: *const fn (ctx: *WriteContext) WriteError!void,
     capabilities: ?*const lowering.Capabilities = null,
+    emits: Emission = .utf8_text,
 };
 
 pub fn Reader(comptime options: ReaderOptions) ReaderDescriptor {
@@ -214,6 +222,7 @@ pub fn Writer(comptime options: WriterOptions) WriterDescriptor {
         .data_version = options.data_version,
         .write = options.write,
         .capabilities = options.capabilities,
+        .emits = options.emits,
     };
 }
 

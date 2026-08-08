@@ -591,10 +591,26 @@ fn needsQuoting(arg: []const u8) bool {
 
 // ------------------------------------------------------- JSON rendering
 
+/// Options for the JSON form of a report. The canonical manifest and
+/// `--reports=json` use the defaults; the private native bridge includes
+/// `exit_class` for its consumers without changing canonical manifest bytes
+/// (ZDS 0014).
+pub const JsonOptions = struct {
+    include_exit_class: bool = false,
+};
+
 /// The structured form of a report: the same facts as the text renderer,
 /// not the terminal text wrapped in JSON. Used both by `--reports=json` and
 /// by the artifact manifest.
 pub fn writeJson(report: Report, w: *json.WriteStream) json.WriteError!void {
+    return writeJsonOptions(report, w, .{});
+}
+
+pub fn writeJsonOptions(
+    report: Report,
+    w: *json.WriteStream,
+    options: JsonOptions,
+) json.WriteError!void {
     try w.beginObject();
     try w.field("code");
     try w.string(report.code);
@@ -623,6 +639,10 @@ pub fn writeJson(report: Report, w: *json.WriteStream) json.WriteError!void {
         try w.endObject();
     }
     try w.endArray();
+    if (options.include_exit_class) {
+        try w.field("exit_class");
+        try w.string(@tagName(report.exit_class));
+    }
     if (report.loss) |loss| {
         try w.field("loss");
         try w.string(@tagName(loss));
