@@ -39,12 +39,15 @@ same chapters twice from one bundle collides the labels the outline, figures,
 and cross-references depend on. The records describe the decisions; the book
 describes the system those decisions produced.
 
-**Determinism.** Every Typst invocation runs with system fonts ignored, the
-vendored `packages/` tree as its package path, and an explicit creation
-timestamp, so two builds of the same revision produce byte-identical output.
-This is load-bearing rather than tidy: HTML figure export embeds glyph
-outlines, so a differing installed font changes the generated *HTML*, not just
-the PDF. Pass `-Dsource-date-epoch=<unix time>` to stamp a specific date.
+**Determinism.** Every Typst invocation runs with system fonts ignored and an
+explicit creation timestamp, so two builds of the same revision produce
+byte-identical output. This is load-bearing rather than tidy: HTML figure
+export embeds glyph outlines, so a font that resolves differently on another
+machine changes the generated *HTML*, not just the PDF — which is why a
+document may name only fonts Typst embeds. Pass
+`-Dsource-date-epoch=<unix time>` to stamp a specific date. Packages come from
+the `@preview` imports, which name exact versions; the Typst CLI resolves and
+caches them.
 
 ## Read them
 

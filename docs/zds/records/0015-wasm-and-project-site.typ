@@ -1625,8 +1625,6 @@ site/                      authored shell assets and homepage content
   templates/               the shared HTML shell and page templates
   pages/                   body partials and microcopy for generated pages
 docs/book/site.typ         multi-document Typst book bundle entry point
-docs/fonts/                vendored Typst text fonts
-docs/packages/             vendored Typst preview packages
 docs/site/                 uv-managed Python assembler and validators
 tools/wasm_audit.zig       WASM section auditor
 tests/wasm/                Zig parity, ABI, limit, leak, and adversarial tests
@@ -1652,9 +1650,13 @@ records.
 
 - Zig 0.16.0 compiles native and WASM artifacts, runs Zig tests/audits, and
   owns the repository build DAG.
-- Typst 0.15.1 — pinned to that exact patch version, with its `@preview`
-  packages and text fonts vendored in the repository — produces semantic bundle
-  HTML and PDFs from the book/ZDS sources.
+- Typst 0.15.1 — pinned to that exact patch version — produces semantic bundle
+  HTML and PDFs from the book/ZDS sources. Its `@preview` imports name exact
+  package versions and the Typst CLI resolves and caches them itself; the
+  sources are not vendored, because an exact version in the import already
+  pins what is resolved, and copying third-party packages into this repository
+  would mean carrying their licences inside an MIT project for no additional
+  guarantee.
 - uv manages locked Python environments for site assembly, indexing,
   validation, benchmark aggregation, and browser tests. The site tooling is its
   own uv project with its own lockfile, kept separate from the published Python
@@ -1722,12 +1724,14 @@ leakage.
 
 Reproducibility across those two builds is not automatic and depends on
 mechanisms this record requires rather than hopes for. Every Typst invocation
-passes an explicit creation timestamp drawn from `SOURCE_DATE_EPOCH`, ignores
-system fonts, and names an explicit font path and package path. Vendoring the
-fonts is not a nicety: Typst's HTML figure export embeds glyph outlines, so an
-installed-font difference changes the generated HTML byte-for-byte and not only
-the PDF. Generated archives are written with fixed modification times, sorted
-entries, and zeroed ownership.
+passes an explicit creation timestamp drawn from `SOURCE_DATE_EPOCH` and
+ignores system fonts, using only the fonts Typst itself embeds. Ignoring system
+fonts is not a nicety: Typst's HTML figure export embeds glyph outlines, so a
+font that resolves differently on another machine changes the generated HTML
+byte-for-byte and not only the PDF. A document must therefore name only fonts
+Typst embeds, and `site-check` is what catches one that does not. Generated
+archives are written with fixed modification times, sorted entries, and zeroed
+ownership.
 
 == Static assembly
 
