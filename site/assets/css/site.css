@@ -1,0 +1,319 @@
+/* The zenfmt site (ZDS 0015, Original visual language).
+ *
+ * Semantic tokens rather than page-specific rules, so the same stylesheet
+ * dresses a generated page and a Typst-generated chapter without either
+ * knowing about the other.
+ *
+ * Colour is never the only carrier of meaning here: a callout states its kind
+ * in words, a status says what it is, and the syntax-highlighting classes
+ * below exist so Typst's inline colours can be lifted out of the markup —
+ * which is what lets the content policy forbid inline style outright.
+ */
+
+:root {
+  color-scheme: light;
+  --paper: #fbfaf7;
+  --panel: #f3f5f7;
+  --ink: #151515;
+  --muted: #667085;
+  --rule: #d7dee8;
+  --blue: #2854d7;
+  --blue-light: #e8efff;
+  --green: #16794b;
+  --amber: #a15c00;
+  --red: #9f3030;
+  --code-bg: #f7f9fc;
+  --measure: 72ch;
+}
+
+:root.theme-dark {
+  color-scheme: dark;
+  --paper: #16181d;
+  --panel: #1e2128;
+  --ink: #e8eaee;
+  --muted: #9aa4b2;
+  --rule: #2d323b;
+  --blue: #a9c4ff;
+  --blue-light: #1c2333;
+  --green: #87d7ac;
+  --amber: #e0b063;
+  --red: #f2a2a2;
+  --code-bg: #14161b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root.theme-system {
+    color-scheme: dark;
+    --paper: #16181d;
+    --panel: #1e2128;
+    --ink: #e8eaee;
+    --muted: #9aa4b2;
+    --rule: #2d323b;
+    --blue: #a9c4ff;
+    --blue-light: #1c2333;
+    --green: #87d7ac;
+    --amber: #e0b063;
+    --red: #f2a2a2;
+    --code-bg: #14161b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+main p, main li { max-width: var(--measure); }
+
+a { color: var(--blue); }
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  background: var(--blue);
+  color: #fff;
+  padding: 0.6rem 1rem;
+}
+.skip-link:focus { left: 0; top: 0; z-index: 10; }
+
+/* A focus ring that is always visible: an invisible one is the same as none
+ * for anyone navigating by keyboard. */
+:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--panel);
+}
+.site-mark { font-weight: 800; text-decoration: none; color: var(--ink); }
+.site-header nav ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.site-header [aria-current="page"] { font-weight: 700; text-decoration: underline; }
+.theme-toggle {
+  margin-left: auto;
+  min-height: 44px;
+  min-width: 44px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.site-footer {
+  border-top: 1px solid var(--rule);
+  padding: 1.5rem 1.25rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+h1 { font-size: clamp(1.9rem, 1.2rem + 2.4vw, 3rem); line-height: 1.15; letter-spacing: -0.02em; }
+h2 { font-size: 1.4rem; margin-top: 2.2rem; }
+h3 { font-size: 1.15rem; }
+
+.permalink {
+  margin-left: 0.4rem;
+  text-decoration: none;
+  color: var(--muted);
+  opacity: 0;
+}
+h1:hover .permalink, h2:hover .permalink, h3:hover .permalink,
+.permalink:focus-visible { opacity: 1; }
+
+.eyebrow {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--blue);
+}
+.lede { font-size: 1.1rem; color: var(--muted); }
+.promise { color: var(--green); font-weight: 600; }
+
+/* The workspace goes side by side only when the output can still hold a
+ * readable measure. Below that it stacks: a squeezed column of Markdown is
+ * worse than one under the other. */
+.workspace { display: grid; gap: 1.5rem; }
+@media (min-width: 80rem) {
+  .workspace { grid-template-columns: 2fr 3fr; align-items: start; }
+}
+
+.pane {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 1rem;
+  background: var(--panel);
+}
+.pane-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pane-actions { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
+.pane-actions button {
+  min-height: 44px;
+  padding: 0 1rem;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+.pane-actions button[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.drop {
+  display: grid;
+  place-items: center;
+  gap: 0.35rem;
+  min-height: 11rem;
+  padding: 1.5rem;
+  border: 2px dashed var(--blue);
+  border-radius: 8px;
+  background: var(--paper);
+  cursor: pointer;
+  text-align: center;
+}
+.drop.is-over { background: var(--blue-light); }
+.drop-headline { font-size: 1.15rem; font-weight: 700; }
+.drop-detail { color: var(--muted); font-size: 0.9rem; }
+.drop input[type="file"] {
+  /* Kept in the layout and operable by keyboard rather than hidden with
+   * display:none, which would remove it from the tab order entirely. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.pane-note { color: var(--muted); font-size: 0.85rem; }
+.status { font-weight: 600; }
+.status[data-state="failed"] { color: var(--red); }
+.status[data-state="complete"] { color: var(--green); }
+
+.output {
+  min-height: 24rem;
+  max-height: 70vh;
+  overflow: auto;
+  margin: 0;
+  padding: 1rem;
+  border-radius: 8px;
+  background: #17191d;
+  color: #e8eaee;
+  font: 13px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.reports { margin-top: 2rem; }
+.report {
+  border-left: 4px solid var(--amber);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  background: var(--panel);
+  border-radius: 0 8px 8px 0;
+}
+.report-kind { font-weight: 700; text-transform: uppercase; font-size: 0.75rem; }
+.report[data-severity="error"] { border-left-color: var(--red); }
+.report[data-severity="note"] { border-left-color: var(--blue); }
+
+.help-links, .entries { list-style: none; padding: 0; }
+.help-links li, .entries li { margin: 0.5rem 0; }
+.entry h2 { margin: 0 0 0.25rem; font-size: 1.1rem; }
+.entry-meta { color: var(--muted); font-size: 0.85rem; }
+
+.notice {
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  padding: 1rem;
+  background: var(--blue-light);
+}
+
+/* Book and record content */
+figure { margin: 1.5rem 0; }
+figure img { max-width: 100%; height: auto; }
+figcaption { color: var(--muted); font-size: 0.9rem; }
+.figure-longdesc, .figure-data { margin-top: 0.5rem; font-size: 0.9rem; }
+
+.callout, .teach-back, .exercise, .part-banner {
+  border-left: 4px solid var(--blue);
+  background: var(--panel);
+  padding: 0.75rem 1rem;
+  margin: 1.25rem 0;
+  border-radius: 0 8px 8px 0;
+}
+.callout-warning { border-left-color: var(--red); }
+.callout-idea { border-left-color: var(--green); }
+.exercise { border-left-color: var(--amber); }
+.callout-kind, .exercise-head, .teach-back-head, .part-number {
+  font-weight: 700;
+  margin-right: 0.35rem;
+}
+
+table { border-collapse: collapse; width: 100%; margin: 1.25rem 0; }
+th, td { border: 1px solid var(--rule); padding: 0.45rem 0.6rem; text-align: left; }
+th { background: var(--panel); }
+
+pre, code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+pre {
+  overflow-x: auto;
+  padding: 0.9rem;
+  border-radius: 8px;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+}
+
+/* Syntax highlighting, lifted out of Typst's inline styles. */
+.tok-string { color: #b3261e; }
+.tok-keyword { color: #2b4ea8; }
+.tok-function { color: #15691a; }
+.tok-comment { color: #6b7280; font-style: italic; }
+.tok-number { color: #9b1c5a; }
+.tok-type { color: #125c63; }
+.tok-macro { color: #6d31a0; }
+.pre-wrap { white-space: pre-wrap; }
+.inline-block { display: inline-block; }
+.list-plain { list-style-type: none; }
+.underline { text-decoration: underline; }
+
+:root.theme-dark .tok-string { color: #ffa198; }
+:root.theme-dark .tok-keyword { color: #a9c4ff; }
+:root.theme-dark .tok-function { color: #87d7ac; }
+:root.theme-dark .tok-comment { color: #9aa4b2; }
+:root.theme-dark .tok-number { color: #f7a8c9; }
+:root.theme-dark .tok-type { color: #7fd3da; }
+:root.theme-dark .tok-macro { color: #c8a2f0; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+@media print {
+  .site-header, .site-footer, .skip-link, .pane-actions { display: none; }
+  body { background: #fff; color: #000; }
+}

@@ -28,6 +28,7 @@ const stack_bytes = 8 * 1024 * 1024;
 pub const Steps = struct {
     build: *std.Build.Step,
     check: *std.Build.Step,
+    capabilities: *std.Build.Step,
 };
 
 pub fn add(
@@ -84,7 +85,7 @@ pub fn add(
     check_step.dependOn(addAudit(b, release));
     check_step.dependOn(addDeclarationCheck(b, test_step));
 
-    addCapabilities(b, build_info);
+    const capabilities_step = addCapabilities(b, build_info);
 
     // The binding's own tests run natively: the browser bundle is a host
     // variant, not a target, so its behaviour needs no runtime to check.
@@ -94,7 +95,11 @@ pub fn add(
     test_step.dependOn(&b.addRunArtifact(native_tests).step);
     check_step.dependOn(test_step);
 
-    return .{ .build = build_step, .check = check_step };
+    return .{
+        .build = build_step,
+        .check = check_step,
+        .capabilities = capabilities_step,
+    };
 }
 
 fn artifact(
@@ -185,7 +190,7 @@ fn addDeclarationCheck(b: *std.Build, test_step: *std.Build.Step) *std.Build.Ste
 /// produced. The homepage's format list, the accepted-extension hint, the
 /// download page, and the book's format tables all read this file, so none of
 /// them can quietly disagree with the engine (ZDS 0015).
-fn addCapabilities(b: *std.Build, build_info: *std.Build.Module) void {
+fn addCapabilities(b: *std.Build, build_info: *std.Build.Module) *std.Build.Step {
     const host = b.graph.host;
     const graph = modules.create(b, host, .Debug, build_info, false);
     const shared = modules.createShared(b, host, .Debug, graph.get("zenfmt_core"), false);
@@ -222,6 +227,7 @@ fn addCapabilities(b: *std.Build, build_info: *std.Build.Module) void {
         "Write the capability document from the compiled default bundle",
     );
     step.dependOn(&run.step);
+    return step;
 }
 
 /// The section auditor: a host tool that parses the produced module and

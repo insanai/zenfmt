@@ -87,7 +87,7 @@ pub fn add(
     optimize: std.builtin.OptimizeMode,
     test_step: *std.Build.Step,
     opts: Options,
-) void {
+) *std.Build.Step {
     const make_dir = b.addSystemCommand(&.{ "mkdir", "-p", "docs/build" });
 
     const zds_step = b.step("zds", "Build the Zen Discussion (ZDS) record PDFs");
@@ -180,6 +180,7 @@ pub fn add(
     docs_step.dependOn(book_site_step);
 
     addTool(b, target, optimize, test_step);
+    return docs_step;
 }
 
 /// Numbered record stems (`NNNN-slug`) discovered in docs/zds/records, or
