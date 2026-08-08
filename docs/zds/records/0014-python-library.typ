@@ -170,8 +170,9 @@ when every deliverable and acceptance gate in this record is satisfied.
   [`python/src/zenfmt/`], [The typed public API, immutable models, validation,
     exceptions, capability discovery, and secure private loader specified
     here.],
-  [root build and Python project], [`pyproject.toml`, `uv.lock`, the Hatchling
-    adapter, named `zig build python-*` orchestration steps, and the canonical
+  [build graph and Python subproject], [The self-contained uv project under
+    `python/` (`pyproject.toml`, `uv.lock`, the Hatchling adapter), named
+    `zig build python-*` orchestration steps at the root, and the canonical
     `build.zig.zon` version plumbed into the CLI, bridge, and Python
     metadata.],
   [tests], [Native ABI tests, pytest unit/integration tests, parity tests,
@@ -889,22 +890,26 @@ or fork hooks.
 
 == Repository layout
 
-The repository root is also the uv project root so a source distribution can
-contain the Python package and the Zig sources it needs without copying or
-vendoring the engine:
+The repository root is a pure Zig project; the Python distribution is a
+self-contained uv project below `python/`, so language surfaces publish
+independently and the root carries no Python configuration:
 
 ```text
 zenfmt/
-├── build.zig
+├── build.zig              # the monorepo orchestration graph, Python steps included
 ├── build.zig.zon          # canonical release version and Zig dependency lock
-├── pyproject.toml         # PEP 517/621, uv, Ruff, and pytest configuration
-├── uv.lock                # committed Python resolution
-├── hatch_build.py         # packaging adapter; delegates native builds to Zig
-├── python/
+├── python/                # the complete uv/Hatchling project
+│   ├── pyproject.toml     # PEP 517/621, uv, Ruff, and pytest configuration
+│   ├── uv.lock            # committed Python resolution
+│   ├── hatch_build.py     # packaging adapter; delegates native builds to Zig
+│   ├── README.md          # PyPI-facing readme
+│   ├── LICENSE            # MIT text carried into wheel and sdist metadata
 │   ├── src/zenfmt/        # public package and private ctypes adapter
 │   │   ├── py.typed
 │   │   └── _native/       # wheel-only packaged bridge artifact
-│   └── tests/             # pytest unit, integration, and contract tests
+│   ├── tests/             # pytest unit, integration, and contract tests
+│   └── benchmarks/
+│       └── python_api.py  # installed-wheel cold/warm API benchmark worker
 ├── bindings/python/       # Zig bridge source and ABI contract tests
 ├── core/
 ├── support/
@@ -913,7 +918,6 @@ zenfmt/
 ├── cli/
 ├── benchmarks/
 │   ├── benchmark.zig      # unified child-process comparison harness
-│   ├── python_api.py      # installed-wheel cold/warm API benchmark worker
 │   └── results/           # generated JSON and Markdown result files
 └── docs/
 ```
@@ -921,12 +925,15 @@ zenfmt/
 `python/src` is a source layout, so tests exercise an installed package rather
 than accidentally importing repository files. The bridge is under `bindings`
 because it is a language boundary; the public Python implementation remains
-under `python`.
+under `python`. The source distribution stays standalone-buildable because the
+sdist target force-includes the Zig sources it needs from the repository at
+build time (see the source-distribution section); nothing is vendored in git.
 
-The root `pyproject.toml` records `Vikrant Rathore` as the project author by
+`python/pyproject.toml` records `Vikrant Rathore` as the project author by
 name. Project documentation credits assistance from `Ronak Rathore`. The
-package uses the repository's MIT license and does not duplicate or replace the
-root copyright notice.
+package uses the repository's MIT license; `python/LICENSE` is a copy of the
+root license text so wheel and sdist metadata carry it, with the root file
+staying canonical.
 
 == Division of tool authority
 
@@ -1009,10 +1016,11 @@ Wheel metadata derives its platform tag from the same validated target tuple.
 Integrating a new language and a bridge into the monorepo touches several
 existing contracts that are easy to miss:
 
-- `build.zig.zon` gains `.paths` entries for `bindings`, `python`,
-  `pyproject.toml`, `hatch_build.py`, and `uv.lock`, and its `.version`
-  becomes the canonical `0.1.0`; `build.zig` reads and validates that version
-  and embeds it in the CLI and the bridge.
+- `build.zig.zon` gains `.paths` entries for `bindings` and `python` (the
+  latter covers the whole Python subproject, `pyproject.toml`,
+  `hatch_build.py`, and `uv.lock` included), and its `.version` becomes the
+  canonical `0.1.0`; `build.zig` reads and validates that version and embeds
+  it in the CLI and the bridge.
 - The root format check and end-to-end test lists are explicit arrays; the
   bridge sources join the format list and the new engine test files join the
   test list.
@@ -1029,7 +1037,8 @@ existing contracts that are easy to miss:
 
 == Python configuration
 
-`pyproject.toml` is the only Python tool configuration file. It contains:
+`python/pyproject.toml` is the only Python tool configuration file. It
+contains:
 
 - PEP 621 project metadata with `requires-python >= 3.10`, MIT licensing,
   project URLs, classifiers, and name-only authorship;
@@ -1041,7 +1050,9 @@ existing contracts that are easy to miss:
 - pytest paths, strict markers/config, and `--import-mode=importlib`.
 
 Ruff is configured once for `python/src`, `python/tests`,
-`benchmarks/python_api.py`, and `hatch_build.py`. The formatter's output is
+`python/benchmarks/python_api.py`, and `python/hatch_build.py` — every Python
+file in the repository lives inside the subproject, so one root-relative
+configuration covers them all. The formatter's output is
 canonical; contributor style arguments are not re-litigated in reviews. Lint
 selections emphasize correctness, security-prone APIs, modern Python, import
 hygiene, annotations, and tests, with every ignore narrowly documented beside
@@ -1107,12 +1118,20 @@ Wheel inspection must confirm:
 
 == Source distribution
 
-The release also publishes one source distribution. It includes the Python
-package, build hook, `pyproject.toml`, lock and constraints needed for release
-verification, root license and README, `build.zig`/`build.zig.zon`, bridge,
-engine, support, default format, and umbrella sources required to build the
-same bridge. It excludes repository-only docs output, benchmarks corpora,
-temporary files, and unrelated generated artifacts.
+The release also publishes one source distribution, built from the `python/`
+subproject so `pyproject.toml` sits at the archive root as PEP 517 requires.
+It includes the Python package and tests, build hook, `pyproject.toml`, lock
+needed for release verification, and the subproject readme and license; the
+Zig sources required to build the same bridge —
+`build.zig`/`build.zig.zon`, bridge, engine, support, default format, and
+umbrella sources — are force-included from the repository at build time and
+nested under `engine/` inside the archive, which keeps the Zig tree's
+internal layout intact (its `src/` never collides with the Python `src/`
+layout) without vendoring a second source tree in git. The packaging hook
+resolves the Zig build root in either place: the sdist-local `engine/`
+directory or the repository parent of `python/`. The sdist excludes
+repository-only docs output, benchmarks corpora, temporary files, and
+unrelated generated artifacts.
 
 Building from the source distribution requires the minimum Zig version named
 by `build.zig.zon` and a supported Python. The PEP 517 failure for a missing or
@@ -1226,8 +1245,8 @@ The repository's benchmark is extended to measure the Python API that users
 actually install. It must never import `python/src/zenfmt` directly or load a
 bridge from the checkout. `zig build benchmark-python` builds a ReleaseSafe
 wheel, installs that exact wheel into a clean isolated uv environment, and runs
-`benchmarks/python_api.py` with the checkout's Python sources absent from
-`sys.path`. Before timing, the worker records and verifies the wheel filename,
+`python/benchmarks/python_api.py` with the checkout's Python sources absent
+from `sys.path`. Before timing, the worker records and verifies the wheel filename,
 wheel SHA-256 digest, installed `zenfmt.__version__`, package location, native
 version, ABI version, Python implementation/version, and platform tag.
 
@@ -1592,12 +1611,20 @@ contain a platform native library and require a build hook plus platform tag
 control. uv still owns project management and invokes Hatchling through the
 standard PEP 517 frontend.
 
-== A Python project isolated below `python/`
+== The repository root as the uv project root
 
-Rejected because a PyPI source distribution built from that directory would
-either reference unavailable parent files or copy the Zig engine into a second
-source tree. A root uv project with a `python/src` package layout lets one sdist
-contain the authoritative sources and keeps `zig build` in charge.
+Rejected. An earlier revision of this record placed `pyproject.toml`,
+`uv.lock`, and the packaging hook at the repository root on the theory that a
+source distribution could not otherwise contain the Zig engine without
+vendoring it. That made the whole monorepo double as the Python project:
+Python tooling configuration polluted a Zig-first root, and publishing
+language surfaces separately became awkward as each new surface would compete
+for the same root. The objection to the isolated layout was wrong in fact —
+Hatchling's sdist force-include maps repository sources into the archive at
+build time (nested under `engine/`), so a self-contained `python/` project
+still produces a standalone sdist with no second committed source tree. The
+adopted layout keeps the root purely Zig, `zig build` in charge of
+orchestration, and the Python project publishable on its own.
 
 == Wheel-only publication
 
