@@ -2,6 +2,7 @@
 .zig-cache/
 zig-out/
 docs/build/
+build/
 benchmarks/corpus/
 benchmarks/.anydoc/
 benchmarks/.venv-wheel/
