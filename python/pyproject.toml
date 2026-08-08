@@ -54,45 +54,51 @@ path = "hatch_build.py"
 expression = "PROJECT_VERSION"
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/src/zenfmt"]
+packages = ["src/zenfmt"]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
-# The sdist is standalone-buildable: the Python layer plus every Zig source
+# The sdist is standalone-buildable: the Python project plus every Zig source
 # the bridge needs (ZDS 0014). Repository-only material stays out.
 include = [
-    "/build.zig",
-    "/build.zig.zon",
     "/hatch_build.py",
     "/pyproject.toml",
     "/uv.lock",
     "/README.md",
     "/LICENSE",
-    "/python/src/**",
-    "/python/tests/**",
-    "/bindings/**",
-    "/core/**",
-    "/support/**",
-    "/formats/**",
     "/src/**",
+    "/tests/**",
 ]
 exclude = [
     "**/__pycache__",
     "**/.pytest_cache",
-    "/python/src/zenfmt/_native/*.so",
-    "/python/src/zenfmt/_native/*.dylib",
-    "/python/src/zenfmt/_native/*.dll",
+    "/src/zenfmt/_native/*.so",
+    "/src/zenfmt/_native/*.dylib",
+    "/src/zenfmt/_native/*.dll",
 ]
+
+# The Zig engine sources the sdist needs are pulled from the repository at
+# build time and nested under engine/ so the Zig umbrella src/ never collides
+# with the Python src/ layout. hatch_build.py finds the build root in either
+# place (repository parent or sdist-local engine/).
+[tool.hatch.build.targets.sdist.force-include]
+"../build.zig" = "engine/build.zig"
+"../build.zig.zon" = "engine/build.zig.zon"
+"../bindings" = "engine/bindings"
+"../core" = "engine/core"
+"../support" = "engine/support"
+"../formats" = "engine/formats"
+"../src" = "engine/src"
 
 [tool.ruff]
 target-version = "py310"
 line-length = 88
-src = ["python/src"]
+src = ["src"]
 include = [
-    "python/src/**/*.py",
-    "python/tests/**/*.py",
+    "src/**/*.py",
+    "tests/**/*.py",
     "benchmarks/python_api.py",
     "hatch_build.py",
 ]
@@ -119,12 +125,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"python/tests/**" = [
+"tests/**" = [
     "S101", # pytest asserts
     "S108", # tests may reference shared tmp fixtures
     "S607", # uv/zig resolved from PATH deliberately in test helpers
 ]
-"python/tests/release/smoke.py" = [
+"tests/release/smoke.py" = [
     "PT017", # a standalone script, not a pytest module: it asserts on
     # caught exceptions because pytest.raises is unavailable
     "S101",
@@ -135,8 +141,8 @@ ignore = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["python/tests"]
-pythonpath = ["python/tests"]
+testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = "--import-mode=importlib --strict-markers --strict-config -q"
 markers = [
     "integration: exercises the real host bridge staged by `zig build python-sync`",

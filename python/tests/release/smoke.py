@@ -17,10 +17,13 @@ from pathlib import Path
 
 
 def main() -> int:
+    # A leaked checkout directory carries pyproject.toml (the python/
+    # subproject) or build.zig.zon (the repository root).
     for entry in sys.path:
-        if entry and (Path(entry) / "pyproject.toml").is_file():
-            print(f"checkout leaked onto sys.path: {entry}")
-            return 1
+        for marker in ("pyproject.toml", "build.zig.zon"):
+            if entry and (Path(entry) / marker).is_file():
+                print(f"checkout leaked onto sys.path: {entry}")
+                return 1
 
     import zenfmt
 

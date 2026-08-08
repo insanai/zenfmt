@@ -1,13 +1,18 @@
-"""Hatchling adapters for the zenfmt monorepo (ZDS 0014).
+"""Hatchling adapters for the zenfmt Python subproject (ZDS 0014).
 
 Two small pieces: ``PROJECT_VERSION`` (evaluated by hatchling's ``code``
 version source) translating the canonical ``build.zig.zon`` version to
-PEP 440, and a wheel build hook that asks the root Zig build graph for
-the native bridge and packages it under ``zenfmt/_native`` with the
-matching platform tag. Native compilation is owned by ``zig build``; this
-file never duplicates target logic beyond the closed table below, and it
-is a no-op for editable installs (development staging is
+PEP 440, and a wheel build hook that asks the Zig build graph for the
+native bridge and packages it under ``zenfmt/_native`` with the matching
+platform tag. Native compilation is owned by ``zig build``; this file
+never duplicates target logic beyond the closed table below, and it is a
+no-op for editable installs (development staging is
 ``zig build python-sync``).
+
+The Zig build root lives in one of two places relative to this file: the
+repository parent (a checkout, where ``python/`` is the subproject) or a
+sdist-local ``engine/`` directory (where the sdist's force-included Zig
+sources land). ``zig_root`` resolves whichever exists.
 """
 
 from __future__ import annotations
@@ -34,6 +39,23 @@ WHEEL_TARGETS: dict[str, tuple[str, str]] = {
     "aarch64-macos.12.0": ("macosx_12_0_arm64", "libzenfmt_py.dylib"),
     "x86_64-windows-gnu": ("win_amd64", "zenfmt_py.dll"),
 }
+
+
+def zig_root(project_root: Path) -> Path:
+    """The directory holding ``build.zig``/``build.zig.zon``.
+
+    In a sdist that is the force-included ``engine/`` directory beside
+    ``pyproject.toml``; in a repository checkout it is the parent of the
+    ``python/`` subproject.
+    """
+    for candidate in (project_root / "engine", project_root.parent):
+        if (candidate / "build.zig.zon").is_file():
+            return candidate
+    raise RuntimeError(
+        f"no build.zig.zon found beside {project_root} (neither engine/ "
+        "nor the repository parent); the Zig sources are required to "
+        "version and build the native bridge"
+    )
 
 
 def read_zon_version(root: Path) -> str:
@@ -104,7 +126,7 @@ def host_triple() -> str:
 
 
 #: Evaluated by hatchling's ``code`` version source (pyproject.toml).
-PROJECT_VERSION = semver_to_pep440(read_zon_version(Path(__file__).parent))
+PROJECT_VERSION = semver_to_pep440(read_zon_version(zig_root(Path(__file__).parent)))
 
 
 class NativeBridgeHook(BuildHookInterface):
@@ -115,11 +137,11 @@ class NativeBridgeHook(BuildHookInterface):
             return
         if version == "editable":
             # Development staging is `zig build python-sync`; the editable
-            # install maps `zenfmt` to python/src/zenfmt where that step
-            # places the host bridge.
+            # install maps `zenfmt` to src/zenfmt where that step places
+            # the host bridge.
             return
 
-        root = Path(self.root)
+        build_root = zig_root(Path(self.root))
         triple = os.environ.get("ZENFMT_WHEEL_TARGET") or host_triple()
         if triple not in WHEEL_TARGETS:
             known = "\n  ".join(sorted(WHEEL_TARGETS))
@@ -129,8 +151,8 @@ class NativeBridgeHook(BuildHookInterface):
             )
         tag, filename = WHEEL_TARGETS[triple]
 
-        prefix = root / "zig-out" / "python" / triple
-        self._build_bridge(root, triple, prefix)
+        prefix = build_root / "zig-out" / "python" / triple
+        self._build_bridge(build_root, triple, prefix)
 
         artifact = prefix / "lib" / filename
         if not artifact.is_file():
@@ -145,10 +167,10 @@ class NativeBridgeHook(BuildHookInterface):
         build_data["tag"] = f"py3-none-{tag}"
         build_data["force_include"][str(artifact)] = f"zenfmt/_native/{filename}"
 
-    def _build_bridge(self, root: Path, triple: str, prefix: Path) -> None:
+    def _build_bridge(self, build_root: Path, triple: str, prefix: Path) -> None:
         zig = os.environ.get("ZENFMT_ZIG") or shutil.which("zig")
         if zig is None:
-            needed = read_minimum_zig_version(root)
+            needed = read_minimum_zig_version(build_root)
             raise RuntimeError(
                 "BUILDING zenfmt FROM SOURCE NEEDS ZIG\n\n"
                 f"No `zig` executable was found on PATH, and building the "
@@ -170,13 +192,13 @@ class NativeBridgeHook(BuildHookInterface):
         ]
         completed = subprocess.run(
             argv,
-            cwd=root,
+            cwd=build_root,
             capture_output=True,
             text=True,
             check=False,
         )
         if completed.returncode != 0:
-            needed = read_minimum_zig_version(root)
+            needed = read_minimum_zig_version(build_root)
             raise RuntimeError(
                 "THE NATIVE BRIDGE FAILED TO BUILD\n\n"
                 f"`{' '.join(argv)}` exited with "

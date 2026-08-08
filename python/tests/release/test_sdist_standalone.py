@@ -16,18 +16,28 @@ from release_support import install_into_venv, run_smoke
 pytestmark = pytest.mark.release
 
 REQUIRED_MEMBERS = (
-    "build.zig",
-    "build.zig.zon",
-    "hatch_build.py",
     "pyproject.toml",
+    "hatch_build.py",
     "LICENSE",
-    "bindings/python/abi.zig",
-    "core/src/root.zig",
-    "src/root.zig",
-    "formats/markdown/src/writer.zig",
-    "python/src/zenfmt/__init__.py",
+    "src/zenfmt/__init__.py",
+    "tests/release/smoke.py",
+    "engine/build.zig",
+    "engine/build.zig.zon",
+    "engine/bindings/python/abi.zig",
+    "engine/core/src/root.zig",
+    "engine/src/root.zig",
+    "engine/formats/markdown/src/writer.zig",
 )
-FORBIDDEN_MEMBERS = ("docs/", "benchmarks/", "zig-out/", ".github/", "cli/")
+FORBIDDEN_MEMBERS = (
+    "docs/",
+    "benchmarks/",
+    "zig-out/",
+    ".github/",
+    "cli/",
+    "engine/zig-out/",
+    "engine/docs/",
+    "engine/cli/",
+)
 
 
 def test_sdist_file_list_is_standalone(sdist_path: Path) -> None:

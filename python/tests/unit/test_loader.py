@@ -117,9 +117,9 @@ def test_abi_constants_are_pinned() -> None:
 def test_pep440_mapping_matches_the_packaging_hook() -> None:
     import importlib.util
 
-    root = Path(__file__).resolve().parents[3]
+    project = Path(__file__).resolve().parents[2]
     spec = importlib.util.spec_from_file_location(
-        "hatch_build", root / "hatch_build.py"
+        "hatch_build", project / "hatch_build.py"
     )
     assert spec is not None
     assert spec.loader is not None
