@@ -7,17 +7,256 @@
 //! `support/` and further format libraries attach in later delivery phases.
 
 const std = @import("std");
+const zon = @import("build.zig.zon");
+
+/// The canonical monorepo version (ZDS 0014): one `build.zig.zon` value
+/// embedded in the CLI, the Python bridge, and the Python distribution.
+pub const version: []const u8 = zon.version;
 
 pub fn build(b: *std.Build) void {
+    _ = std.SemanticVersion.parse(version) catch {
+        @panic("build.zig.zon .version is not a valid semantic version");
+    };
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const test_step = b.step("test", "Run the test suite");
 
-    const cli = addLibraries(b, target, optimize, test_step);
-    addBenchmark(b, target, cli);
+    const build_info = b.addOptions();
+    build_info.addOption([]const u8, "version", version);
+    const build_info_module = build_info.createModule();
+
+    const cli = addLibraries(b, target, optimize, test_step, build_info_module);
+    const bridge = addPythonBridge(b, target, optimize, test_step, build_info_module);
+    const python = addPythonWorkflows(b, target, test_step, bridge, cli);
+    addBenchmark(b, target, cli, python.benchmark_python);
     addZds(b, target, optimize, test_step);
-    addFormatting(b);
+    addFormatting(b, python);
+}
+
+// ---------------------------------------------------------- python bridge
+
+/// The private C ABI shared library consumed by the `zenfmt` Python
+/// package (ZDS 0014). `zig build python-native` installs it into
+/// `<prefix>/lib` under its canonical per-platform name; the standard
+/// `--prefix` flag redirects output for cross-compiled wheel builds.
+fn addPythonBridge(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    test_step: *std.Build.Step,
+    build_info_module: *std.Build.Module,
+) *std.Build.Step.Compile {
+    const bridge_module = b.createModule(.{
+        .root_source_file = b.path("bindings/python/abi.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zenfmt", .module = b.modules.get("zenfmt").? },
+            .{ .name = "zenfmt_core", .module = b.modules.get("zenfmt_core").? },
+            .{ .name = "zenfmt_build", .module = build_info_module },
+        },
+    });
+    const bridge = b.addLibrary(.{
+        .name = "zenfmt_py",
+        .linkage = .dynamic,
+        .root_module = bridge_module,
+    });
+    const install = b.addInstallArtifact(bridge, .{
+        .dest_dir = .{ .override = .{ .custom = "lib" } },
+    });
+    const python_native = b.step(
+        "python-native",
+        "Build the Python bridge shared library into <prefix>/lib",
+    );
+    python_native.dependOn(&install.step);
+
+    const bridge_tests = b.addTest(.{ .root_module = bridge_module });
+    test_step.dependOn(&b.addRunArtifact(bridge_tests).step);
+    return bridge;
+}
+
+/// The uv-orchestrated Python workflow steps (ZDS 0014). uv owns the
+/// Python environment, lockfile, and command execution; missing uv is a
+/// clear prerequisite failure, never a silent skip.
+const PythonSteps = struct {
+    lint: *std.Build.Step,
+    format_check: *std.Build.Step,
+    benchmark_python: *std.Build.Step,
+};
+
+fn addPythonWorkflows(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    test_step: *std.Build.Step,
+    bridge: *std.Build.Step.Compile,
+    cli: *std.Build.Step.Compile,
+) PythonSteps {
+    // The host bridge staged into the source-layout package's private
+    // resource directory: the editable install exposes exactly that
+    // location as the package resource root, so development and wheels
+    // share one loader rule.
+    const runtime_name = switch (target.result.os.tag) {
+        .windows => "zenfmt_py.dll",
+        .macos => "libzenfmt_py.dylib",
+        else => "libzenfmt_py.so",
+    };
+    const stage = b.addUpdateSourceFiles();
+    stage.addCopyFileToSource(
+        bridge.getEmittedBin(),
+        b.fmt("python/src/zenfmt/_native/{s}", .{runtime_name}),
+    );
+
+    const uv_missing: ?*std.Build.Step = blk: {
+        _ = b.findProgram(&.{"uv"}, &.{}) catch {
+            const fail = b.addFail(
+                "uv is required for the Python steps: install it from " ++
+                    "https://docs.astral.sh/uv/ and re-run",
+            );
+            break :blk &fail.step;
+        };
+        break :blk null;
+    };
+
+    const Run = struct {
+        fn command(
+            builder: *std.Build,
+            missing: ?*std.Build.Step,
+            argv: []const []const u8,
+        ) *std.Build.Step.Run {
+            const run = builder.addSystemCommand(argv);
+            run.has_side_effects = true;
+            run.setCwd(builder.path("."));
+            if (missing) |fail| run.step.dependOn(fail);
+            return run;
+        }
+    };
+
+    const sync = Run.command(b, uv_missing, &.{ "uv", "sync", "--locked" });
+    sync.step.dependOn(&stage.step);
+    const sync_step = b.step(
+        "python-sync",
+        "Build and stage the host bridge, then sync the locked Python " ++
+            "development environment",
+    );
+    sync_step.dependOn(&sync.step);
+
+    const pytest = Run.command(b, uv_missing, &.{
+        "uv", "run",         "--locked",     "pytest",
+        "-m", "not release", "python/tests",
+    });
+    pytest.step.dependOn(&stage.step);
+    const pytest_step = b.step(
+        "python-test",
+        "Build and stage the host bridge, then run pytest through uv",
+    );
+    pytest_step.dependOn(&pytest.step);
+    test_step.dependOn(pytest_step);
+
+    const lint = Run.command(b, uv_missing, &.{
+        "uv", "run", "--locked", "ruff", "check",
+    });
+    const lint_step = b.step("python-lint", "Run ruff check through uv");
+    lint_step.dependOn(&lint.step);
+
+    const format = Run.command(b, uv_missing, &.{
+        "uv", "run", "--locked", "ruff", "format",
+    });
+    const format_step = b.step(
+        "python-format",
+        "Run the Ruff formatter in write mode",
+    );
+    format_step.dependOn(&format.step);
+
+    const format_check = Run.command(b, uv_missing, &.{
+        "uv", "run", "--locked", "ruff", "format", "--check",
+    });
+    const format_check_step = b.step(
+        "python-format-check",
+        "Check Ruff formatting without edits",
+    );
+    format_check_step.dependOn(&format_check.step);
+
+    // `python-wheel`: the host platform wheel through uv; the Hatchling
+    // hook invokes `zig build python-native` itself for a ReleaseSafe
+    // bridge and sets the platform tag.
+    const wheel = Run.command(b, uv_missing, &.{
+        "uv",                  "build",
+        "--wheel",             "--out-dir",
+        "zig-out/python/dist",
+    });
+    const wheel_step = b.step(
+        "python-wheel",
+        "Build the host platform wheel into zig-out/python/dist",
+    );
+    wheel_step.dependOn(&wheel.step);
+
+    // `python-check`: the release-gate aggregate (ZDS 0014): lint, format
+    // check, the full pytest suite with every format required, a wheel
+    // and source distribution, and the installed-artifact release tests.
+    const strict_pytest = Run.command(b, uv_missing, &.{
+        "uv", "run",         "--locked",     "pytest",
+        "-m", "not release", "python/tests",
+    });
+    strict_pytest.step.dependOn(&stage.step);
+    strict_pytest.setEnvironmentVariable("ZENFMT_REQUIRE_ALL_FORMATS", "1");
+
+    const sdist = Run.command(b, uv_missing, &.{
+        "uv",                  "build",
+        "--sdist",             "--out-dir",
+        "zig-out/python/dist",
+    });
+
+    const release_tests = Run.command(b, uv_missing, &.{
+        "uv", "run", "--locked", "pytest", "-m", "release", "python/tests/release",
+    });
+    release_tests.step.dependOn(&wheel.step);
+    release_tests.step.dependOn(&sdist.step);
+
+    const check_step = b.step(
+        "python-check",
+        "Run the full Python release gate: lint, format, tests, wheel, " ++
+            "sdist, and installed-artifact checks",
+    );
+    check_step.dependOn(lint_step);
+    check_step.dependOn(format_check_step);
+    check_step.dependOn(&strict_pytest.step);
+    check_step.dependOn(&release_tests.step);
+
+    // `benchmark-python` (ZDS 0014): a clean isolated environment holding
+    // the exact just-built wheel, then the installed-wheel profile suite
+    // with parity checks. `zig build benchmark` depends on this step so
+    // its cold row runs against the same environment.
+    const venv = Run.command(b, uv_missing, &.{
+        "uv", "venv", "--clear", "benchmarks/.venv-wheel",
+    });
+    venv.step.dependOn(&wheel.step);
+    const wheel_install = Run.command(b, uv_missing, &.{
+        "uv",                     "pip",
+        "install",                "--python",
+        "benchmarks/.venv-wheel", "--no-index",
+        "--find-links",           "zig-out/python/dist",
+        "--reinstall",            "zenfmt",
+    });
+    wheel_install.step.dependOn(&venv.step);
+    const suite = Run.command(b, uv_missing, &.{
+        "benchmarks/.venv-wheel/bin/python", "-I",
+        "benchmarks/python_api.py",          "--suite",
+    });
+    suite.step.dependOn(&wheel_install.step);
+    suite.step.dependOn(&b.addInstallArtifact(cli, .{}).step);
+    const benchmark_python_step = b.step(
+        "benchmark-python",
+        "Clean-install the built wheel and run the Python API benchmark " ++
+            "suite (writes benchmarks/results/python.json)",
+    );
+    benchmark_python_step.dependOn(&suite.step);
+
+    return .{
+        .lint = lint_step,
+        .format_check = format_check_step,
+        .benchmark_python = benchmark_python_step,
+    };
 }
 
 // ------------------------------------------------------------- benchmark
@@ -29,6 +268,7 @@ fn addBenchmark(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     cli: *std.Build.Step.Compile,
+    benchmark_python: *std.Build.Step,
 ) void {
     const harness = b.addExecutable(.{
         .name = "zenfmt-benchmark",
@@ -44,10 +284,14 @@ fn addBenchmark(
     run_harness.addArg("--zenfmt");
     run_harness.addArtifactArg(cli);
     if (b.args) |args| run_harness.addArgs(args);
+    // The installed-wheel environment and its detailed suite run first so
+    // the harness's cold `zenfmt-python-wheel` row uses the same wheel.
+    run_harness.step.dependOn(benchmark_python);
     const benchmark_step = b.step(
         "benchmark",
-        "Run the conversion benchmark against pandoc and anydoc " ++
-            "(use -Doptimize=ReleaseSafe for publishable numbers)",
+        "Run the conversion benchmark against pandoc, anydoc, and the " ++
+            "installed zenfmt wheel (use -Doptimize=ReleaseSafe for " ++
+            "publishable numbers)",
     );
     benchmark_step.dependOn(&run_harness.step);
 
@@ -88,6 +332,7 @@ fn addLibraries(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     test_step: *std.Build.Step,
+    build_info_module: *std.Build.Module,
 ) *std.Build.Step.Compile {
     const core = b.addModule("zenfmt_core", .{
         .root_source_file = b.path("core/src/root.zig"),
@@ -298,6 +543,7 @@ fn addLibraries(
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "zenfmt_build", .module = build_info_module },
             .{ .name = "zenfmt_core", .module = core },
             .{ .name = "zenfmt_text", .module = text },
             .{ .name = "zenfmt_markdown", .module = markdown },
@@ -356,6 +602,8 @@ fn addLibraries(
         "tests/docx.zig",
         "tests/detect.zig",
         "tests/media.zig",
+        "tests/memory_output.zig",
+        "tests/output_limit.zig",
         "tests/facets.zig",
         "tests/lowering.zig",
         "tests/oom.zig",
@@ -570,21 +818,23 @@ fn addZdsTool(
 // ------------------------------------------------------------ formatting
 
 const fmt_paths = [_][]const u8{
-    "build.zig",             "tools",
-    "core",                  "support",
-    "formats",               "src",
-    "cli",                   "tests",
-    "examples",              "benchmarks/benchmark.zig",
-    "benchmarks/stages.zig",
+    "build.zig",                "tools",
+    "core",                     "support",
+    "formats",                  "src",
+    "cli",                      "tests",
+    "examples",                 "bindings",
+    "benchmarks/benchmark.zig", "benchmarks/stages.zig",
 };
 
-fn addFormatting(b: *std.Build) void {
+fn addFormatting(b: *std.Build, python: PythonSteps) void {
     const check = b.addFmt(.{
         .paths = &fmt_paths,
         .check = true,
     });
-    const check_step = b.step("fmt-check", "Check Zig source formatting");
+    const check_step = b.step("fmt-check", "Check Zig and Python formatting");
     check_step.dependOn(&check.step);
+    check_step.dependOn(python.lint);
+    check_step.dependOn(python.format_check);
 
     const apply = b.addFmt(.{ .paths = &fmt_paths });
     const apply_step = b.step("fmt", "Format the Zig sources in place");

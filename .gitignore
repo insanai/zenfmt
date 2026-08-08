@@ -4,3 +4,12 @@ zig-out/
 docs/build/
 benchmarks/corpus/
 benchmarks/.anydoc/
+benchmarks/.venv-wheel/
+.venv/
+dist/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+python/src/zenfmt/_native/*.so
+python/src/zenfmt/_native/*.dylib
+python/src/zenfmt/_native/*.dll

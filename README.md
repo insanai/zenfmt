@@ -40,6 +40,48 @@ carrying provenance digests, document metadata, the diagnostic reports,
 versioned plugin preservation data, and per-kind facet summaries (full rows
 with `--preserve-facets`).
 
+## Python
+
+The same engine ships as a typed, dependency-free Python library
+([ZDS 0014](docs/zds/records/0014-python-library.typ)): the `zenfmt`
+distribution bundles a native bridge, releases the GIL during conversion,
+and returns the complete artifact ensemble — bytes, embedded resources,
+the canonical manifest, and structured reports.
+
+```python
+import zenfmt
+
+# A str is always a path; the result is the whole in-memory ensemble.
+conversion = zenfmt.convert("report.docx")
+print(conversion.text)
+for report in conversion.reports:
+    print(report.code, report.problem)
+
+# Bytes are explicit; text is encoded by the caller.
+conversion = zenfmt.convert(uploaded_bytes, name="upload.docx", to="markdown")
+
+# An output path selects transactional publication with the manifest and
+# media beside it; graded strictness refuses priced loss before output.
+conversion = zenfmt.convert("report.docx", output="build/report.md",
+                            strict="structure")
+```
+
+Failures raise a compact exception tree (`ConversionError`,
+`LimitExceededError`, `UnknownFormatError`, …) whose messages answer the
+same four questions as the CLI's diagnostics, directions included. Reusable
+policy lives in immutable `zenfmt.Converter` values; there is no global
+configuration, environment lookup, or network access.
+
+```sh
+zig build python-sync    # stage the host bridge + sync the uv dev env
+zig build python-test    # pytest (unit + integration) through uv
+zig build python-wheel   # the host platform wheel into zig-out/python/dist
+zig build python-check   # the full release gate: lint, tests, wheel, sdist
+```
+
+Development uses [uv](https://docs.astral.sh/uv/) for the environment and
+lockfile, Hatchling as the build backend, Ruff for lint/format, and pytest.
+
 Five properties drive the design, argued in ZDS 0002 and ZDS 0013:
 
 - **A real AST, stored flat.** The node set is structurally compatible with
