@@ -79,7 +79,15 @@ fn fill(result: *Result, request: *const abi.Request) error{OutOfMemory}!void {
         },
     };
 
-    var threaded = std.Io.Threaded.init(result.gpa, .{});
+    // The embedding caller owns concurrency. `ctypes` releases the GIL for
+    // the conversion call, so separate Python threads already execute
+    // independent conversions concurrently. Running async I/O immediately
+    // on that calling thread avoids a redundant worker pool per conversion
+    // and its large native stacks (which overflowed in musl's loader/runtime
+    // combination for the complete default format bundle).
+    var threaded = std.Io.Threaded.init(result.gpa, .{
+        .async_limit = .nothing,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
