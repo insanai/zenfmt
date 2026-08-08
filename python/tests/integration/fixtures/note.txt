@@ -1,0 +1,3 @@
+Fixture paragraph.
+
+Second paragraph.

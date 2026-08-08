@@ -1,0 +1,145 @@
+[project]
+name = "zenfmt"
+description = "Universal document conversion: typed Python API over the zenfmt native engine"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Vikrant Rathore" }]
+keywords = [
+    "document",
+    "conversion",
+    "markdown",
+    "docx",
+    "pdf",
+    "epub",
+    "office",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Zig",
+    "Topic :: Text Processing :: Markup",
+    "Topic :: Office/Business :: Office Suites",
+    "Typing :: Typed",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/insan-ai/zenfmt"
+Documentation = "https://github.com/insan-ai/zenfmt/tree/main/docs"
+Repository = "https://github.com/insan-ai/zenfmt"
+
+[dependency-groups]
+dev = ["hatchling>=1.27", "pytest>=8.3", "ruff>=0.8"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "code"
+path = "hatch_build.py"
+expression = "PROJECT_VERSION"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/src/zenfmt"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+# The sdist is standalone-buildable: the Python layer plus every Zig source
+# the bridge needs (ZDS 0014). Repository-only material stays out.
+include = [
+    "/build.zig",
+    "/build.zig.zon",
+    "/hatch_build.py",
+    "/pyproject.toml",
+    "/uv.lock",
+    "/README.md",
+    "/LICENSE",
+    "/python/src/**",
+    "/python/tests/**",
+    "/bindings/**",
+    "/core/**",
+    "/support/**",
+    "/formats/**",
+    "/src/**",
+]
+exclude = [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "/python/src/zenfmt/_native/*.so",
+    "/python/src/zenfmt/_native/*.dylib",
+    "/python/src/zenfmt/_native/*.dll",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["python/src"]
+include = [
+    "python/src/**/*.py",
+    "python/tests/**/*.py",
+    "benchmarks/python_api.py",
+    "hatch_build.py",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # import sorting
+    "UP",  # modern Python
+    "B",   # bugbear correctness
+    "S",   # security-prone APIs
+    "C4",  # comprehension correctness
+    "RET", # return hygiene
+    "SIM", # simplification
+    "RUF", # ruff-native correctness
+    "PT",  # pytest style
+]
+ignore = [
+    # subprocess without shell=True is the point of the build hook; each
+    # call site uses explicit argv.
+    "S603",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"python/tests/**" = [
+    "S101", # pytest asserts
+    "S108", # tests may reference shared tmp fixtures
+    "S607", # uv/zig resolved from PATH deliberately in test helpers
+]
+"python/tests/release/smoke.py" = [
+    "PT017", # a standalone script, not a pytest module: it asserts on
+    # caught exceptions because pytest.raises is unavailable
+    "S101",
+]
+"benchmarks/python_api.py" = [
+    "PT017", # a standalone worker, not a pytest module
+    "S101",  # asserts document benchmark invariants, not test outcomes
+]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
+pythonpath = ["python/tests"]
+addopts = "--import-mode=importlib --strict-markers --strict-config -q"
+markers = [
+    "integration: exercises the real host bridge staged by `zig build python-sync`",
+    "release: wheel and sdist artifact tests run by `zig build python-check`",
+]
+filterwarnings = ["error"]
