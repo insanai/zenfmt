@@ -82,7 +82,14 @@ pub fn extract(file: *xref.File, stream: objects.Stream) xref.Error!?Extracted {
         return null;
 
     const samples = try file.decodeStream(stream);
-    const needed = @as(u64, width) * height * channels;
+    // Computed in 64 bits because the three factors are document-controlled,
+    // then narrowed: `usize` is 32 bits on wasm32, where the product of three
+    // in-range dimensions can still exceed the addressable range. An image
+    // that large is refused rather than truncated.
+    const needed = std.math.cast(
+        usize,
+        @as(u64, width) * height * channels,
+    ) orelse return null;
     if (samples.len < needed) return null;
 
     const png = encodePng(file.arena, width, height, channels, samples[0..needed]) catch

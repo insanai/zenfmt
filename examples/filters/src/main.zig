@@ -6,6 +6,7 @@
 
 const std = @import("std");
 const zenfmt = @import("zenfmt");
+const cli = @import("zenfmt_cli");
 
 /// The pipeline this binary carries. Order matters, and is exactly the
 /// order written here.
@@ -53,5 +54,5 @@ fn visitLink(
 pub fn main(init: std.process.Init) !u8 {
     var pipeline: zenfmt.Pipeline = .empty;
     filters(&pipeline);
-    return zenfmt.cli.main(init, &pipeline);
+    return cli.main(init, &pipeline);
 }

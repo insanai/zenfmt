@@ -4,6 +4,7 @@ const std = @import("std");
 const Io = std.Io;
 const limits_mod = @import("limits.zig");
 const manifest = @import("manifest.zig");
+const host = @import("host.zig");
 
 pub const Result = union(enum) {
     missing,
@@ -24,6 +25,24 @@ pub const Reason = union(enum) {
 };
 
 pub fn load(
+    comptime mode: host.Mode,
+    arena: std.mem.Allocator,
+    io: host.Io(mode),
+    input_path: ?[]const u8,
+    input_digest: manifest.DigestHex,
+    limits: limits_mod.Limits,
+) error{OutOfMemory}!Result {
+    // A pure bundle never has an input path, and looking beside a document
+    // for a sidecar file is filesystem authority it does not hold. Switching
+    // on the comptime mode keeps the read out of that build entirely: only
+    // the matching prong is analyzed.
+    return switch (mode) {
+        .pure => .missing,
+        .host => loadFromDisk(arena, io, input_path, input_digest, limits),
+    };
+}
+
+fn loadFromDisk(
     arena: std.mem.Allocator,
     io: Io,
     input_path: ?[]const u8,

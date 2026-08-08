@@ -4,7 +4,8 @@
 
 const std = @import("std");
 const zenfmt = @import("zenfmt");
+const cli = @import("zenfmt_cli");
 
 pub fn main(init: std.process.Init) !u8 {
-    return zenfmt.cli.main(init, &zenfmt.Pipeline.empty);
+    return cli.main(init, &zenfmt.Pipeline.empty);
 }

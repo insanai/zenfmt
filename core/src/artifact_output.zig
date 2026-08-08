@@ -6,6 +6,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
 const stream_output = @import("stream_output.zig");
+const host = @import("host.zig");
 
 pub const Destination = union(enum) {
     path: []const u8,
@@ -64,74 +65,105 @@ pub const MemoryWriter = struct {
     }
 };
 
-pub const Sink = struct {
-    file_buffer: [8 * 1024]u8 = undefined,
-    file_writer: ?Io.File.Writer = null,
-    tracking: ?stream_output.TrackingWriter = null,
-    memory: ?MemoryWriter = null,
-    limiting: stream_output.LimitedWriter = undefined,
-    out: *Io.Writer = undefined,
+/// The artifact sink, parameterized by host authority.
+///
+/// A pure sink carries neither the staging buffer nor the file writer: the
+/// fields do not exist, so a browser conversion does not reserve eight
+/// kilobytes of stack for a file it can never open, and the file-writing code
+/// is not compiled into that build at all.
+pub fn Sink(comptime mode: host.Mode) type {
+    return struct {
+        const Self = @This();
 
-    pub fn open(
-        sink: *Sink,
-        io: Io,
-        destination: Destination,
-        overwrite: bool,
-        max_output_bytes: u64,
-        atomic: *?Io.File.Atomic,
-    ) !void {
-        const inner: *Io.Writer = switch (destination) {
-            .writer => |caller| blk: {
-                sink.tracking = stream_output.TrackingWriter.init(caller);
-                break :blk &sink.tracking.?.writer;
-            },
-            .path => |path| blk: {
-                atomic.* = try Io.Dir.cwd().createFileAtomic(io, path, .{
-                    .replace = overwrite,
-                });
-                sink.file_writer = atomic.*.?.file.writerStreaming(
-                    io,
-                    &sink.file_buffer,
-                );
-                break :blk &sink.file_writer.?.interface;
-            },
-            .memory => |arena| blk: {
-                sink.memory = MemoryWriter.init(arena);
-                break :blk &sink.memory.?.writer;
-            },
-        };
-        sink.limiting = stream_output.LimitedWriter.init(inner, max_output_bytes);
-        sink.out = &sink.limiting.writer;
-    }
+        file: FileStaging(mode) = .{},
+        tracking: ?stream_output.TrackingWriter = null,
+        memory: ?MemoryWriter = null,
+        limiting: stream_output.LimitedWriter = undefined,
+        out: *Io.Writer = undefined,
 
-    pub fn writer(sink: *Sink) *Io.Writer {
-        return sink.out;
-    }
-
-    pub fn tracker(sink: *const Sink) ?*const stream_output.TrackingWriter {
-        return if (sink.tracking) |*value| value else null;
-    }
-
-    /// Whether the last write failure was the output-size limit refusing
-    /// another byte.
-    pub fn outputLimitExceeded(sink: *const Sink) bool {
-        return sink.limiting.exceeded;
-    }
-
-    /// Whether the last write failure was memory-accumulation exhaustion.
-    pub fn memoryOom(sink: *const Sink) bool {
-        return if (sink.memory) |*value| value.oom else false;
-    }
-
-    /// The accumulated artifact bytes for a memory destination. Arena-owned;
-    /// valid for the conversion result's lifetime.
-    pub fn memoryBytes(sink: *const Sink) []const u8 {
-        return sink.memory.?.list.items;
-    }
-
-    pub fn flush(sink: *Sink) Io.Writer.Error!void {
-        if (sink.file_writer) |*staged_writer| {
-            try staged_writer.interface.flush();
+        pub fn open(
+            sink: *Self,
+            io: host.Io(mode),
+            destination: Destination,
+            overwrite: bool,
+            max_output_bytes: u64,
+            atomic: *?host.Atomic(mode),
+        ) !void {
+            const inner: *Io.Writer = switch (destination) {
+                .writer => |caller| blk: {
+                    sink.tracking = stream_output.TrackingWriter.init(caller);
+                    break :blk &sink.tracking.?.writer;
+                },
+                .path => |path| blk: {
+                    if (mode == .host) {
+                        atomic.* = try Io.Dir.cwd().createFileAtomic(io, path, .{
+                            .replace = overwrite,
+                        });
+                        sink.file.writer = atomic.*.?.file.writerStreaming(
+                            io,
+                            &sink.file.buffer,
+                        );
+                        break :blk &sink.file.writer.?.interface;
+                    } else {
+                        // Input resolution refuses a path before a pure
+                        // bundle ever reaches the writer, so this is not a
+                        // supported outcome to handle — it is a state the
+                        // engine has already excluded.
+                        unreachable;
+                    }
+                },
+                .memory => |arena| blk: {
+                    sink.memory = MemoryWriter.init(arena);
+                    break :blk &sink.memory.?.writer;
+                },
+            };
+            sink.limiting = stream_output.LimitedWriter.init(inner, max_output_bytes);
+            sink.out = &sink.limiting.writer;
         }
-    }
-};
+
+        pub fn writer(sink: *Self) *Io.Writer {
+            return sink.out;
+        }
+
+        pub fn tracker(sink: *const Self) ?*const stream_output.TrackingWriter {
+            return if (sink.tracking) |*value| value else null;
+        }
+
+        /// Whether the last write failure was the output-size limit refusing
+        /// another byte.
+        pub fn outputLimitExceeded(sink: *const Self) bool {
+            return sink.limiting.exceeded;
+        }
+
+        /// Whether the last write failure was memory-accumulation exhaustion.
+        pub fn memoryOom(sink: *const Self) bool {
+            return if (sink.memory) |*value| value.oom else false;
+        }
+
+        /// The accumulated artifact bytes for a memory destination.
+        /// Arena-owned; valid for the conversion result's lifetime.
+        pub fn memoryBytes(sink: *const Self) []const u8 {
+            return sink.memory.?.list.items;
+        }
+
+        pub fn flush(sink: *Self) Io.Writer.Error!void {
+            if (mode == .host) {
+                if (sink.file.writer) |*staged_writer| {
+                    try staged_writer.interface.flush();
+                }
+            }
+        }
+    };
+}
+
+/// The staging buffer and file writer a host sink needs, and a pure sink does
+/// not have.
+fn FileStaging(comptime mode: host.Mode) type {
+    return switch (mode) {
+        .host => struct {
+            buffer: [8 * 1024]u8 = undefined,
+            writer: ?Io.File.Writer = null,
+        },
+        .pure => struct {},
+    };
+}

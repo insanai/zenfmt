@@ -637,6 +637,47 @@ fn loweringLimitValue(limits: Limits, err: lowering.PlanError) u64 {
     };
 }
 
+/// A path was handed to a bundle built without filesystem authority: the
+/// browser module, or any embedding that assembles a pure bundle. This is an
+/// embedding mistake rather than a fault in the document, so it carries the
+/// usage exit class and directs the caller at the byte API.
+pub fn hostIoUnavailable(
+    arena: std.mem.Allocator,
+    path: []const u8,
+) error{OutOfMemory}!Report {
+    return .{
+        .severity = .err,
+        .code = "core.host-io-unavailable",
+        .title = "THIS BUILD CANNOT OPEN FILES",
+        .problem = try std.fmt.allocPrint(
+            arena,
+            "A file path was given as the input, but this build of zenfmt " ++
+                "has no filesystem access compiled into it, so `{s}` cannot " ++
+                "be opened.",
+            .{path},
+        ),
+        .consequence = "The conversion did not start. No output, manifest, " ++
+            "or resource file was created.",
+        .exit_class = .usage,
+        .context = .{ .path = .{ .path = path, .operation = "open the input file" } },
+        .directions = &.{
+            .{
+                .title = "Pass the document as bytes",
+                .explanation = "Read the file yourself and convert the " ++
+                    "bytes with a source name. A build without filesystem " ++
+                    "access, such as the browser module, always converts " ++
+                    "bytes it is handed rather than opening paths of its own.",
+            },
+            .{
+                .title = "Use the command-line tool or the Python library",
+                .explanation = "Both accept paths directly, publish an " ++
+                    "adjacent manifest, and are the right tool when the " ++
+                    "document is already on disk.",
+            },
+        },
+    };
+}
+
 pub fn pathFailure(
     arena: std.mem.Allocator,
     operation: []const u8,

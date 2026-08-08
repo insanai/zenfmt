@@ -10,12 +10,14 @@ const Io = std.Io;
 const root = @import("root.zig");
 const plugin = @import("plugin.zig");
 const manifest = @import("manifest.zig");
+const host = @import("host.zig");
 
 const Reports = @import("report.zig").Reports;
 const RunError = error{ OutOfMemory, Failed };
 const ConvertOptions = root.ConvertOptions;
 const inputTooLarge = @import("engine_reports.zig").inputTooLarge;
 const pathFailure = @import("engine_reports.zig").pathFailure;
+const hostIoUnavailable = @import("engine_reports.zig").hostIoUnavailable;
 
 pub const ResolvedInput = struct {
     /// Bytes for byte inputs; an open file handle for path inputs, so a
@@ -31,18 +33,23 @@ pub const ResolvedInput = struct {
     /// Slurp cache for detection and `.bytes`-mode readers.
     slurped: ?[]const u8 = null,
 
-    pub fn deinit(input: *ResolvedInput, io: Io) void {
+    pub fn deinit(
+        input: *ResolvedInput,
+        comptime mode: host.Mode,
+        io: host.Io(mode),
+    ) void {
         switch (input.source) {
             .bytes => {},
-            .file => |file| file.handle.close(io),
+            .file => |file| if (mode == .host) file.handle.close(io),
         }
         input.* = undefined;
     }
 };
 
 pub fn resolveInput(
+    comptime mode: host.Mode,
     arena: std.mem.Allocator,
-    io: Io,
+    io: host.Io(mode),
     options: ConvertOptions,
     reports: *Reports,
 ) RunError!ResolvedInput {
@@ -64,7 +71,12 @@ pub fn resolveInput(
                 .digest_hex = manifest.digestHex(input.data),
             };
         },
-        .path => |path| {
+        // The two arms are an `if` on a comptime value, not a runtime check.
+        // Zig analyzes only the branch that is taken, so a pure bundle never
+        // compiles the filesystem code at all — which is what lets the
+        // browser module's import audit prove the authority is absent rather
+        // than merely unused (ZDS 0015).
+        .path => |path| if (mode == .host) {
             const file = Io.Dir.cwd().openFile(io, path, .{}) catch |err| {
                 try reports.add(try pathFailure(arena, "open the input file", path, err));
                 return error.Failed;
@@ -93,6 +105,9 @@ pub fn resolveInput(
                 .path = path,
                 .digest_hex = digest_hex,
             };
+        } else {
+            try reports.add(try hostIoUnavailable(arena, path));
+            return error.Failed;
         },
     }
 }

@@ -10,8 +10,9 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
 const adjacent_manifest = @import("adjacent_manifest.zig");
-const artifact_output = @import("artifact_output.zig");
+const artifact_render = @import("artifact_render.zig");
 const bundle_validation = @import("bundle_validation.zig");
+
 const options_mod = @import("options.zig");
 const preservation = @import("preservation.zig");
 const publication = @import("publication.zig");
@@ -30,6 +31,7 @@ pub const report = @import("report.zig");
 pub const json = @import("json.zig");
 pub const manifest = @import("manifest.zig");
 pub const plugin = @import("plugin.zig");
+pub const host = @import("host.zig");
 pub const pipeline = @import("pipeline.zig");
 pub const filters = @import("filters.zig");
 pub const lowering = @import("lowering.zig");
@@ -150,6 +152,11 @@ const RunError = error{ OutOfMemory, Failed };
 /// The umbrella library assembles the default bundle; applications can
 /// assemble smaller ones. Descriptor mistakes are compile errors here, not
 /// runtime surprises.
+///
+/// `spec.host` selects the host authority (ZDS 0015). It defaults to `.host`,
+/// so every existing caller is unaffected and `convert` keeps taking a
+/// `std.Io`. A `.pure` bundle takes no host value at all and has no
+/// filesystem code compiled into it.
 pub fn Bundle(comptime spec: anytype) type {
     const reader_array = comptime bundle_validation.descriptorArray(
         plugin.ReaderDescriptor,
@@ -160,18 +167,28 @@ pub fn Bundle(comptime spec: anytype) type {
         spec.writers,
     );
     comptime bundle_validation.validate(&reader_array, &writer_array);
+    const mode: host.Mode = if (@hasField(@TypeOf(spec), "host"))
+        spec.host
+    else
+        .host;
 
     return struct {
         pub const readers: []const plugin.ReaderDescriptor = &reader_array;
         pub const writers: []const plugin.WriterDescriptor = &writer_array;
         pub const default_output_format = writer_array[0].format;
+        /// The host authority this bundle was built with.
+        pub const host_mode: host.Mode = mode;
 
         const ReadResult = struct {
             doc: Document,
             own_plugin_data: ?plugin.ReadContext.OwnPluginData,
         };
 
-        pub fn convert(gpa: std.mem.Allocator, io: Io, options: ConvertOptions) Conversion {
+        pub fn convert(
+            gpa: std.mem.Allocator,
+            io: host.Io(host_mode),
+            options: ConvertOptions,
+        ) Conversion {
             var arena_instance = std.heap.ArenaAllocator.init(gpa);
             const arena = arena_instance.allocator();
             const invalid_limit = options.limits.invalidField();
@@ -254,14 +271,27 @@ pub fn Bundle(comptime spec: anytype) type {
 
         fn run(
             arena: std.mem.Allocator,
-            io: Io,
+            io: host.Io(host_mode),
             options: ConvertOptions,
             reports: *Reports,
             stream: *Conversion.StreamState,
             extra: *SelectedOutput,
         ) RunError![]const u8 {
-            var input = try resolveInput(arena, io, options, reports);
-            defer input.deinit(io);
+            // A pure bundle has no filesystem on either side. Refusing an
+            // output path here, before any reader runs, is what keeps the
+            // writer's path arm genuinely unreachable rather than merely
+            // unlikely.
+            if (host_mode == .pure) {
+                switch (options.output) {
+                    .path => |path| {
+                        try reports.add(try hostIoUnavailable(arena, path));
+                        return error.Failed;
+                    },
+                    .writer, .memory => {},
+                }
+            }
+            var input = try resolveInput(host_mode, arena, io, options, reports);
+            defer input.deinit(host_mode, io);
             const from = try resolveFrom(arena, options, &input, reports, readers);
             const to = options.to orelse default_output_format;
 
@@ -294,7 +324,7 @@ pub fn Bundle(comptime spec: anytype) type {
             comptime reader_descriptor: plugin.ReaderDescriptor,
             comptime writer_descriptor: plugin.WriterDescriptor,
             arena: std.mem.Allocator,
-            io: Io,
+            io: host.Io(host_mode),
             options: ConvertOptions,
             input: *ResolvedInput,
             reports: *Reports,
@@ -302,6 +332,7 @@ pub fn Bundle(comptime spec: anytype) type {
             extra: *SelectedOutput,
         ) RunError![]const u8 {
             const adjacent = try adjacent_manifest.load(
+                host_mode,
                 arena,
                 io,
                 input.path,
@@ -458,7 +489,7 @@ pub fn Bundle(comptime spec: anytype) type {
             comptime writer_descriptor: plugin.WriterDescriptor,
             comptime reader_descriptor: plugin.ReaderDescriptor,
             arena: std.mem.Allocator,
-            io: Io,
+            io: host.Io(host_mode),
             options: ConvertOptions,
             input: *ResolvedInput,
             doc: Document,
@@ -490,9 +521,12 @@ pub fn Bundle(comptime spec: anytype) type {
                 &doc,
                 reports,
             );
-            var atomic: ?Io.File.Atomic = null;
-            defer if (atomic) |*af| af.deinit(io);
-            const rendered = try renderArtifact(
+            var atomic: ?host.Atomic(host_mode) = null;
+            defer if (host_mode == .host) {
+                if (atomic) |*af| af.deinit(io);
+            };
+            const rendered = try artifact_render.render(
+                host_mode,
                 writer_descriptor,
                 arena,
                 io,
@@ -664,165 +698,6 @@ pub fn Bundle(comptime spec: anytype) type {
             return error.Failed;
         }
 
-        /// A rendered artifact: the digest always, plus the arena-owned
-        /// bytes when the destination was memory.
-        const RenderedArtifact = struct {
-            digest: manifest.DigestHex,
-            memory_bytes: ?[]const u8,
-        };
-
-        fn renderArtifact(
-            comptime descriptor: plugin.WriterDescriptor,
-            arena: std.mem.Allocator,
-            io: Io,
-            options: ConvertOptions,
-            artifact_name: []const u8,
-            doc: *const Document,
-            loaded: ?manifest.Loaded,
-            reports: *Reports,
-            stream: *Conversion.StreamState,
-            plan: *?lowering.Plan,
-            atomic: *?Io.File.Atomic,
-        ) RunError!RenderedArtifact {
-            const Blake3 = std.crypto.hash.Blake3;
-            const destination: artifact_output.Destination = switch (options.output) {
-                .writer => |value| .{ .writer = value },
-                .path => |value| .{ .path = value },
-                .memory => .{ .memory = arena },
-            };
-            var sink: artifact_output.Sink = .{};
-            sink.open(
-                io,
-                destination,
-                options.overwrite,
-                options.limits.max_output_bytes,
-                atomic,
-            ) catch |err| {
-                const path = switch (options.output) {
-                    .writer, .memory => artifact_name,
-                    .path => |value| value,
-                };
-                try reports.add(try pathFailure(
-                    arena,
-                    "stage the output file",
-                    path,
-                    err,
-                ));
-                return error.Failed;
-            };
-            var hash_buffer: [4 * 1024]u8 = undefined;
-            var hashed = Io.Writer.Hashed(Blake3).initHasher(
-                sink.writer(),
-                Blake3.init(.{}),
-                &hash_buffer,
-            );
-            var context: plugin.WriteContext = .{
-                .plan = if (plan.*) |*selected| selected else null,
-                .gpa = arena,
-                .doc = doc,
-                .out = &hashed.writer,
-                .reports = reports,
-                .limits = options.limits,
-                .preservation_in = preservation.entry(
-                    loaded,
-                    descriptor.id,
-                    descriptor.data_version,
-                ),
-            };
-            descriptor.write(&context) catch |err| {
-                stream.* = stream_output.failureState(
-                    options.output != .writer,
-                    sink.tracker(),
-                );
-                if (err == error.OutOfMemory or sink.memoryOom()) {
-                    return error.OutOfMemory;
-                }
-                if (sink.outputLimitExceeded()) {
-                    try reports.add(try outputTooLarge(
-                        arena,
-                        artifact_name,
-                        options.limits,
-                    ));
-                    return error.Failed;
-                }
-                try reports.add(try writerFailure(
-                    arena,
-                    descriptor.format,
-                    artifact_name,
-                    err,
-                    options.output == .writer,
-                    stream.* == .partial,
-                ));
-                return error.Failed;
-            };
-            return finishArtifact(
-                arena,
-                descriptor.format,
-                options,
-                artifact_name,
-                reports,
-                stream,
-                plan,
-                &sink,
-                &hashed,
-            );
-        }
-
-        fn finishArtifact(
-            arena: std.mem.Allocator,
-            format: []const u8,
-            options: ConvertOptions,
-            artifact_name: []const u8,
-            reports: *Reports,
-            stream: *Conversion.StreamState,
-            plan: *?lowering.Plan,
-            sink: *artifact_output.Sink,
-            hashed: *Io.Writer.Hashed(std.crypto.hash.Blake3),
-        ) RunError!RenderedArtifact {
-            if (plan.*) |*selected| selected.assertEmissionComplete();
-            hashed.writer.flush() catch |err| {
-                stream.* = stream_output.failureState(
-                    options.output != .writer,
-                    sink.tracker(),
-                );
-                if (sink.memoryOom()) return error.OutOfMemory;
-                if (sink.outputLimitExceeded()) {
-                    try reports.add(try outputTooLarge(
-                        arena,
-                        artifact_name,
-                        options.limits,
-                    ));
-                    return error.Failed;
-                }
-                try reports.add(try writerFailure(
-                    arena,
-                    format,
-                    artifact_name,
-                    err,
-                    options.output == .writer,
-                    stream.* == .partial,
-                ));
-                return error.Failed;
-            };
-            sink.flush() catch |err| {
-                try reports.add(try pathFailure(
-                    arena,
-                    "flush the output",
-                    artifact_name,
-                    err,
-                ));
-                return error.Failed;
-            };
-            if (options.output == .writer) stream.* = .complete;
-            return .{
-                .digest = manifest.digestHexFromHasher(&hashed.hasher),
-                .memory_bytes = if (options.output == .memory)
-                    sink.memoryBytes()
-                else
-                    null,
-            };
-        }
-
         fn buildManifest(
             comptime reader: plugin.ReaderDescriptor,
             comptime writer: plugin.WriterDescriptor,
@@ -886,50 +761,55 @@ pub fn Bundle(comptime spec: anytype) type {
 
         fn publishPath(
             arena: std.mem.Allocator,
-            io: Io,
+            io: host.Io(host_mode),
             options: ConvertOptions,
             input: ResolvedInput,
             manifest_json: []const u8,
             media_plan: []const resource_output.File,
-            atomic: *?Io.File.Atomic,
+            atomic: *?host.Atomic(host_mode),
             reports: *Reports,
         ) RunError!void {
-            const path = switch (options.output) {
-                .writer, .memory => return,
-                .path => |value| value,
-            };
-            var failure: publication.Failure = .{};
-            publication.publish(
-                arena,
-                io,
-                &atomic.*.?,
-                path,
-                manifest_json,
-                media_plan,
-                options.overwrite,
-                &failure,
-            ) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Failed => {
-                    const value = switch (failure.kind) {
-                        .destination_exists => try commitFailure(
-                            arena,
-                            failure.path,
-                            input,
-                            options,
-                            failure.cause,
-                        ),
-                        .operation => try pathFailure(
-                            arena,
-                            failure.operation,
-                            failure.path,
-                            failure.cause,
-                        ),
-                    };
-                    try reports.add(value);
-                    return error.Failed;
-                },
-            };
+            // Publication is the engine's only write to the filesystem, so a
+            // pure bundle does not compile it. The guard is comptime: the
+            // body below is absent from that build rather than skipped in it.
+            if (host_mode == .host) {
+                const path = switch (options.output) {
+                    .writer, .memory => return,
+                    .path => |value| value,
+                };
+                var failure: publication.Failure = .{};
+                publication.publish(
+                    arena,
+                    io,
+                    &atomic.*.?,
+                    path,
+                    manifest_json,
+                    media_plan,
+                    options.overwrite,
+                    &failure,
+                ) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.Failed => {
+                        const value = switch (failure.kind) {
+                            .destination_exists => try commitFailure(
+                                arena,
+                                failure.path,
+                                input,
+                                options,
+                                failure.cause,
+                            ),
+                            .operation => try pathFailure(
+                                arena,
+                                failure.operation,
+                                failure.path,
+                                failure.cause,
+                            ),
+                        };
+                        try reports.add(value);
+                        return error.Failed;
+                    },
+                };
+            }
         }
 
         fn readerFormats() []const []const u8 {
@@ -1055,6 +935,7 @@ const extensionMismatch = engine_reports.extensionMismatch;
 const strictReport = engine_reports.strictReport;
 const strictNeedsCapabilities = engine_reports.strictNeedsCapabilities;
 const pathFailure = engine_reports.pathFailure;
+const hostIoUnavailable = engine_reports.hostIoUnavailable;
 const writerFailure = engine_reports.writerFailure;
 const commitFailure = engine_reports.commitFailure;
 const ensureFailureReported = engine_reports.ensureFailureReported;

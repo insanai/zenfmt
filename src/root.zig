@@ -8,7 +8,10 @@
 const core = @import("zenfmt_core");
 
 pub const Default = @import("default_bundle.zig").Default;
-pub const cli = @import("cli.zig");
+
+/// The same formats with no filesystem authority compiled in, for the browser
+/// module (ZDS 0015).
+pub const Browser = @import("default_bundle.zig").Browser;
 
 pub const convert = Default.convert;
 pub const default_output_format = Default.default_output_format;

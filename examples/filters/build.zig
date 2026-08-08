@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zenfmt", .module = zenfmt.module("zenfmt") },
+                .{ .name = "zenfmt_cli", .module = zenfmt.module("zenfmt_cli") },
             },
         }),
     });
