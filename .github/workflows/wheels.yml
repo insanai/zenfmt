@@ -50,18 +50,18 @@ jobs:
           - aarch64-macos.12.0
           - x86_64-windows-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v9
         with:
           version: ${{ env.UV_VERSION }}
       - name: Build the wheel
         env:
           ZENFMT_WHEEL_TARGET: ${{ matrix.target }}
         run: uv build --wheel --out-dir dist python
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.target }}
           path: dist/*.whl
@@ -71,13 +71,13 @@ jobs:
     name: Build the source distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9
         with:
           version: ${{ env.UV_VERSION }}
       - name: Build the sdist
         run: uv build --sdist --out-dir dist python
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -94,47 +94,45 @@ jobs:
           - name: manylinux x86_64
             runner: ubuntu-latest
             artifact: wheel-x86_64-linux-gnu.2.17
-            container: ""
+            musl: false
           - name: manylinux aarch64
             runner: ubuntu-24.04-arm
             artifact: wheel-aarch64-linux-gnu.2.17
-            container: ""
+            musl: false
           - name: musllinux x86_64
             runner: ubuntu-latest
             artifact: wheel-x86_64-linux-musl
-            container: "alpine:3.20"
+            musl: true
           - name: musllinux aarch64
             runner: ubuntu-24.04-arm
             artifact: wheel-aarch64-linux-musl
-            container: "alpine:3.20"
+            musl: true
           - name: macOS x86_64
             runner: macos-13
             artifact: wheel-x86_64-macos.12.0
-            container: ""
+            musl: false
           - name: macOS arm64
             runner: macos-14
             artifact: wheel-aarch64-macos.12.0
-            container: ""
+            musl: false
           - name: Windows x86_64
             runner: windows-latest
             artifact: wheel-x86_64-windows-gnu
-            container: ""
-    container: ${{ matrix.container }}
+            musl: false
     steps:
-      # Node-based actions need glibc compatibility inside the musl
-      # container; plain `run:` steps do not, so this runs first.
-      - name: Prepare Alpine container
-        if: ${{ matrix.container != '' }}
-        run: apk add --no-cache bash gcompat libstdc++ tar
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      # Actions run on the host. GitHub does not support JavaScript actions
+      # inside ARM Alpine job containers, and adding gcompat would stop this
+      # from being a faithful musl runtime test.
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9
         with:
           version: ${{ env.UV_VERSION }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.artifact }}
           path: dist
       - name: Clean-install and smoke every supported CPython
+        if: ${{ !matrix.musl }}
         shell: bash
         run: |
           set -eux
@@ -150,20 +148,40 @@ jobs:
             (cd "$RUNNER_TEMP" && "$venv_python" -I \
               "$GITHUB_WORKSPACE/python/tests/release/smoke.py")
           done
+      - name: Clean-install and smoke every supported CPython on musl
+        if: ${{ matrix.musl }}
+        shell: bash
+        run: |
+          set -eux
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" \
+            -v "$RUNNER_TEMP:/runner-temp" \
+            -w /runner-temp \
+            "ghcr.io/astral-sh/uv:${UV_VERSION}-python3.14-alpine" \
+            sh -c '
+              set -eux
+              for python_version in 3.10 3.11 3.12 3.13 3.14; do
+                uv venv --clear --python "$python_version" /runner-temp/smoke-venv
+                uv pip install --python /runner-temp/smoke-venv \
+                  --no-index --find-links /workspace/dist zenfmt
+                /runner-temp/smoke-venv/bin/python -I \
+                  /workspace/python/tests/release/smoke.py
+              done
+            '
 
   test-sdist:
     name: Rebuild from the sdist
     needs: build-sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v9
         with:
           version: ${{ env.UV_VERSION }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: sdist
           path: dist

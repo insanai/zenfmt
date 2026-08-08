@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Zig
         uses: mlugg/setup-zig@v2
@@ -41,7 +41,7 @@ jobs:
       # suite and Ruff gates through uv (ZDS 0014); missing uv is a hard
       # prerequisite failure by design.
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v9
         with:
           version: "0.11.6"
           enable-cache: true
