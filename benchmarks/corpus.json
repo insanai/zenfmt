@@ -1,0 +1,136 @@
+{
+  "schema": 1,
+  "note": "The benchmark corpus is not committed: these are third-party documents whose licences differ and are in several cases unstated, and a conversion of one is a derivative work. Neither the documents nor their conversions are published (ZDS 0015, Result schema). What is published is this manifest, which is what a reader needs to reproduce a run. fetch_corpus.sh verifies every digest, so a source that republishes a file under the same URL is caught instead of silently invalidating recorded numbers.",
+  "files": [
+    {
+      "name": "report.docx",
+      "format": "docx",
+      "bytes": 34375,
+      "sha256": "58211ac149c4b05110cb95959f0f5f529333af5aea060d5a5baf096f531848b8",
+      "source": "https://filesamples.com/samples/document/docx/sample3.docx",
+      "license": "unstated"
+    },
+    {
+      "name": "sheet.xlsx",
+      "format": "xlsx",
+      "bytes": 13246,
+      "sha256": "f98f9cbde2e81d60de20f70631d9866066ba190fd29387a6174764480954af42",
+      "source": "https://filesamples.com/samples/document/xlsx/sample3.xlsx",
+      "license": "unstated"
+    },
+    {
+      "name": "slides.pptx",
+      "format": "pptx",
+      "bytes": 648274,
+      "sha256": "a387861a0066ad11ba85aba9572830c1ec1ab9a24380728ead34d2b5b26662c0",
+      "source": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/slideshow/2411-Performance_Up.pptx",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "letter.odt",
+      "format": "odt",
+      "bytes": 4259,
+      "sha256": "1c5dd92b188f69f85620b199c5911df7b5731717e688cbd21d1f5446ffc335e4",
+      "source": "https://filesamples.com/samples/document/odt/sample3.odt",
+      "license": "unstated"
+    },
+    {
+      "name": "sheet.ods",
+      "format": "ods",
+      "bytes": 6254,
+      "sha256": "bf75df3b390d3ea0991043fe19de1d732472d7fb5a770a277ab5671dd95705d5",
+      "source": "https://filesamples.com/samples/document/ods/sample2.ods",
+      "license": "unstated"
+    },
+    {
+      "name": "slides.odp",
+      "format": "odp",
+      "bytes": 477188,
+      "sha256": "7f6b999c4df7d65b39767c85bbe372ad24e16f9c4bbf836ecb54840eb01e3f5c",
+      "source": "derived from slides.pptx by LibreOffice --convert-to odp",
+      "license": "Apache-2.0",
+      "derived_from": "slides.pptx",
+      "note": "Converted locally so the ODP row measures a text-rich deck rather than a table-only fixture. The digest pins one specific LibreOffice conversion; a different LibreOffice version produces a different file and must be recorded as a corpus change."
+    },
+    {
+      "name": "memo.doc",
+      "format": "doc",
+      "bytes": 32768,
+      "sha256": "2ebe91704c36495a3f487ec3c3741b91e39c03763bc9e3923677d73049e3b05a",
+      "source": "https://filesamples.com/samples/document/doc/sample2.doc",
+      "license": "unstated"
+    },
+    {
+      "name": "table.xls",
+      "format": "xls",
+      "bytes": 13312,
+      "sha256": "c745e3189234007f00e8dbd35130ae3a0b7a81c88d747abad66e717ee06c515b",
+      "source": "https://filesamples.com/samples/document/xls/sample3.xls",
+      "license": "unstated"
+    },
+    {
+      "name": "deck.ppt",
+      "format": "ppt",
+      "bytes": 2579456,
+      "sha256": "bdfdb2d76c352fff3ac922a8c56cfd9ba7ed166d9e5a9e88fe43f818ff7b7a2b",
+      "source": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/slideshow/23884_defense_FINAL_OOimport_edit.ppt",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "grid.xlsb",
+      "format": "xlsb",
+      "bytes": 9161,
+      "sha256": "41b0c82bfa682f968d69e05e23137232d6c89ea4f24439786f0b779be319929b",
+      "source": "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/Simple.xlsb",
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "book.epub",
+      "format": "epub",
+      "bytes": 558547,
+      "sha256": "462be7852d84412c6695851395144a97e9762d45bd3c41b9f356dc7ac047b8a9",
+      "source": "https://www.gutenberg.org/ebooks/1342.epub.noimages",
+      "license": "public-domain"
+    },
+    {
+      "name": "spec.pdf",
+      "format": "pdf",
+      "bytes": 13264,
+      "sha256": "3df79d34abbca99308e79cb94461c1893582604d68329a41fd4bec1885e6adb4",
+      "source": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      "license": "W3C-Test-Suite"
+    },
+    {
+      "name": "article.pdf",
+      "format": "pdf",
+      "bytes": 18810,
+      "sha256": "229defbb0cee6f02673a5cde290d0673e75a0dc31cec43989c8ab2a4eca7e1bb",
+      "source": "https://pdfobject.com/pdf/sample.pdf",
+      "license": "unstated"
+    },
+    {
+      "name": "notes.rtf",
+      "format": "rtf",
+      "bytes": 33154,
+      "sha256": "084173c3b37f217920ec187a8bdf0ed2890c714d7d56492e2d30bc035f557325",
+      "source": "https://filesamples.com/samples/document/rtf/sample3.rtf",
+      "license": "unstated"
+    },
+    {
+      "name": "data.csv",
+      "format": "csv",
+      "bytes": 633352,
+      "sha256": "9fa10991664bf95e469fa35427f82bdf4902147f269ead45b841b81759771a6f",
+      "source": "https://people.sc.fsu.edu/~jburkardt/data/csv/hw_25000.csv",
+      "license": "public-domain"
+    },
+    {
+      "name": "page.html",
+      "format": "html",
+      "bytes": 852578,
+      "sha256": "6ac95942895963da67dc62f8bf9e6e0090b2e745a27f68940946c427fee3848a",
+      "source": "https://www.gutenberg.org/cache/epub/1342/pg1342-images.html",
+      "license": "public-domain"
+    }
+  ]
+}

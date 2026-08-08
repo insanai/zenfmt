@@ -1,64 +1,113 @@
 #!/bin/sh
-# Downloads the benchmark corpus: real-world documents from public sample
-# repositories (filesamples.com, Apache POI and LibreOffice test data,
-# Project Gutenberg, W3C). The corpus is not committed; run this script once
-# before `zig build benchmark`. Every file is fetched only when absent.
+# Fetches the benchmark corpus described by benchmarks/corpus.json: real-world
+# documents from public sample repositories (filesamples.com, Apache POI and
+# LibreOffice test data, Project Gutenberg, W3C). The corpus is not committed;
+# run this script once before `zig build benchmark`.
+#
+# Every file is verified against the SHA-256 recorded in the manifest. A
+# published benchmark number is only meaningful if the bytes it was measured
+# on are known, so a digest mismatch and a failed download are both errors
+# here, not warnings: a partial or drifted corpus produces numbers that look
+# fine and are not comparable to anything.
 set -eu
 
-corpus="$(dirname "$0")/corpus"
+root="$(dirname "$0")"
+corpus="$root/corpus"
+manifest="$root/corpus.json"
 mkdir -p "$corpus"
 
-fetch() {
-    name="$1"
-    url="$2"
-    out="$corpus/$name"
-    if [ -s "$out" ]; then
-        echo "have    $name"
-        return 0
-    fi
-    if curl -fsSL --retry 2 --max-time 120 -A "Mozilla/5.0 (zenfmt-bench)" \
-        -o "$out.part" "$url"; then
-        mv "$out.part" "$out"
-        echo "fetched $name"
+if [ ! -s "$manifest" ]; then
+    echo "missing corpus manifest: $manifest" >&2
+    exit 1
+fi
+
+digest() {
+    if command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
     else
-        rm -f "$out.part"
-        echo "MISSING $name ($url)" >&2
+        sha256sum "$1" | cut -d' ' -f1
     fi
 }
 
-# --- OOXML / OpenDocument -------------------------------------------------
-fetch report.docx "https://filesamples.com/samples/document/docx/sample3.docx"
-fetch sheet.xlsx "https://filesamples.com/samples/document/xlsx/sample3.xlsx"
-fetch slides.pptx "https://raw.githubusercontent.com/apache/poi/trunk/test-data/slideshow/2411-Performance_Up.pptx"
-fetch letter.odt "https://filesamples.com/samples/document/odt/sample3.odt"
-fetch sheet.ods "https://filesamples.com/samples/document/ods/sample2.ods"
+# The manifest is the single source of names, URLs, and digests. Reading it
+# with python keeps that true rather than restating the list in shell.
+entries="$(python3 - "$manifest" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    manifest = json.load(handle)
+for entry in manifest["files"]:
+    source = entry["source"]
+    if not source.startswith("http"):
+        source = "-"
+    print(entry["name"], entry["sha256"], source)
+PY
+)"
+
+# The verification loop reads from a pipe, so it runs in a subshell and any
+# variable it sets is lost. Failures are recorded in a file instead, which is
+# the difference between this script reporting a drifted corpus and exiting
+# zero while printing errors nobody reads.
+failures="$(mktemp)"
+trap 'rm -f "$failures"' EXIT
+
 # A text-rich ODP: derived from the real Apache deck via LibreOffice when
-# installed, else LibreOffice's own (table-only) test file.
+# installed. Its digest pins one specific conversion, so a different
+# LibreOffice version is a corpus change and is reported as a mismatch rather
+# than quietly measured.
 soffice="/Applications/LibreOffice.app/Contents/MacOS/soffice"
-if [ ! -s "$corpus/slides.odp" ] && [ -x "$soffice" ] && [ -s "$corpus/slides.pptx" ]; then
+derive_odp() {
+    [ -s "$corpus/slides.odp" ] && return 0
+    [ -x "$soffice" ] || return 1
+    [ -s "$corpus/slides.pptx" ] || return 1
     cp "$corpus/slides.pptx" "$corpus/deck-src.pptx"
     "$soffice" --headless --convert-to odp "$corpus/deck-src.pptx" \
         --outdir "$corpus" >/dev/null 2>&1 || true
-    [ -s "$corpus/deck-src.odp" ] && mv "$corpus/deck-src.odp" "$corpus/slides.odp"
     rm -f "$corpus/deck-src.pptx"
-    [ -s "$corpus/slides.odp" ] && echo "derived slides.odp"
+    [ -s "$corpus/deck-src.odp" ] || return 1
+    mv "$corpus/deck-src.odp" "$corpus/slides.odp"
+    return 0
+}
+
+echo "$entries" | while read -r name want url; do
+    out="$corpus/$name"
+    if [ ! -s "$out" ]; then
+        if [ "$url" = "-" ]; then
+            if ! derive_odp; then
+                echo "MISSING $name (derived locally; LibreOffice is required)" >&2
+                echo "$name" >>"$failures"
+                continue
+            fi
+        elif ! curl -fsSL --retry 2 --max-time 120 \
+            -A "Mozilla/5.0 (zenfmt-bench)" -o "$out.part" "$url"; then
+            rm -f "$out.part"
+            echo "MISSING $name ($url)" >&2
+            echo "$name" >>"$failures"
+            continue
+        else
+            mv "$out.part" "$out"
+        fi
+    fi
+
+    got="$(digest "$out")"
+    if [ "$got" != "$want" ]; then
+        echo "MISMATCH $name" >&2
+        echo "  expected $want" >&2
+        echo "  actual   $got" >&2
+        echo "  The source changed, or the file is truncated. Update" >&2
+        echo "  benchmarks/corpus.json deliberately and regenerate every" >&2
+        echo "  affected result; do not benchmark against it as it is." >&2
+        echo "$name" >>"$failures"
+        continue
+    fi
+    echo "ok      $name"
+done
+
+if [ -s "$failures" ]; then
+    echo >&2
+    echo "corpus is incomplete or has drifted; benchmark numbers from it" >&2
+    echo "would not be reproducible" >&2
+    exit 1
 fi
-fetch slides.odp "https://raw.githubusercontent.com/LibreOffice/core/master/sd/qa/unit/data/odp/Table_with_Cell_Fill.odp"
-
-# --- legacy binary --------------------------------------------------------
-fetch memo.doc "https://filesamples.com/samples/document/doc/sample2.doc"
-fetch table.xls "https://filesamples.com/samples/document/xls/sample3.xls"
-fetch deck.ppt "https://raw.githubusercontent.com/apache/poi/trunk/test-data/slideshow/23884_defense_FINAL_OOimport_edit.ppt"
-fetch grid.xlsb "https://raw.githubusercontent.com/apache/poi/trunk/test-data/spreadsheet/Simple.xlsb"
-
-# --- portable / text ------------------------------------------------------
-fetch book.epub "https://www.gutenberg.org/ebooks/1342.epub.noimages"
-fetch spec.pdf "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
-fetch article.pdf "https://pdfobject.com/pdf/sample.pdf"
-fetch notes.rtf "https://filesamples.com/samples/document/rtf/sample3.rtf"
-fetch data.csv "https://people.sc.fsu.edu/~jburkardt/data/csv/hw_25000.csv"
-fetch page.html "https://www.gutenberg.org/cache/epub/1342/pg1342-images.html"
 
 echo
-echo "corpus contents:"
-ls -la "$corpus" | tail -n +2
+echo "corpus verified against $manifest"
