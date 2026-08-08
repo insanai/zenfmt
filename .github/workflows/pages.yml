@@ -1,0 +1,117 @@
+name: Pages
+
+# Replaces the old docs workflow. Two things changed beyond building the new
+# site: the deployment permissions are scoped to the deploy job rather than
+# granted to the whole workflow — a pull request from a fork does not need
+# them and should not have them — and Typst is pinned to an exact patch
+# version, because its HTML export is experimental and the assembler checks
+# its output against expectations.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  # A superseded branch build is worth cancelling. A deploy of main is not.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  ZIG_VERSION: "0.16.0"
+  TYPST_VERSION: "0.15.1"
+  UV_VERSION: "0.11.6"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The creation timestamp comes from the commit, so the generated
+          # documents carry the revision's date and two builds of the same
+          # revision are byte-identical.
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: typst-community/setup-typst@v4
+        with:
+          typst-version: ${{ env.TYPST_VERSION }}
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Check the registry against the record files
+        run: |
+          zig build zds-list | tee zds-list.txt
+          ! grep -q '^warning:' zds-list.txt
+
+      - name: Assemble the site
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          zig build site \
+            -Dsite-base=/zenfmt/ \
+            -Dsource-date-epoch="$SOURCE_DATE_EPOCH" \
+            -Dgit-revision=${{ github.sha }}
+
+      - name: Check the site
+        run: zig build site-check -Dsite-base=/zenfmt/ -Dgit-revision=${{ github.sha }}
+
+      - name: Upload a preview for review
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-preview-${{ github.event.number }}
+          path: zig-out/site
+
+      - uses: actions/configure-pages@v5
+        if: github.ref == 'refs/heads/main'
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: zig-out/site
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    # The only job that holds deployment authority.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  smoke:
+    if: github.ref == 'refs/heads/main'
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the published routes respond
+        run: |
+          base="https://insanai.github.io/zenfmt"
+          fail=0
+          for path in "/" "/book/" "/book/tour/" "/zds/" "/download/" "/security/" "/benchmark/"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$base$path")
+            echo "$code $path"
+            [ "$code" = "200" ] || fail=1
+          done
+          # A module served as the wrong type cannot be stream-compiled, and
+          # the failure would only show up in a visitor's browser.
+          type=$(curl -s -o /dev/null -w '%{content_type}' \
+            "$(curl -s "$base/" | grep -o 'assets/wasm/[^"]*\.wasm' | head -1 | sed "s|^|$base/|")")
+          echo "wasm content-type: $type"
+          case "$type" in application/wasm*) ;; *) fail=1 ;; esac
+          exit $fail

@@ -36,6 +36,13 @@ jobs:
           test "$tag" = "$zon_version"
           zig build -Doptimize=ReleaseSafe
           test "$(./zig-out/bin/zenfmt --version)" = "zenfmt $zon_version"
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: The suite must pass on the revision being released
+        run: |
+          zig build fmt-check
+          zig build test
 
   matrix:
     name: Build and test the complete Python matrix
@@ -107,6 +114,81 @@ jobs:
           path: release/*
           if-no-files-found: error
 
+  build-wasm:
+    name: Build the browser distribution
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build and audit the module
+        run: zig build wasm-check -Dgit-revision=${{ github.sha }}
+      - name: Package the browser distribution
+        shell: bash
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          stage="zenfmt-$version-wasm32-freestanding"
+          mkdir -p "dist/$stage"
+          cp zig-out/wasm/zenfmt.wasm "dist/$stage/"
+          cp site/assets/js/zenfmt.js site/assets/js/zenfmt.worker.js \
+             site/assets/js/zenfmt.d.ts "dist/$stage/"
+          cp LICENSE "dist/$stage/"
+          cp zig-out/share/zenfmt/capabilities.json "dist/$stage/" || true
+          (cd "dist/$stage" && sha256sum * > SHA256SUMS)
+          # Fixed mtimes, sorted entries, and no ownership, so the archive is
+          # a function of its contents rather than of when it was built.
+          tar --sort=name --mtime="@${SOURCE_DATE_EPOCH:-0}" \
+              --owner=0 --group=0 --numeric-owner \
+              -czf "dist/$stage.tar.gz" -C dist "$stage"
+          cp zig-out/wasm/zenfmt.wasm "dist/$stage.wasm"
+          # The standalone asset and the one inside the archive must be the
+          # same bytes; a consumer choosing either should get the same engine.
+          cmp "dist/$stage.wasm" "dist/$stage/zenfmt.wasm"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: |
+            dist/*.tar.gz
+            dist/*.wasm
+
+  build-docs:
+    name: Build the release documents
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: typst-community/setup-typst@v4
+        with:
+          typst-version: "0.15.1"
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Build the book and every record
+        shell: bash
+        run: |
+          set -eux
+          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          zig build docs -Dsource-date-epoch="$SOURCE_DATE_EPOCH"
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          cp docs/build/zenfmt-book.pdf "dist/zenfmt-book-$version.pdf"
+          for pdf in docs/build/zds-[0-9]*.pdf; do cp "$pdf" dist/; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: documents
+          path: dist/*.pdf
+
   publish-pypi:
     name: Publish Python artifacts to PyPI
     if: ${{ !contains(github.ref_name, '-') }}
@@ -170,9 +252,43 @@ jobs:
             -u -X faulthandler -I \
             "$GITHUB_WORKSPACE/python/tests/release/smoke.py")
 
+  verify-wasm:
+    name: Verify the browser distribution
+    needs: build-wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: wasm
+          path: dist
+      - name: Convert a document through the published archive
+        shell: bash
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          tar -xzf "dist/zenfmt-$version-wasm32-freestanding.tar.gz" -C dist
+          node --input-type=module -e "
+            import { readFile } from 'node:fs/promises';
+            const dir = 'dist/zenfmt-$version-wasm32-freestanding';
+            const { Converter } = await import('./' + dir + '/zenfmt.js');
+            const c = new Converter(await WebAssembly.compile(await readFile(dir + '/zenfmt.wasm')));
+            await c.ready();
+            const r = await c.convert(new Uint8Array(await readFile('python/tests/integration/fixtures/min.docx')), { name: 'min.docx' });
+            if (r.sourceFormat !== 'docx' || !r.text.length) throw new Error('conversion failed');
+            console.log('archive converts docx ->', r.outputFormat, r.artifact.length, 'bytes');
+          "
+
   github-release:
     name: Publish GitHub release
-    needs: [matrix, build-cli, publish-pypi, post-publish-install]
+    needs:
+      - matrix
+      - build-cli
+      - build-wasm
+      - build-docs
+      - verify-wasm
+      - publish-pypi
+      - post-publish-install
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -186,10 +302,17 @@ jobs:
           set -eux
           mkdir -p release
           find artifacts -type f \( -name '*.whl' -o -name '*.tar.gz' \
-            -o -name '*.zip' \) -exec cp {} release/ \;
+            -o -name '*.zip' -o -name '*.wasm' -o -name '*.pdf' \) \
+            -exec cp {} release/ \;
+          version="${GITHUB_REF_NAME#v}"
           test "$(find release -maxdepth 1 -name '*.whl' | wc -l)" -eq 7
-          test "$(find release -maxdepth 1 -name 'zenfmt-*.tar.gz' | wc -l)" -eq 7
+          # Six CLI archives, the source distribution, and the browser bundle.
+          test "$(find release -maxdepth 1 -name 'zenfmt-*.tar.gz' | wc -l)" -eq 8
           test "$(find release -maxdepth 1 -name 'zenfmt-*.zip' | wc -l)" -eq 1
+          test -f "release/zenfmt-$version-wasm32-freestanding.wasm"
+          test -f "release/zenfmt-book-$version.pdf"
+          test "$(find release -maxdepth 1 -name 'zds-*.pdf' | wc -l)" -ge 15
+          # Computed last, so every asset above is covered by it.
           (cd release && sha256sum * > SHA256SUMS)
       - name: Create the immutable GitHub release
         env:

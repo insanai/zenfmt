@@ -1,0 +1,104 @@
+name: CI
+
+# The test suite used to run in exactly one place: the documentation
+# workflow, on Linux only. That meant the Windows and macOS archives the
+# release publishes were cross-compiled and never executed anywhere, and that
+# losing the Typst action would have silently taken the whole test signal with
+# it. Testing is its own workflow now, and it runs on every platform the
+# project ships a binary for.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  ZIG_VERSION: "0.16.0"
+  UV_VERSION: "0.11.6"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Check formatting
+        run: zig build fmt-check
+
+      - name: Run the test suite
+        run: zig build test
+
+  wasm:
+    name: browser module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      # The audit is the security claim: an empty import table is what makes
+      # "this module has no host authority" a fact rather than an assertion.
+      - name: Build and audit the browser module
+        run: zig build wasm-check -Dgit-revision=${{ github.sha }}
+
+      - name: Record the module size
+        run: |
+          raw=$(wc -c < zig-out/wasm/zenfmt.wasm)
+          gz=$(gzip -9 -c zig-out/wasm/zenfmt.wasm | wc -c)
+          echo "raw=$raw compressed=$gz" >> "$GITHUB_STEP_SUMMARY"
+          # The budget is derived from a measurement, so a regression that
+          # doubles the module fails here rather than shipping.
+          test "$raw" -le 2097152 || { echo "module exceeds 2 MiB raw"; exit 1; }
+          test "$gz" -le 786432 || { echo "module exceeds 768 KiB gzipped"; exit 1; }
+
+  python:
+    name: python release gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      # The every-format requirement is only meaningful with a fixture for
+      # every reader, and one format — xlsb — has no committed fixture
+      # because no open tool writes it. The corpus supplies it. Fetching is
+      # safe to depend on now that the script verifies each file against a
+      # recorded digest and fails rather than proceeding on a mismatch.
+      - name: Fetch and verify the benchmark corpus
+        run: sh benchmarks/fetch_corpus.sh
+
+      # This gate exists in the build and was never wired to CI, so the
+      # every-format requirement and the installed-artifact tests were only
+      # ever run by hand.
+      - name: Run the full Python gate
+        run: ZENFMT_REQUIRE_ALL_FORMATS=1 zig build python-check
