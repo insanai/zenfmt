@@ -68,6 +68,7 @@ fn addBenchmark(
     const run_stages = b.addRunArtifact(stages);
     run_stages.has_side_effects = true;
     run_stages.setCwd(b.path("."));
+    if (b.args) |args| run_stages.addArgs(args);
     const stages_step = b.step(
         "benchmark-stages",
         "Run the in-process stage benchmark over the corpus " ++
@@ -357,6 +358,7 @@ fn addLibraries(
         "tests/media.zig",
         "tests/facets.zig",
         "tests/lowering.zig",
+        "tests/oom.zig",
         "tests/docs_sync.zig",
     };
     for (end_to_end_sources) |source| {
