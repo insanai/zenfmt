@@ -7,70 +7,70 @@ format; `failed` means it exited non-zero.
 
 | file | size | tool | wall ms | cpu ms | peak RSS MB |
 |---|---:|---|---:|---:|---:|
-| article.pdf | 18.369140625KiB | zenfmt | 4.1 | 3.3 | 3.4 |
+| article.pdf | 18.369140625KiB | zenfmt | 4.3 | 3.4 | 3.4 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 64.1 | 65.3 | 49.7 |
-| | | zenfmt-python-wheel | 92.6 | 90.8 | 31.5 |
-| book.epub | 545.4560546875KiB | zenfmt | 47.8 | 46.5 | 22.9 |
-| | | pandoc | 2002.3 | 1986.1 | 269.1 |
-| | | anydoc | 94.7 | 94.3 | 54.1 |
-| | | zenfmt-python-wheel | 218.5 | 216.6 | 54.3 |
-| data.csv | 618.5078125KiB | zenfmt | 125.0 | 123.4 | 41.0 |
-| | | pandoc | 1271.5 | 1261.5 | 290.3 |
-| | | anydoc | 130.4 | 129.8 | 71.0 |
-| | | zenfmt-python-wheel | 2179.3 | 2177.3 | 73.3 |
-| deck.ppt | 2.4599609375MiB | zenfmt | 9.9 | 8.9 | 7.4 |
+| | | anydoc | 63.5 | 64.9 | 49.6 |
+| | | zenfmt-python-wheel | 92.8 | 90.9 | 31.5 |
+| book.epub | 545.4560546875KiB | zenfmt | 47.4 | 46.5 | 22.9 |
+| | | pandoc | 1992.1 | 1985.1 | 269.0 |
+| | | anydoc | 96.0 | 95.5 | 54.2 |
+| | | zenfmt-python-wheel | 218.1 | 216.2 | 54.3 |
+| data.csv | 618.5078125KiB | zenfmt | 119.3 | 117.9 | 41.0 |
+| | | pandoc | 1273.9 | 1260.3 | 290.2 |
+| | | anydoc | 129.7 | 129.1 | 71.0 |
+| | | zenfmt-python-wheel | 2176.8 | 2174.8 | 73.3 |
+| deck.ppt | 2.4599609375MiB | zenfmt | 10.2 | 9.3 | 7.4 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 64.8 | 64.5 | 54.0 |
-| | | zenfmt-python-wheel | 116.1 | 114.2 | 35.3 |
+| | | anydoc | 65.2 | 64.9 | 53.9 |
+| | | zenfmt-python-wheel | 116.1 | 114.3 | 35.5 |
 | grid.xlsb | 8.9462890625KiB | zenfmt | 3.6 | 2.8 | 2.8 |
 | | | pandoc | unsupported | | |
 | | | anydoc | failed | | |
-| | | zenfmt-python-wheel | 91.4 | 89.7 | 30.7 |
-| letter.odt | 4.1591796875KiB | zenfmt | 3.6 | 2.8 | 2.9 |
+| | | zenfmt-python-wheel | 92.6 | 90.8 | 30.9 |
+| letter.odt | 4.1591796875KiB | zenfmt | 3.8 | 2.9 | 2.9 |
 | | | pandoc | 40.6 | 26.7 | 41.6 |
-| | | anydoc | 60.9 | 60.6 | 47.0 |
-| | | zenfmt-python-wheel | 92.0 | 90.2 | 31.0 |
-| memo.doc | 32KiB | zenfmt | 3.6 | 2.9 | 2.9 |
+| | | anydoc | 62.9 | 62.6 | 47.0 |
+| | | zenfmt-python-wheel | 93.9 | 92.0 | 31.0 |
+| memo.doc | 32KiB | zenfmt | 3.9 | 3.1 | 2.9 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 61.5 | 61.2 | 47.3 |
-| | | zenfmt-python-wheel | 92.9 | 91.1 | 31.0 |
-| notes.rtf | 32.376953125KiB | zenfmt | 4.1 | 3.3 | 2.8 |
-| | | pandoc | 65.1 | 47.2 | 104.5 |
-| | | anydoc | 62.2 | 61.8 | 46.3 |
+| | | anydoc | 62.3 | 62.0 | 47.2 |
+| | | zenfmt-python-wheel | 93.0 | 91.3 | 31.0 |
+| notes.rtf | 32.376953125KiB | zenfmt | 4.0 | 3.2 | 2.8 |
+| | | pandoc | 65.4 | 47.2 | 104.5 |
+| | | anydoc | 62.5 | 62.3 | 46.4 |
 | | | zenfmt-python-wheel | 92.1 | 90.3 | 30.9 |
-| page.html | 832.595703125KiB | zenfmt | 40.4 | 39.2 | 23.1 |
-| | | pandoc | 1994.4 | 1983.4 | 426.5 |
+| page.html | 832.595703125KiB | zenfmt | 40.5 | 39.2 | 23.1 |
+| | | pandoc | 1992.5 | 1979.3 | 426.5 |
 | | | anydoc | unsupported | | |
-| | | zenfmt-python-wheel | 212.1 | 210.0 | 54.0 |
-| report.docx | 33.5693359375KiB | zenfmt | 4.6 | 3.7 | 3.2 |
-| | | pandoc | 65.4 | 58.8 | 108.4 |
-| | | anydoc | 62.8 | 62.6 | 48.0 |
-| | | zenfmt-python-wheel | 97.1 | 95.3 | 31.2 |
-| sheet.ods | 6.107421875KiB | zenfmt | 4.0 | 3.2 | 3.0 |
+| | | zenfmt-python-wheel | 211.7 | 209.9 | 54.0 |
+| report.docx | 33.5693359375KiB | zenfmt | 4.5 | 3.7 | 3.2 |
+| | | pandoc | 65.7 | 59.0 | 108.4 |
+| | | anydoc | 62.7 | 62.4 | 48.0 |
+| | | zenfmt-python-wheel | 97.3 | 95.5 | 31.2 |
+| sheet.ods | 6.107421875KiB | zenfmt | 3.9 | 3.1 | 3.0 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 62.5 | 62.3 | 47.5 |
-| | | zenfmt-python-wheel | 93.5 | 91.7 | 30.9 |
-| sheet.xlsx | 12.935546875KiB | zenfmt | 4.3 | 3.5 | 3.0 |
+| | | anydoc | 62.0 | 61.7 | 47.5 |
+| | | zenfmt-python-wheel | 93.5 | 91.7 | 31.0 |
+| sheet.xlsx | 12.935546875KiB | zenfmt | 4.4 | 3.6 | 3.0 |
 | | | pandoc | unsupported | | |
 | | | anydoc | 62.1 | 61.8 | 47.3 |
-| | | zenfmt-python-wheel | 97.4 | 95.6 | 31.0 |
-| slides.odp | 466.00390625KiB | zenfmt | 12.4 | 11.5 | 4.2 |
+| | | zenfmt-python-wheel | 97.2 | 95.4 | 31.1 |
+| slides.odp | 466.00390625KiB | zenfmt | 12.3 | 11.5 | 4.2 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 74.5 | 74.0 | 54.5 |
-| | | zenfmt-python-wheel | 122.7 | 121.0 | 32.3 |
-| slides.pptx | 633.080078125KiB | zenfmt | 11.6 | 10.8 | 4.2 |
+| | | anydoc | 74.5 | 74.1 | 54.4 |
+| | | zenfmt-python-wheel | 122.2 | 120.8 | 32.2 |
+| slides.pptx | 633.080078125KiB | zenfmt | 11.6 | 10.7 | 4.2 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 72.3 | 72.0 | 49.3 |
-| | | zenfmt-python-wheel | 128.0 | 126.2 | 32.2 |
+| | | anydoc | 71.1 | 70.8 | 49.3 |
+| | | zenfmt-python-wheel | 128.0 | 126.2 | 32.4 |
 | spec.pdf | 12.953125KiB | zenfmt | 3.6 | 2.8 | 3.0 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 64.6 | 65.6 | 48.8 |
-| | | zenfmt-python-wheel | 92.0 | 90.1 | 31.1 |
-| table.xls | 13KiB | zenfmt | 4.1 | 3.3 | 3.0 |
+| | | anydoc | 63.0 | 63.8 | 48.8 |
+| | | zenfmt-python-wheel | 92.3 | 90.4 | 31.0 |
+| table.xls | 13KiB | zenfmt | 3.9 | 3.1 | 3.0 |
 | | | pandoc | unsupported | | |
-| | | anydoc | 62.7 | 62.4 | 46.9 |
-| | | zenfmt-python-wheel | 95.6 | 93.9 | 31.0 |
+| | | anydoc | 63.5 | 63.3 | 46.9 |
+| | | zenfmt-python-wheel | 95.9 | 94.1 | 31.0 |
 
 ## Support matrix
 
@@ -85,7 +85,7 @@ format; `failed` means it exited non-zero.
 
 | pair | files | wall | cpu | peak RSS |
 |---|---:|---:|---:|---:|
-| zenfmt vs pandoc | 6 | 19.3x | 18.8x | 17.2x |
+| zenfmt vs pandoc | 6 | 19.5x | 18.9x | 17.2x |
 | zenfmt vs anydoc | 14 | 9.1x | 10.7x | 10.7x |
 | zenfmt vs zenfmt-python-wheel | 16 | 16.4x | 18.9x | 7.0x |
 
