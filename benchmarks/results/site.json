@@ -2,18 +2,18 @@
   "aggregates": {
     "browser": {
       "artifact": {
-        "artifact_sha256": "10ed49c52ff023bdcfe20fd793eff57c4725311885b15398fef275584d275b1a",
-        "gzip_bytes": 561910,
+        "artifact_sha256": "7a20bc782dc52344c1e7ee7e7e470017e02f422c2694f8c49628fce435318564",
+        "gzip_bytes": 561898,
         "name": "zenfmt",
         "optimization": "ReleaseSafe",
         "raw_bytes": 1730054,
         "target": "wasm32-freestanding"
       },
       "cold": {
-        "compile_ms": 4.5,
-        "fetch_ms": 8.099999964237213,
-        "first_ready_ms": 21.5,
-        "instantiate_ms": 8.900000035762787
+        "compile_ms": 4.599999964237213,
+        "fetch_ms": 8.199999988079071,
+        "first_ready_ms": 21.799999952316284,
+        "instantiate_ms": 9
       },
       "competitors": [
         {
@@ -34,7 +34,7 @@
           "total": 16
         }
       ],
-      "median_ms": 17.10624999552965
+      "median_ms": 17.412500005215406
     },
     "headline": {
       "summary": "On this 16-file corpus, zenfmt converted 16 files, AnyDoc converted 14, and Pandoc converted 6. The method, shared-file timings, machine details, and raw samples are available below."
@@ -43,15 +43,15 @@
       "comparisons": {
         "anydoc": {
           "shared_files": 14,
-          "wall_ratio": 9.084695191217389
+          "wall_ratio": 9.174828267005738
         },
         "pandoc": {
           "shared_files": 6,
-          "wall_ratio": 19.478382308163745
+          "wall_ratio": 19.40325213863743
         },
         "zenfmt-python-wheel": {
           "shared_files": 16,
-          "wall_ratio": 16.38531741847892
+          "wall_ratio": 16.57197939466811
         }
       },
       "coverage": [
@@ -83,7 +83,7 @@
       "total": 16
     }
   },
-  "git_revision": "44483e83cde9a15de8a351db70d87a84349b3472",
+  "git_revision": "9937ebdb313caa7cbbd23341dbc83960567bfd7c",
   "schema": 1,
   "sources": {
     "corpus": {
@@ -92,19 +92,19 @@
     },
     "native": {
       "path": "benchmarks/results/latest.json",
-      "sha256": "314a475bd667d2290ce6f111ecc8d548bd97f2d772047348ff024c076fdb2f9a"
+      "sha256": "9e467b77b6e852ed643cffccf00607d2abb8204ba512c2425baed7350fec834c"
     },
     "python": {
       "path": "benchmarks/results/python.json",
-      "sha256": "0767f76ff83b54da0355eb44609e9542666ad969d2edd44a0260ac594a5fe962"
+      "sha256": "d8b903b923c6de208f29a7fccf47cc9037e73d85c26c23d9479e8cf282783fc1"
     },
     "stages": {
       "path": "benchmarks/results/stages.json",
-      "sha256": "71c9d8807ee93fa85d0e18efd812b5769f1721e10ce44d52cd8e9c1b6ce998cf"
+      "sha256": "e5f2b07490b9109be1d359d585d60033b88fecc54d5260e7f32e45984007f127"
     },
     "wasm": {
       "path": "benchmarks/results/wasm.json",
-      "sha256": "a05ae7d16053c3dea863d0e9a822a1a47f20302768ade7b51a3c0b581e161ee3"
+      "sha256": "1f03e800e1dc886d3c7f5f2d45a44fc2d22a98d53aeee27bba2bed47e6a3b742"
     }
   },
   "zenfmt_version": "0.2.0"
