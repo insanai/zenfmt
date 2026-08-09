@@ -43,6 +43,7 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "worker-src 'self'",
         "connect-src 'self'",
         "manifest-src 'self'",
+        "trusted-types zenfmt-worker",
         "require-trusted-types-for 'script'",
     ]
 )
@@ -69,6 +70,8 @@ class Page:
     absolute_base: str | None = None
     wasm_url: str | None = None
     adapter_url: str | None = None
+    worker_url: str | None = None
+    search_url: str | None = None
 
 
 def render(page: Page, *, version: str) -> str:
@@ -104,6 +107,10 @@ def render(page: Page, *, version: str) -> str:
             extra += f' data-wasm="{link(page.wasm_url)}"'
         if page.adapter_url:
             extra += f' data-adapter="{link(page.adapter_url)}"'
+        if page.worker_url:
+            extra += f' data-worker="{link(page.worker_url)}"'
+        if page.search_url:
+            extra += f' data-search="{link(page.search_url)}"'
         head.append(f'<script type="module" src="{link(script)}"{extra}></script>')
     head.append("</head>")
 
@@ -112,7 +119,7 @@ def render(page: Page, *, version: str) -> str:
         '<a class="skip-link" href="#main">Skip to content</a>',
         _header(page, link),
         '<main id="main">',
-        page.body,
+        _main(page, link),
         "</main>",
         _footer(link, version),
         "</body>",
@@ -142,9 +149,56 @@ def _header(page: Page, link) -> str:
         '<header class="site-header">'
         f'<a class="site-mark" href="{link("")}">zenfmt</a>'
         '<nav aria-label="Site"><ul>' + "".join(items) + "</ul></nav>"
-        '<button class="theme-toggle" type="button" data-theme-toggle '
-        'aria-label="Change colour theme">Theme</button>'
+        '<div class="site-tools">'
+        '<label class="search-label" for="site-search">Search docs</label>'
+        '<input id="site-search" class="site-search" type="search" '
+        'placeholder="Search Book and ZDS" autocomplete="off" data-search-input>'
+        '<label class="theme-label" for="theme-select">Theme</label>'
+        '<select id="theme-select" class="theme-select" data-theme-select>'
+        '<option value="light">Light</option><option value="dark">Dark</option>'
+        '<option value="system">System</option></select>'
+        "</div>"
+        '<div class="search-results" data-search-results hidden></div>'
         "</header>"
+    )
+
+
+def _main(page: Page, link) -> str:
+    if not page.toc:
+        return page.body
+
+    toc = "".join(
+        f'<li class="toc-level-{level}"><a href="#{_escape(anchor)}">'
+        f"{_escape(label)}</a></li>"
+        for level, anchor, label in page.toc
+        if level in (2, 3)
+    )
+    if page.route.startswith("book/"):
+        collection = "The zenfmt book"
+        collection_link = link("book/")
+        pdf = link("pdf/zenfmt-book.pdf")
+    else:
+        collection = "Zen Discussions"
+        collection_link = link("zds/")
+        stem = page.route.rsplit("/", 1)[-1].removesuffix(".html")
+        pdf = link(f"pdf/zds-{stem}.pdf")
+
+    return (
+        '<div class="docs-layout">'
+        '<aside class="docs-nav" aria-label="Documentation">'
+        f'<p class="docs-kicker">{_escape(collection)}</p>'
+        f'<p><a href="{collection_link}">Browse contents</a></p>'
+        f'<p><a href="{link("book/")}">Book</a></p>'
+        f'<p><a href="{link("zds/")}">Design records</a></p>'
+        f'<p><a href="{pdf}">Download this PDF</a></p>'
+        f'<p><a href="{link("")}">Try in browser</a></p>'
+        "</aside>"
+        f'<article class="docs-content">{page.body}</article>'
+        '<aside class="page-toc" aria-label="On this page">'
+        '<p class="docs-kicker">On this page</p>'
+        f"<ol>{toc}</ol>"
+        "</aside>"
+        "</div>"
     )
 
 

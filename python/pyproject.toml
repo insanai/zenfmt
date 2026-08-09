@@ -95,6 +95,7 @@ exclude = [
 [tool.hatch.build.targets.sdist.force-include]
 "../build.zig" = "engine/build.zig"
 "../build.zig.zon" = "engine/build.zig.zon"
+"../build" = "engine/build"
 "../bindings" = "engine/bindings"
 "../core" = "engine/core"
 "../support" = "engine/support"

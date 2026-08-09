@@ -16,6 +16,7 @@
 // `bytes()`, and it is called immediately before each read or write.
 
 const ABI_VERSION = 0x0001_0000;
+const PACKAGE_VERSION = '0.2.0';
 
 const STATUS_SUCCESS = 0;
 const STATUS_FAILED = 1;
@@ -33,6 +34,7 @@ const VIEW_RESOURCE_BYTES = 7;
 const VIEW_RESOURCE_DIGEST_HEX = 8;
 
 const REQUEST_SCHEMA = 1;
+let workerUrlPolicy = null;
 
 /// A failure a caller can act on: a stable code, the engine's structured
 /// reports when there are any, and directions phrased as things to do rather
@@ -134,7 +136,43 @@ export async function createConverter({ moduleUrl, signal } = {}) {
 
   const compiled = await compile(moduleUrl);
   signal?.throwIfAborted();
-  return new Converter(compiled);
+  const converter = new Converter(compiled);
+  await converter.ready();
+  return converter;
+}
+
+/// Creates the worker-backed converter used by the project site. The module
+/// is compiled once on the page and cloned into replaceable workers, so an
+/// abort or timeout can stop synchronous parsing without another fetch or
+/// compilation.
+export async function createWorkerConverter({ moduleUrl, workerUrl, signal } = {}) {
+  if (!workerUrl) {
+    throw new ZenfmtError({
+      code: 'browser.missing-worker-url',
+      problem: 'createWorkerConverter needs the URL of zenfmt.worker.js.',
+      consequence: 'No conversion worker was created.',
+      directions: [{
+        title: 'Pass the worker URL',
+        explanation: 'Serve zenfmt.worker.js beside the adapter and pass its explicit URL.',
+      }],
+    });
+  }
+  if (!moduleUrl) {
+    throw new ZenfmtError({
+      code: 'browser.missing-module-url',
+      problem: 'createWorkerConverter needs the URL of the WebAssembly module.',
+      consequence: 'No conversion worker was created.',
+      directions: [{
+        title: 'Pass the module URL',
+        explanation: 'Serve zenfmt.wasm from your own origin and pass its explicit URL.',
+      }],
+    });
+  }
+  const compiled = await compile(moduleUrl);
+  signal?.throwIfAborted();
+  const converter = new WorkerConverter(compiled, workerUrl);
+  await converter.ready();
+  return converter;
 }
 
 async function compile(moduleUrl) {
@@ -217,6 +255,20 @@ export class Converter {
       this.#exports.zenfmt_capabilities_ptr(),
       this.#exports.zenfmt_capabilities_len(),
     )));
+    const moduleVersion = this.version;
+    if (moduleVersion !== PACKAGE_VERSION || this.#capabilities.version !== PACKAGE_VERSION) {
+      throw new ZenfmtError({
+        code: 'browser.version-mismatch',
+        problem: `This adapter is zenfmt ${PACKAGE_VERSION}, but the module is ` +
+          `zenfmt ${moduleVersion}.`,
+        consequence: 'Nothing was converted, because mixed release files are unsafe to combine.',
+        directions: [{
+          title: 'Serve one complete release',
+          explanation: 'Replace zenfmt.js, zenfmt.worker.js, and zenfmt.wasm together ' +
+            'from the same versioned archive.',
+        }],
+      });
+    }
     return this;
   }
 
@@ -393,12 +445,312 @@ export class Converter {
         consequence: 'Nothing was read.',
         directions: [{
           title: 'Await ready() first',
-          explanation: 'createConverter resolves before the module is instantiated; ' +
-            'await converter.ready() or await a convert() call.',
+          explanation: 'Await converter.ready() before reading its identity or capabilities.',
         }],
       });
     }
   }
+}
+
+/// A dedicated-worker host with the same result model as Converter. Its
+/// convert options additionally accept `signal` and `timeoutMs`; neither is
+/// sent into the engine request. Stopping a conversion terminates the worker,
+/// then starts a fresh instance from the already-compiled module.
+export class WorkerConverter {
+  #module;
+  #workerUrl;
+  #worker = null;
+  #readyPromise = null;
+  #pending = new Map();
+  #nextId = 1;
+  #disposed = false;
+  #capabilities = null;
+  #version = null;
+  #memory = null;
+  #conversions = 0;
+
+  constructor(compiledModule, workerUrl) {
+    this.#module = compiledModule;
+    this.#workerUrl = workerUrl;
+    this.#readyPromise = this.#start();
+  }
+
+  async ready() {
+    this.#assertLive();
+    await this.#readyPromise;
+    return this;
+  }
+
+  get capabilities() {
+    this.#assertReady();
+    return this.#capabilities;
+  }
+
+  get version() {
+    this.#assertReady();
+    return this.#version;
+  }
+
+  get memory() {
+    this.#assertReady();
+    return this.#memory;
+  }
+
+  get disposed() {
+    return this.#disposed;
+  }
+
+  async convert(source, options = {}) {
+    this.#assertLive();
+    await this.ready();
+
+    const { signal, timeoutMs = 0, ...engineOptions } = options;
+    const { name, data } = await readSource(source, engineOptions.name);
+    const input = data;
+    const requestOptions = { ...engineOptions, name };
+
+    let timedOut = false;
+    const controller = new AbortController();
+    const abortFromCaller = () => controller.abort();
+    signal?.addEventListener('abort', abortFromCaller, { once: true });
+    const timer = timeoutMs > 0 ? setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs) : null;
+
+    try {
+      const message = await this.#request(
+        'convert',
+        { data: input, options: requestOptions },
+        [input.buffer],
+        controller.signal,
+      );
+      this.#memory = Object.freeze(message.memory);
+      this.#conversions += 1;
+      const conversion = conversionFromWorker(message.result);
+      // Linear memory cannot shrink. Recycle at 512 MiB, or periodically so
+      // long-lived pages return allocator pages even after small documents.
+      if (this.#memory.highWaterPages >= 8192 || this.#conversions >= 25) {
+        await this.#replace();
+      }
+      return conversion;
+    } catch (error) {
+      if (timedOut) throw timedOutError(timeoutMs);
+      if (signal?.aborted) throw canceledError();
+      throw error;
+    } finally {
+      signal?.removeEventListener('abort', abortFromCaller);
+      if (timer !== null) clearTimeout(timer);
+    }
+  }
+
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#worker?.terminate();
+    this.#worker = null;
+    this.#rejectPending(disposedError());
+    this.#capabilities = null;
+    this.#version = null;
+    this.#memory = null;
+  }
+
+  async #start() {
+    this.#assertLive();
+    const worker = new Worker(trustedWorkerUrl(this.#workerUrl), {
+      type: 'module',
+      name: 'zenfmt',
+    });
+    this.#worker = worker;
+    worker.addEventListener('message', (event) => this.#receive(worker, event.data));
+    worker.addEventListener('error', () => this.#workerFailed(worker));
+    const message = await this.#request('init', { module: this.#module });
+    this.#capabilities = deepFreeze(message.capabilities);
+    this.#version = message.version;
+    this.#memory = Object.freeze({
+      pages: 0,
+      highWaterPages: 0,
+      liveBytes: 0,
+      liveResults: 0,
+    });
+    this.#conversions = 0;
+  }
+
+  #request(kind, fields, transfer = [], signal = null) {
+    this.#assertLive();
+    const id = this.#nextId;
+    this.#nextId += 1;
+    return new Promise((resolve, reject) => {
+      const abort = () => {
+        if (!this.#pending.delete(id)) return;
+        reject(canceledError());
+        this.#replace().catch(() => {});
+      };
+      if (signal?.aborted) {
+        reject(canceledError());
+        this.#replace().catch(() => {});
+        return;
+      }
+      this.#pending.set(id, { resolve, reject, signal, abort });
+      signal?.addEventListener('abort', abort, { once: true });
+      this.#worker.postMessage({ kind, id, ...fields }, transfer);
+    });
+  }
+
+  #receive(worker, message) {
+    if (worker !== this.#worker) return;
+    const pending = this.#pending.get(message.id);
+    if (!pending) return;
+    this.#pending.delete(message.id);
+    pending.signal?.removeEventListener('abort', pending.abort);
+    if (message.kind === 'error') pending.reject(errorFromWorker(message.error));
+    else pending.resolve(message);
+  }
+
+  #workerFailed(worker) {
+    if (worker !== this.#worker || this.#disposed) return;
+    const wasReady = this.#capabilities !== null;
+    const error = new ZenfmtError({
+      code: 'browser.worker-failed',
+      problem: 'The conversion worker stopped unexpectedly.',
+      consequence: 'The current conversion did not produce an artifact.',
+      directions: [{
+        title: 'Try the document again',
+        explanation: 'The worker has been replaced with a clean instance.',
+      }],
+    });
+    this.#rejectPending(error);
+    this.#worker?.terminate();
+    this.#worker = null;
+    if (wasReady) this.#replace().catch(() => {});
+  }
+
+  async #replace() {
+    if (this.#disposed) return;
+    this.#worker?.terminate();
+    this.#worker = null;
+    this.#rejectPending(canceledError());
+    this.#capabilities = null;
+    this.#version = null;
+    this.#memory = null;
+    this.#readyPromise = this.#start();
+    await this.#readyPromise;
+  }
+
+  #rejectPending(error) {
+    for (const pending of this.#pending.values()) {
+      pending.signal?.removeEventListener('abort', pending.abort);
+      pending.reject(error);
+    }
+    this.#pending.clear();
+  }
+
+  #assertLive() {
+    if (this.#disposed) throw disposedError();
+  }
+
+  #assertReady() {
+    this.#assertLive();
+    if (!this.#capabilities) {
+      throw new ZenfmtError({
+        code: 'browser.not-ready',
+        problem: 'The conversion worker has not finished loading.',
+        consequence: 'Nothing was read.',
+        directions: [{
+          title: 'Await ready() first',
+          explanation: 'Wait for the worker to validate and instantiate the module.',
+        }],
+      });
+    }
+  }
+}
+
+function trustedWorkerUrl(value) {
+  const url = new URL(value, globalThis.location?.href);
+  if (globalThis.location && url.origin !== globalThis.location.origin) {
+    throw new ZenfmtError({
+      code: 'browser.cross-origin-worker',
+      problem: 'The conversion worker URL is not on this page\'s origin.',
+      consequence: 'No worker was started.',
+      directions: [{
+        title: 'Serve the distribution together',
+        explanation: 'Keep zenfmt.js, zenfmt.worker.js, and zenfmt.wasm on one origin.',
+      }],
+    });
+  }
+  if (!globalThis.trustedTypes) return url.href;
+  workerUrlPolicy ??= globalThis.trustedTypes.createPolicy('zenfmt-worker', {
+    createScriptURL: (candidate) => candidate,
+  });
+  return workerUrlPolicy.createScriptURL(url.href);
+}
+
+function conversionFromWorker(result) {
+  const resources = Object.freeze(result.resources.map((resource) => Object.freeze({
+    path: resource.path,
+    bytes: resource.bytes,
+    digest: resource.digest,
+  })));
+  return new Conversion({
+    ...result,
+    reports: deepFreeze(result.reports),
+    manifest: deepFreeze(result.manifest),
+    resources,
+  });
+}
+
+function errorFromWorker(error) {
+  return new ZenfmtError({
+    code: error.code,
+    exitClass: error.exitClass,
+    problem: error.problem,
+    consequence: error.consequence,
+    directions: deepFreeze(error.directions ?? []),
+    reports: deepFreeze(error.reports ?? []),
+  });
+}
+
+function deepFreeze(value) {
+  if (value === null || typeof value !== 'object' || ArrayBuffer.isView(value)) return value;
+  for (const item of Object.values(value)) deepFreeze(item);
+  return Object.freeze(value);
+}
+
+function canceledError() {
+  return new ZenfmtError({
+    code: 'browser.canceled',
+    problem: 'The conversion was canceled.',
+    consequence: 'No artifact was produced, and the document bytes were discarded.',
+    directions: [{
+      title: 'Choose the document again',
+      explanation: 'A clean worker is ready for another conversion.',
+    }],
+  });
+}
+
+function timedOutError(timeoutMs) {
+  return new ZenfmtError({
+    code: 'browser.timed-out',
+    exitClass: 'limit',
+    problem: `The conversion did not finish within ${Math.round(timeoutMs / 1000)} seconds.`,
+    consequence: 'The worker was stopped and no artifact was produced.',
+    directions: [{
+      title: 'Use the command-line tool for this document',
+      explanation: 'It runs outside a browser and is intended for larger or slower work.',
+    }],
+  });
+}
+
+function disposedError() {
+  return new ZenfmtError({
+    code: 'browser.disposed',
+    problem: 'This converter was disposed.',
+    consequence: 'Nothing was converted.',
+    directions: [{
+      title: 'Create a new converter',
+      explanation: 'A disposed converter is not reusable.',
+    }],
+  });
 }
 
 function describeAbi(value) {
@@ -434,10 +786,10 @@ function buildRequest(name, options) {
 /// falls back to and what the output is named after.
 export async function readSource(source, explicitName) {
   if (source instanceof Uint8Array) {
-    return { name: requireName(explicitName), data: source };
+    return { name: requireName(explicitName), data: copyBytes(source) };
   }
   if (source instanceof ArrayBuffer) {
-    return { name: requireName(explicitName), data: new Uint8Array(source) };
+    return { name: requireName(explicitName), data: copyBuffer(source) };
   }
   if (typeof Blob !== 'undefined' && source instanceof Blob) {
     const name = source.name ?? explicitName;
@@ -452,6 +804,35 @@ export async function readSource(source, explicitName) {
       title: 'Pass the file itself',
       explanation: 'The File from an <input type="file"> or a drop event works directly.',
     }],
+  });
+}
+
+function copyBytes(source) {
+  try {
+    return source.slice();
+  } catch (cause) {
+    throw detachedInput(cause);
+  }
+}
+
+function copyBuffer(source) {
+  try {
+    return new Uint8Array(source.slice(0));
+  } catch (cause) {
+    throw detachedInput(cause);
+  }
+}
+
+function detachedInput(cause) {
+  return new ZenfmtError({
+    code: 'browser.detached-input',
+    problem: 'The input byte buffer has already been transferred or detached.',
+    consequence: 'Nothing was converted, because its bytes are no longer readable.',
+    directions: [{
+      title: 'Pass an owned copy',
+      explanation: 'Create a new Uint8Array before transferring the original buffer.',
+    }],
+    cause,
   });
 }
 
@@ -478,3 +859,5 @@ export const abi = Object.freeze({
   statusInvalidHandle: STATUS_INVALID_HANDLE,
   requestSchema: REQUEST_SCHEMA,
 });
+
+export const version = PACKAGE_VERSION;

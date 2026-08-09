@@ -36,6 +36,7 @@ pub fn add(
     optimize: std.builtin.OptimizeMode,
     build_info: *std.Build.Module,
     test_step: *std.Build.Step,
+    version: []const u8,
 ) Steps {
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
@@ -83,7 +84,7 @@ pub fn add(
     );
     check_step.dependOn(build_step);
     check_step.dependOn(addAudit(b, release));
-    check_step.dependOn(addDeclarationCheck(b, test_step));
+    check_step.dependOn(addDeclarationCheck(b, test_step, version));
 
     const capabilities_step = addCapabilities(b, build_info);
 
@@ -164,7 +165,11 @@ fn bindingModule(
 
 /// Checks the adapter against its declarations. Structural, not semantic:
 /// see `tools/dts_check.zig` for exactly what that buys and what it does not.
-fn addDeclarationCheck(b: *std.Build, test_step: *std.Build.Step) *std.Build.Step {
+fn addDeclarationCheck(
+    b: *std.Build,
+    test_step: *std.Build.Step,
+    version: []const u8,
+) *std.Build.Step {
     const exports_module = b.createModule(.{
         .root_source_file = b.path("bindings/wasm/exports.zig"),
         .target = b.graph.host,
@@ -183,6 +188,8 @@ fn addDeclarationCheck(b: *std.Build, test_step: *std.Build.Step) *std.Build.Ste
     const run = b.addRunArtifact(tool);
     run.addFileArg(b.path("site/assets/js/zenfmt.js"));
     run.addFileArg(b.path("site/assets/js/zenfmt.d.ts"));
+    run.addFileArg(b.path("tests/site/browser/test_adapter.py"));
+    run.addArg(version);
     return &run.step;
 }
 

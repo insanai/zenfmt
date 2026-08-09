@@ -40,11 +40,12 @@ pub fn build(b: *std.Build) void {
     // The source revision the artifacts were built from. The identity role of
     // the browser ABI reports it, so it needs a value on every build; a local
     // build honestly says it does not know rather than inventing one.
-    build_info.addOption([]const u8, "revision", b.option(
+    const revision = b.option(
         []const u8,
         "git-revision",
         "Source revision embedded in build artifacts; CI passes the commit SHA",
-    ) orelse "unknown");
+    ) orelse "unknown";
+    build_info.addOption([]const u8, "revision", revision);
     const build_info_module = build_info.createModule();
 
     const graph = modules.create(b, target, optimize, build_info_module, true);
@@ -76,8 +77,16 @@ pub fn build(b: *std.Build) void {
         graph.get("zenfmt_core"),
         shared,
     );
-    const python_steps = python.addWorkflows(b, target, test_step, bridge, cli);
+    const python_steps = python.addWorkflows(
+        b,
+        target,
+        test_step,
+        bridge,
+        cli,
+        revision,
+    );
 
+    const wasm_steps = wasm.add(b, optimize, build_info_module, test_step, version);
     benchmark.add(
         b,
         target,
@@ -85,9 +94,11 @@ pub fn build(b: *std.Build) void {
         graph.umbrella,
         graph.get("zenfmt_core"),
         python_steps.benchmark_python,
+        python_steps.uv,
+        version,
+        revision,
+        wasm_steps.build,
     );
-
-    const wasm_steps = wasm.add(b, optimize, build_info_module, test_step);
     const docs_step = docs.add(b, target, optimize, test_step, docs.options(b));
     site.add(
         b,

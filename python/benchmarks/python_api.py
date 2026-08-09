@@ -8,6 +8,10 @@ checkout (`-I` keeps it off ``sys.path``) and never a bridge from
     One cold conversion for the parent harness's child-process row:
     import, convert to memory, consume the full public result, exit 0/1.
 
+``--artifact-sha256 FILE``
+    Convert preloaded bytes through the installed wheel's native memory API
+    and print the artifact digest used by the browser parity gate.
+
 ``--suite``
     The detailed profile suite: identity, artifact parity against the
     same-revision CLI, cold and warm profiles, path publication,
@@ -50,6 +54,15 @@ def consume(conversion: zenfmt.Conversion) -> int:
 def cold_convert(path: str) -> int:
     conversion = zenfmt.convert(path)
     return 0 if consume(conversion) >= 0 else 1
+
+
+def artifact_sha256(path: str) -> int:
+    source = Path(path)
+    conversion = zenfmt.convert(source.read_bytes(), name=source.name)
+    if conversion.content is None:
+        raise RuntimeError(f"memory conversion of {source.name} produced no artifact")
+    print(hashlib.sha256(conversion.content).hexdigest())
+    return 0
 
 
 # ------------------------------------------------------------------ suite
@@ -302,6 +315,7 @@ def run_suite(arguments: argparse.Namespace) -> int:
 
     document = {
         "schema": 1,
+        "git_revision": arguments.revision,
         "identity": identity(
             Path(arguments.wheel_dir) if arguments.wheel_dir else None
         ),
@@ -330,18 +344,22 @@ def run_suite(arguments: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--convert", metavar="FILE")
+    parser.add_argument("--artifact-sha256", metavar="FILE")
     parser.add_argument("--suite", action="store_true")
     parser.add_argument("--corpus", default="benchmarks/corpus")
     parser.add_argument("--out", default="benchmarks/results/python.json")
     parser.add_argument("--zenfmt-cli", default="zig-out/bin/zenfmt")
     parser.add_argument("--wheel-dir", default="zig-out/python/dist")
     parser.add_argument("--iterations", type=int, default=5)
+    parser.add_argument("--revision", default="unknown")
     arguments = parser.parse_args()
     if arguments.convert:
         return cold_convert(arguments.convert)
+    if arguments.artifact_sha256:
+        return artifact_sha256(arguments.artifact_sha256)
     if arguments.suite:
         return run_suite(arguments)
-    parser.error("one of --convert or --suite is required")
+    parser.error("one of --convert, --artifact-sha256, or --suite is required")
     return 2
 
 

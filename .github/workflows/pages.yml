@@ -65,6 +65,12 @@ jobs:
       - name: Check the site
         run: zig build site-check -Dsite-base=/zenfmt/ -Dgit-revision=${{ github.sha }}
 
+      - name: Install the gating browser
+        run: uv run --project docs/site playwright install --with-deps chromium
+
+      - name: Exercise the real site in Chromium
+        run: zig build site-browser-test -Dsite-base=/zenfmt/ -Dgit-revision=${{ github.sha }}
+
       - name: Upload a preview for review
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4

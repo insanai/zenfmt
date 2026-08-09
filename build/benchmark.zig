@@ -5,6 +5,7 @@
 //! Run `benchmarks/fetch_corpus.sh` once to populate `benchmarks/corpus`.
 
 const std = @import("std");
+const python = @import("python.zig");
 
 pub fn add(
     b: *std.Build,
@@ -13,6 +14,10 @@ pub fn add(
     umbrella: *std.Build.Module,
     core: *std.Build.Module,
     benchmark_python: *std.Build.Step,
+    uv: python.Uv,
+    version: []const u8,
+    revision: []const u8,
+    wasm_step: *std.Build.Step,
 ) void {
     const harness = b.addExecutable(.{
         .name = "zenfmt-benchmark",
@@ -27,6 +32,7 @@ pub fn add(
     run_harness.setCwd(b.path("."));
     run_harness.addArg("--zenfmt");
     run_harness.addArtifactArg(cli);
+    run_harness.addArgs(&.{ "--version", version, "--revision", revision });
     if (b.args) |args| run_harness.addArgs(args);
     // The installed-wheel environment and its detailed suite run first so the
     // harness's cold `zenfmt-python-wheel` row uses the same wheel.
@@ -63,4 +69,32 @@ pub fn add(
             "(writes benchmarks/results/stages.json)",
     );
     stages_step.dependOn(&run_stages.step);
+
+    const run_browser = uv.run("docs/site", &.{
+        "python",     "benchmarks/browser/run.py",
+        "--version",  version,
+        "--revision", revision,
+        "--python",   "benchmarks/.venv-wheel/bin/python",
+    });
+    run_browser.step.dependOn(wasm_step);
+    run_browser.step.dependOn(benchmark_python);
+    const browser_step = b.step(
+        "benchmark-wasm",
+        "Run the parity-gated Chromium WebAssembly benchmark",
+    );
+    browser_step.dependOn(&run_browser.step);
+
+    const aggregate = uv.run("docs/site", &.{
+        "python",     "benchmarks/browser/aggregate.py",
+        "--version",  version,
+        "--revision", revision,
+    });
+    aggregate.step.dependOn(&run_harness.step);
+    aggregate.step.dependOn(&run_stages.step);
+    aggregate.step.dependOn(&run_browser.step);
+    const release_step = b.step(
+        "benchmark-release",
+        "Regenerate native, Python, WASM, stage, and site benchmark records",
+    );
+    release_step.dependOn(&aggregate.step);
 }

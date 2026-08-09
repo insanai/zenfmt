@@ -25,6 +25,8 @@ const Options = struct {
     corpus: []const u8 = "benchmarks/corpus",
     out: []const u8 = "benchmarks/results/results.md",
     iterations: u32 = 5,
+    version: []const u8 = "unknown",
+    revision: []const u8 = "unknown",
 };
 
 /// The zenfmt reader extension set, shared by the CLI row and the
@@ -134,7 +136,13 @@ pub fn main(init: std.process.Init) !u8 {
     // charts from this file, in the manner of paxos-zig's dashboard.
     var machine: std.Io.Writer.Allocating = .init(gpa);
     defer machine.deinit();
-    try renderJson(&machine.writer, results.items, options.iterations);
+    try renderJson(
+        &machine.writer,
+        results.items,
+        options.iterations,
+        options.version,
+        options.revision,
+    );
     const json_path = "benchmarks/results/latest.json";
     Io.Dir.cwd().writeFile(io, .{ .sub_path = json_path, .data = machine.written() }) catch |err| {
         std.debug.print("benchmark: cannot write {s}: {t}\n", .{ json_path, err });
@@ -151,8 +159,14 @@ fn renderJson(
     writer: *std.Io.Writer,
     results: []const FileResult,
     iterations: u32,
+    version: []const u8,
+    revision: []const u8,
 ) !void {
-    try writer.print("{{\"iterations\":{d},\"files\":[", .{iterations});
+    try writer.print(
+        "{{\"version\":\"{s}\",\"git_revision\":\"{s}\"," ++
+            "\"iterations\":{d},\"files\":[",
+        .{ version, revision, iterations },
+    );
     for (results, 0..) |result, file_index| {
         for (result.name) |byte| std.debug.assert(byte >= 0x20 and byte != '"' and byte != '\\');
         if (file_index > 0) try writer.writeAll(",");
@@ -188,6 +202,8 @@ fn parseArgs(args: std.process.Args, options: *Options) void {
             .{ .name = "--python", .slot = &options.python },
             .{ .name = "--corpus", .slot = &options.corpus },
             .{ .name = "--out", .slot = &options.out },
+            .{ .name = "--version", .slot = &options.version },
+            .{ .name = "--revision", .slot = &options.revision },
         };
         var matched = false;
         for (flags) |flag| {

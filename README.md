@@ -3,7 +3,7 @@
 A document converter in Zig: read a document in one format, write it in
 another, with one representation in the middle.
 
-**Current release: 0.1.0.** The architecture is specified in
+**Current release: 0.2.0.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and the IR v2
 layer, facets, and writer lowering in
 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ); the library, CLI,
@@ -89,6 +89,26 @@ lint/format, and pytest.
 Install the library with `pip install zenfmt`. Prebuilt standalone CLI
 archives and the complete wheel matrix are available from
 [GitHub Releases](https://github.com/insanai/zenfmt/releases).
+
+## Browser and WebAssembly
+
+Release 0.2.0 adds a first-class `wasm32-freestanding` distribution and the
+static project site specified by [ZDS 0015](docs/zds/records/0015-wasm-and-project-site.typ).
+The browser module has no host imports: document conversion runs in a dedicated
+worker, on the visitor's device, with no upload or network fallback.
+
+```sh
+zig build wasm          # module, adapter, worker, and declarations
+zig build wasm-check    # ABI, import/export, memory, and size audit
+zig build site          # GitHub Pages tree in zig-out/site
+zig build site-check    # deterministic build, links, policy, and semantics
+zig build site-browser-test  # real Chromium conversion and interaction suite
+```
+
+The versioned WASM bundle, standalone module, native CLI archives, Python
+wheels, book PDF, and complete ZDS PDF set are published together on the
+0.2.0 GitHub release. The site exposes direct target downloads and keeps the
+Book and ZDS in the help path from every conversion state.
 
 Five properties drive the design, argued in ZDS 0002 and ZDS 0013:
 

@@ -90,6 +90,14 @@ pub fn add(
     const unit_step = b.step("site-test", "Run the site assembler's unit tests");
     unit_step.dependOn(&unit.step);
     test_step.dependOn(unit_step);
+
+    const browser = uv.run(project, &.{ "pytest", "tests/site/browser" });
+    browser.step.dependOn(&build_site.step);
+    const browser_step = b.step(
+        "site-browser-test",
+        "Run the Chromium interaction suite against the assembled site",
+    );
+    browser_step.dependOn(&browser.step);
 }
 
 /// Ruff over the site tooling, kept separate from the library's Ruff run
@@ -100,12 +108,26 @@ pub fn addFormatting(
     check_step: *std.Build.Step,
     apply_step: *std.Build.Step,
 ) void {
-    const lint = uv.run(project, &.{ "ruff", "check", "docs/site" });
-    const format_check = uv.run(project, &.{ "ruff", "format", "--check", "docs/site" });
+    const lint = uv.run(project, &.{
+        "ruff",                  "check",
+        "docs/site",             "tests/site",
+        "benchmarks/browser",    "tools/release_manifest.py",
+        "tools/release_sbom.py",
+    });
+    const format_check = uv.run(project, &.{
+        "ruff",                      "format",                "--check",
+        "docs/site",                 "tests/site",            "benchmarks/browser",
+        "tools/release_manifest.py", "tools/release_sbom.py",
+    });
     check_step.dependOn(&lint.step);
     check_step.dependOn(&format_check.step);
 
-    const format = uv.run(project, &.{ "ruff", "format", "docs/site" });
+    const format = uv.run(project, &.{
+        "ruff",                  "format",
+        "docs/site",             "tests/site",
+        "benchmarks/browser",    "tools/release_manifest.py",
+        "tools/release_sbom.py",
+    });
     apply_step.dependOn(&format.step);
     _ = b;
 }

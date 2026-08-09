@@ -7,9 +7,9 @@
 //!
 //! What it does check is the drift that actually happens: a function renamed
 //! in one file and not the other, an export added without a declaration, a
-//! declared name that no longer exists, and an ABI constant written into the
-//! declarations by hand that no longer matches the Zig definition. Those are
-//! the mistakes a release would otherwise ship.
+//! declared name that no longer exists, an exported name absent from the
+//! browser API suite, a stale adapter release, and an ABI constant written
+//! into the declarations by hand that no longer matches the Zig definition.
 //!
 //! It is honest about its limits: a wrong *type* in the declarations passes
 //! here. That is stated in the declarations file itself rather than implied.
@@ -37,9 +37,12 @@ pub fn main(init: std.process.Init) !u8 {
 
     const js_path = iterator.next() orelse return usage();
     const dts_path = iterator.next() orelse return usage();
+    const tests_path = iterator.next() orelse return usage();
+    const version = iterator.next() orelse return usage();
 
     const js = try read(arena, io, js_path);
     const dts = try read(arena, io, dts_path);
+    const tests = try read(arena, io, tests_path);
 
     var implemented: Names = .empty;
     var declared: Names = .empty;
@@ -49,7 +52,9 @@ pub fn main(init: std.process.Init) !u8 {
     var failures: u32 = 0;
     failures += try compare(&implemented, &declared, "implemented but not declared");
     failures += try compare(&declared, &implemented, "declared but not implemented");
+    failures += checkExercised(&implemented, tests);
     failures += checkAbiConstants(dts);
+    failures += checkVersion(js, version);
 
     if (failures != 0) {
         std.debug.print("dts-check: {d} problem(s)\n", .{failures});
@@ -63,8 +68,34 @@ pub fn main(init: std.process.Init) !u8 {
 }
 
 fn usage() u8 {
-    std.debug.print("usage: dts-check <zenfmt.js> <zenfmt.d.ts>\n", .{});
+    std.debug.print(
+        "usage: dts-check <zenfmt.js> <zenfmt.d.ts> <browser-tests> <version>\n",
+        .{},
+    );
     return 2;
+}
+
+fn checkExercised(implemented: *Names, tests: []const u8) u32 {
+    var failures: u32 = 0;
+    for (implemented.keys()) |name| {
+        if (std.mem.indexOf(u8, tests, name) == null) {
+            std.debug.print("dts-check: exported '{s}' is absent from browser tests\n", .{name});
+            failures += 1;
+        }
+    }
+    return failures;
+}
+
+fn checkVersion(js: []const u8, version: []const u8) u32 {
+    const expected = std.fmt.allocPrint(
+        std.heap.page_allocator,
+        "const PACKAGE_VERSION = '{s}';",
+        .{version},
+    ) catch @panic("OOM");
+    defer std.heap.page_allocator.free(expected);
+    if (std.mem.indexOf(u8, js, expected) != null) return 0;
+    std.debug.print("dts-check: adapter version is not {s}\n", .{version});
+    return 1;
 }
 
 fn read(arena: std.mem.Allocator, io: Io, path: []const u8) ![]const u8 {

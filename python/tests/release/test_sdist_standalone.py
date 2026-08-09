@@ -23,6 +23,8 @@ REQUIRED_MEMBERS = (
     "tests/release/smoke.py",
     "engine/build.zig",
     "engine/build.zig.zon",
+    "engine/build/python.zig",
+    "engine/build/modules.zig",
     "engine/bindings/python/abi.zig",
     "engine/core/src/root.zig",
     "engine/src/root.zig",

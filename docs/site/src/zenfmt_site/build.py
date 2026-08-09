@@ -9,6 +9,7 @@ than a page that quietly renders without it.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import shutil
@@ -21,6 +22,7 @@ from .shell import Page, render
 
 LINK = re.compile(r"\{LINK:([^}]*)\}")
 ASSET = re.compile(r"\{ASSET:([^}]*)\}")
+TAGS = re.compile(r"<[^>]+>")
 
 
 @dataclass
@@ -58,6 +60,7 @@ class Builder:
         self.version = version
         self.assets: dict[str, str] = {}
         self.written: list[str] = []
+        self.search_records: list[dict[str, str]] = []
 
     # -- assets ---------------------------------------------------------
 
@@ -68,7 +71,10 @@ class Builder:
         a stale one surviving a release; HTML routes are never fingerprinted,
         because those are the addresses people share.
         """
-        data = source.read_bytes()
+        return self.fingerprint_data(source.read_bytes(), target)
+
+    def fingerprint_data(self, data: bytes, target: str) -> str:
+        """Emits generated asset bytes under a content-addressed name."""
         digest = hashlib.sha256(data).hexdigest()[:12]
         stem, _, suffix = target.rpartition(".")
         name = f"{stem}.{digest}.{suffix}"
@@ -80,6 +86,8 @@ class Builder:
         self._write_bytes(target, source.read_bytes())
 
     def _write_bytes(self, target: str, data: bytes) -> None:
+        if target in self.written:
+            raise ContractError(f"two site inputs resolve to the same output: {target}")
         path = self.out / target
         self._guard(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,7 +102,7 @@ class Builder:
         can be talked into writing outside its output directory is a
         generator that can overwrite the source tree it was built from."""
         resolved = path.resolve()
-        if not str(resolved).startswith(str(self.out.resolve())):
+        if not resolved.is_relative_to(self.out.resolve()):
             raise ContractError(f"refusing to write outside the output tree: {path}")
 
     # -- pages ----------------------------------------------------------
@@ -106,10 +114,33 @@ class Builder:
             page.wasm_url = self.assets["assets/wasm/zenfmt.wasm"]
         if page.adapter_url is None and "assets/js/zenfmt.js" in self.assets:
             page.adapter_url = self.assets["assets/js/zenfmt.js"]
+        if page.worker_url is None and "assets/js/zenfmt.worker.js" in self.assets:
+            page.worker_url = self.assets["assets/js/zenfmt.worker.js"]
+        if page.search_url is None:
+            page.search_url = "assets/search.json"
         body = self._resolve(page.body, page)
         page.body = body
+        self.search_records.append(
+            {
+                "route": routes.relative("", page.route),
+                "title": page.title,
+                "description": page.description,
+                "text": " ".join(html.unescape(TAGS.sub(" ", body)).split())[:12000],
+            }
+        )
         self.write_text(
             routes.output_path(page.route), render(page, version=self.version)
+        )
+
+    def finish_search(self) -> None:
+        self.write_text(
+            "assets/search.json",
+            json.dumps(
+                self.search_records,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
         )
 
     def _resolve(self, body: str, page: Page) -> str:
@@ -188,10 +219,19 @@ def build(
     # Jekyll would otherwise drop any path beginning with an underscore.
     builder.write_text(".nojekyll", "")
 
-    for name in ("css/site.css", "js/main.js", "js/zenfmt.js", "js/zenfmt.worker.js"):
+    for name in ("css/site.css", "js/main.js", "js/zenfmt.js"):
         source = inputs.site_assets / name
         if source.exists():
             builder.fingerprint(source, f"assets/{name}")
+    worker = inputs.site_assets / "js/zenfmt.worker.js"
+    if worker.exists():
+        adapter = Path(builder.assets["assets/js/zenfmt.js"]).name
+        worker_text = worker.read_text(encoding="utf-8").replace(
+            "./zenfmt.js", f"./{adapter}"
+        )
+        builder.fingerprint_data(
+            worker_text.encode("utf-8"), "assets/js/zenfmt.worker.js"
+        )
     for extra in ("js/zenfmt.d.ts",):
         source = inputs.site_assets / extra
         if source.exists():
@@ -263,6 +303,7 @@ def build(
     builder.emit(pages.benchmark_page(benchmark))
     builder.emit(pages.security_page())
     builder.emit(pages.not_found_page(base))
+    builder.finish_search()
 
     return builder
 

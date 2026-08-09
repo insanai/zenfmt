@@ -53,8 +53,21 @@ def homepage(capabilities: dict, benchmark: dict | None) -> Page:
       <input type="file" id="source" name="source" data-source
              accept="{_escape(accept)}">
       <span class="drop-headline">Drop a file here</span>
-      <span class="drop-detail">or choose a file · try an example</span>
+      <span class="drop-detail">or choose a file</span>
     </label>
+    <button class="text-action" type="button" data-example>Try a safe example</button>
+    <p class="file-meta" data-file-meta hidden></p>
+    <details class="advanced">
+      <summary>Advanced options</summary>
+      <label for="strict">Loss policy</label>
+      <select id="strict" data-strict>
+        <option value="off">Convert and report loss</option>
+        <option value="content">Refuse content loss</option>
+        <option value="structure">Refuse structural loss</option>
+        <option value="exact">Refuse any known loss</option>
+      </select>
+      <label><input type="checkbox" data-facets> Preserve facet details</label>
+    </details>
     <p class="pane-note">
       Format is detected from the file's contents, not its name.
       {readable} formats are supported.
@@ -69,6 +82,8 @@ def homepage(capabilities: dict, benchmark: dict | None) -> Page:
     <div class="pane-actions">
       <button type="button" data-copy disabled>Copy</button>
       <button type="button" data-download disabled>Download</button>
+      <button type="button" data-wrap aria-pressed="true">Wrap lines</button>
+      <button type="button" data-cancel hidden>Cancel</button>
       <button type="button" data-reset disabled>Reset</button>
     </div>
     <pre class="output" tabindex="0" aria-label="Converted Markdown, read only"
@@ -124,14 +139,41 @@ def _benchmark_summary(benchmark: dict | None) -> str:
             '<p><a href="{LINK:benchmark/}">Method and raw data</a></p>'
             "</section>"
         )
-    headline = benchmark.get("aggregates", {}).get("headline", {})
+    aggregates = benchmark.get("aggregates", {})
+    headline = aggregates.get("headline", {})
+    native = aggregates.get("native", {})
+    browser = aggregates.get("browser", {})
+    coverage = native.get("coverage", [])
+    ours = next((row for row in coverage if row.get("tool") == "zenfmt"), {})
+    anydoc = native.get("comparisons", {}).get("anydoc", {})
+    wasm = browser.get("artifact", {})
     return (
         '<section class="benchmark-summary">'
+        '<p class="eyebrow">Measured, not marketed</p>'
         "<h2>The conversion benchmark</h2>"
         f"<p>{_escape(headline.get('summary', 'Recorded results are available.'))}</p>"
+        '<div class="metric-grid">'
+        '<div class="metric"><span>Format corpus</span>'
+        f"<strong>{_escape(ours.get('converted', '—'))}/{_escape(ours.get('total', '—'))}</strong>"
+        "<small>zenfmt successful</small></div>"
+        '<div class="metric"><span>Native vs AnyDoc</span>'
+        f"<strong>{_escape(_ratio(anydoc.get('wall_ratio')))}</strong>"
+        f"<small>{_escape(anydoc.get('shared_files', 0))} shared files</small></div>"
+        '<div class="metric"><span>Browser module</span>'
+        f"<strong>{_escape(_size(wasm.get('raw_bytes')))}</strong>"
+        "<small>ReleaseSafe · zero imports</small></div>"
+        "</div>"
         '<p><a href="{LINK:benchmark/}">Method and raw data</a></p>'
         "</section>"
     )
+
+
+def _ratio(value: float | None) -> str:
+    return "—" if value is None else f"{value:.1f}×"
+
+
+def _size(value: int | None) -> str:
+    return "—" if value is None else f"{value / (1024 * 1024):.2f} MiB"
 
 
 def security_page() -> Page:
@@ -257,14 +299,27 @@ def download_page(capabilities: dict, version: str) -> Page:
     which one is a page that cannot be checked.
     """
     formats = sum(1 for entry in capabilities["formats"] if entry["read"])
+    release = f"https://github.com/insanai/zenfmt/releases/download/v{version}"
+
+    def asset(name: str, label: str) -> str:
+        return (
+            f'<a class="download-button" href="{release}/{name}">{_escape(label)}</a>'
+        )
+
     body = f"""
 <h1>Download zenfmt {_escape(version)}</h1>
 <p class="lede">
-  One engine, four ways to run it. All of them read the same {formats} formats
-  and write the same Markdown.
+  One engine, every supported target. All of them read the same {formats}
+  formats and write the same Markdown.
+</p>
+<p>
+  <a href="https://github.com/insanai/zenfmt/releases/tag/v{_escape(version)}">Release notes</a>
+  · <a href="{release}/SHA256SUMS">SHA-256 checksums</a>
+  · <a href="https://github.com/insanai/zenfmt/attestations">Provenance</a>
 </p>
 
-<section class="target">
+<div class="targets">
+<section class="target target-featured">
   <h2>Browser · WebAssembly</h2>
   <p>
     The complete engine as a WebAssembly module plus a standards-based
@@ -276,16 +331,43 @@ def download_page(capabilities: dict, version: str) -> Page:
     The module imports nothing from its host — no filesystem, no network — and
     a release build is checked against that claim.
   </p>
+  <p class="target-meta">
+    wasm32-freestanding · ReleaseSafe · module and ES adapter bundle
+  </p>
+  <p class="download-actions">
+    {asset(f"zenfmt-{version}-wasm32-freestanding.tar.gz", "Download WASM bundle")}
+    {asset(f"zenfmt-{version}-wasm32-freestanding.wasm", "Download module only")}
+  </p>
 </section>
 
 <section class="target">
-  <h2>Command line</h2>
+  <h2>macOS</h2>
   <p>
-    Native binaries for macOS (Apple Silicon and Intel), Linux (x86-64 and
-    ARM64, glibc 2.17 or later and musl), and Windows (64-bit, a portable zip
-    with no installer). Each archive names its exact target, and each is
-    published with a SHA-256 checksum beside it rather than buried in the
-    release notes.
+    Native command-line archives for Apple Silicon and Intel Macs. Requires
+    macOS 12 or later.
+  </p>
+  <p class="download-actions">
+    {asset(f"zenfmt-{version}-aarch64-macos.tar.gz", "Apple Silicon")}
+    {asset(f"zenfmt-{version}-x86_64-macos.tar.gz", "Intel")}
+  </p>
+</section>
+
+<section class="target">
+  <h2>Linux</h2>
+  <p>Choose architecture and C library explicitly. glibc builds require 2.17 or later.</p>
+  <p class="download-actions">
+    {asset(f"zenfmt-{version}-x86_64-linux-gnu.tar.gz", "x86-64 · glibc")}
+    {asset(f"zenfmt-{version}-aarch64-linux-gnu.tar.gz", "ARM64 · glibc")}
+    {asset(f"zenfmt-{version}-x86_64-linux-musl.tar.gz", "x86-64 · musl")}
+    {asset(f"zenfmt-{version}-aarch64-linux-musl.tar.gz", "ARM64 · musl")}
+  </p>
+</section>
+
+<section class="target">
+  <h2>Windows</h2>
+  <p>Portable 64-bit command-line archive. No installer and no administrator access.</p>
+  <p class="download-actions">
+    {asset(f"zenfmt-{version}-x86_64-windows.zip", "Windows x86-64")}
   </p>
 </section>
 
@@ -296,6 +378,10 @@ def download_page(capabilities: dict, version: str) -> Page:
     CPython 3.10 through 3.14. The wheel carries the same engine as the
     command-line tool, so a conversion produces the same bytes either way.
   </p>
+  <p class="download-actions">
+    <a class="download-button" href="https://pypi.org/project/zenfmt/{_escape(version)}/">Open PyPI</a>
+    <a href="https://pypi.org/project/zenfmt/{_escape(version)}/#files">Browse wheels and source distribution</a>
+  </p>
 </section>
 
 <section class="target">
@@ -304,11 +390,16 @@ def download_page(capabilities: dict, version: str) -> Page:
     The tagged repository archive. Building needs Zig 0.16 and, for the
     documents, Typst 0.15.1.
   </p>
+  <p class="download-actions">
+    <a class="download-button" href="https://github.com/insanai/zenfmt/archive/refs/tags/v{_escape(version)}.tar.gz">Download source</a>
+  </p>
 </section>
+</div>
 
 <p>
-  Release assets, checksums, and provenance are published with each tag on
-  <a href="https://github.com/insanai/zenfmt/releases">the releases page</a>.
+  Every filename identifies its target. Verify the downloaded bytes against
+  <a href="{release}/SHA256SUMS">the release checksum manifest</a> before use
+  in a controlled build or deployment.
 </p>
 """
     return Page(
@@ -334,10 +425,53 @@ def benchmark_page(benchmark: dict | None) -> Page:
     """
     if benchmark:
         aggregates = benchmark.get("aggregates", {})
-        state = (
-            "<p>Recorded for this release.</p>"
-            f"<pre>{_escape(json.dumps(aggregates, indent=2, sort_keys=True))}</pre>"
+        native = aggregates["native"]
+        browser = aggregates["browser"]
+        quality = aggregates["quality"]
+        coverage_rows = "".join(
+            "<tr>"
+            f'<th scope="row">{_escape(row["tool"])}</th>'
+            f"<td>{_escape(row['converted'])}</td><td>{_escape(row['total'])}</td>"
+            "</tr>"
+            for row in native["coverage"]
         )
+        comparison_rows = "".join(
+            "<tr>"
+            f'<th scope="row">zenfmt vs {_escape(tool)}</th>'
+            f"<td>{_escape(values['shared_files'])}</td>"
+            f"<td>{_escape(_ratio(values['wall_ratio']))}</td>"
+            "</tr>"
+            for tool, values in native["comparisons"].items()
+        )
+        competitor_rows = "".join(
+            f"<li><strong>{_escape(row['tool'])}:</strong> "
+            f"{_escape(row['state'].replace('_', ' '))} — {_escape(row['reason'])}</li>"
+            for row in browser["competitors"]
+        )
+        cold = browser["cold"]
+        artifact = browser["artifact"]
+        state = f"""
+<p class="notice">Recorded for zenfmt {benchmark["zenfmt_version"]} at
+<code>{_escape(benchmark["git_revision"])}</code>. Tool order remains zenfmt,
+AnyDoc, Pandoc.</p>
+<div class="metric-grid">
+  <div class="metric"><span>WASM raw</span><strong>{_escape(_size(artifact["raw_bytes"]))}</strong><small>{_escape(artifact["gzip_bytes"])} bytes gzip</small></div>
+  <div class="metric"><span>Cold ready</span><strong>{cold["first_ready_ms"]:.1f} ms</strong><small>fetch + compile + instantiate</small></div>
+  <div class="metric"><span>Parity</span><strong>{quality["passed"]}/{quality["total"]}</strong><small>browser artifacts equal native</small></div>
+</div>
+<h2>Native coverage</h2>
+<table><thead><tr><th>Tool</th><th>Converted</th><th>Corpus</th></tr></thead><tbody>{coverage_rows}</tbody></table>
+<h2>Native shared-file latency</h2>
+<p>Ratio is the other tool's median wall time divided by zenfmt's. Above 1.0× means zenfmt was faster.</p>
+<table><thead><tr><th>Comparison</th><th>Shared files</th><th>Wall ratio</th></tr></thead><tbody>{comparison_rows}</tbody></table>
+<h2>Browser lens</h2>
+<p>zenfmt converted {browser["coverage"][0]["converted"]} of {browser["coverage"][0]["total"]} files through the released WASM adapter. Warm rows use three warm-ups and fifteen measured samples per file; raw samples, p95 and median absolute deviation are in <code>wasm.json</code>.</p>
+<ul>{competitor_rows}</ul>
+<h2>Output preservation gate</h2>
+<p>{_escape(quality["rule"])}. {quality["passed"]} of {quality["total"]} browser files passed before their timing was admitted.</p>
+<h2>Provenance</h2>
+<table><thead><tr><th>Input</th><th>SHA-256</th></tr></thead><tbody>{"".join(f'<tr><th scope="row">{_escape(name)}</th><td><code>{_escape(source["sha256"])}</code></td></tr>' for name, source in benchmark["sources"].items())}</tbody></table>
+"""
     else:
         state = (
             '<p class="notice">Benchmark pending for this release.</p>'

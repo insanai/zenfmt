@@ -603,7 +603,7 @@ Release 0.2.0 has five connected deliverables:
     path whose artifacts and reports match native memory conversion.],
   [`bindings/wasm/`], [Versioned WASM ABI, allocator boundary, capabilities,
     result accessors, error serialization, import audit, and Zig tests.],
-  [browser distribution], [ReleaseSmall WASM, ES adapter, worker adapter,
+  [browser distribution], [ReleaseSafe WASM, ES adapter, worker adapter,
     declarations, license, readme, and checksum manifest in one versioned
     archive.],
   [homepage], [Responsive local converter, read-only Markdown output window,
@@ -1382,10 +1382,14 @@ source. PDF download size is visible before activation.
 == What the front page may claim
 
 The homepage may show only generated facts from result files belonging to the
-same release and commit. It must never contain a typed-in latency, ratio,
-coverage count, bundle size, or winner. Headline comparisons use the geometric
-mean of per-file ratios over files both tools successfully convert. Unsupported
-and failed files remain visible and are never treated as infinitely slow.
+same release and benchmarked implementation revision. A following data-only
+commit may add those raw/generated results and this record's lifecycle state;
+the release gate proves no conversion, binding, build, or site source changed
+after the recorded revision. The dashboard must never contain a typed-in
+latency, ratio, coverage count, bundle size, or winner. Headline comparisons
+use the geometric mean of per-file ratios over files both tools successfully
+convert. Unsupported and failed files remain visible and are never treated as
+infinitely slow.
 
 The dashboard presents three separate questions:
 
@@ -1912,8 +1916,11 @@ These are delivery budgets, not hand-entered dashboard claims.
 Pull requests build and test the complete site, upload a review artifact, and
 never deploy. Pushes to `main` may deploy documentation only after site gates
 pass. The 0.2.0 tag workflow builds immutable release artifacts first; Pages
-for the release must consume the same commit and WASM digest rather than
-rebuilding an untracked variant.
+for the release must consume the tag commit and released WASM digest rather
+than rebuilding an untracked variant. Checked-in benchmark data names the
+implementation revision it measured, and the version gate permits only
+benchmark results and ZDS lifecycle metadata between that revision and the
+tag.
 
 Deployment uses GitHub's supported custom Pages workflow with configure,
 upload-artifact, and deploy actions; `pages: write` and `id-token: write` exist

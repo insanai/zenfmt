@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from zenfmt_site import routes
+from zenfmt_site.build import Builder
 from zenfmt_site.document import ContractError, parse
 from zenfmt_site.validate import check
 
@@ -116,6 +117,32 @@ class TestFigures:
         # alt text is unreadable rather than merely undescribed.
         with pytest.raises(ContractError, match="no alternative text"):
             parse(wrap("<figure><svg><path d='M0 0'/></svg></figure>"), page_id="p")
+
+
+class TestBuilderOutput:
+    def builder(self, tmp_path):
+        out = tmp_path / "site"
+        out.mkdir()
+        return Builder(None, out, base="/", version="test")
+
+    def test_two_inputs_cannot_overwrite_one_output(self, tmp_path):
+        builder = self.builder(tmp_path)
+        builder.write_text("asset.txt", "first")
+        with pytest.raises(ContractError, match="same output"):
+            builder.write_text("asset.txt", "second")
+
+    def test_parent_traversal_cannot_escape_the_output(self, tmp_path):
+        builder = self.builder(tmp_path)
+        with pytest.raises(ContractError, match="outside the output tree"):
+            builder.write_text("../escaped.txt", "no")
+
+    def test_an_output_symlink_cannot_escape_the_output(self, tmp_path):
+        builder = self.builder(tmp_path)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (builder.out / "link").symlink_to(outside, target_is_directory=True)
+        with pytest.raises(ContractError, match="outside the output tree"):
+            builder.write_text("link/escaped.txt", "no")
 
 
 class TestValidation:

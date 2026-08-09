@@ -122,6 +122,7 @@ pub fn addWorkflows(
     test_step: *std.Build.Step,
     bridge: *std.Build.Step.Compile,
     cli: *std.Build.Step.Compile,
+    revision: []const u8,
 ) Steps {
     // The host bridge staged into the source-layout package's private
     // resource directory: the editable install exposes exactly that location
@@ -140,7 +141,15 @@ pub fn addWorkflows(
 
     const uv = Uv.init(b);
 
-    const sync = uv.command(&.{ "uv", "sync", "--project", "python", "--locked" });
+    // The package version comes from the repository's build.zig.zon, outside
+    // the uv project directory. Reinstall the editable package so a release
+    // version bump cannot leave stale distribution metadata in the venv.
+    const sync = uv.command(&.{
+        "uv",        "sync",
+        "--project", "python",
+        "--locked",  "--reinstall-package",
+        "zenfmt",
+    });
     sync.step.dependOn(&stage.step);
     const sync_step = b.step(
         "python-sync",
@@ -152,7 +161,7 @@ pub fn addWorkflows(
     const pytest = uv.run("python", &.{
         "pytest", "-m", "not release", "python/tests",
     });
-    pytest.step.dependOn(&stage.step);
+    pytest.step.dependOn(&sync.step);
     const pytest_step = b.step(
         "python-test",
         "Build and stage the host bridge, then run pytest through uv",
@@ -199,7 +208,7 @@ pub fn addWorkflows(
     const strict_pytest = uv.run("python", &.{
         "pytest", "-m", "not release", "python/tests",
     });
-    strict_pytest.step.dependOn(&stage.step);
+    strict_pytest.step.dependOn(&sync.step);
     strict_pytest.setEnvironmentVariable("ZENFMT_REQUIRE_ALL_FORMATS", "1");
 
     const sdist = uv.command(&.{
@@ -240,6 +249,7 @@ pub fn addWorkflows(
     const suite = uv.command(&.{
         "benchmarks/.venv-wheel/bin/python", "-I",
         "python/benchmarks/python_api.py",   "--suite",
+        "--revision",                        revision,
     });
     suite.step.dependOn(&wheel_install.step);
     suite.step.dependOn(&b.addInstallArtifact(cli, .{}).step);

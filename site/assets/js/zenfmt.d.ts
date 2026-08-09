@@ -45,6 +45,13 @@ export interface ConvertOptions {
   readonly limits?: Readonly<Record<string, number>>;
 }
 
+export interface WorkerConvertOptions extends ConvertOptions {
+  /** Stops synchronous parsing by terminating and replacing the worker. */
+  readonly signal?: AbortSignal;
+  /** Zero disables the timeout. The project site uses 30 seconds. */
+  readonly timeoutMs?: number;
+}
+
 export declare class Conversion {
   readonly artifact: Uint8Array;
   readonly artifactName: string | null;
@@ -114,6 +121,25 @@ export declare function createConverter(options: {
   readonly signal?: AbortSignal;
 }): Promise<Converter>;
 
+export declare class WorkerConverter {
+  readonly capabilities: Capabilities;
+  readonly version: string;
+  readonly memory: MemoryUse;
+  readonly disposed: boolean;
+  ready(): Promise<WorkerConverter>;
+  convert(
+    source: File | Blob | ArrayBuffer | Uint8Array,
+    options?: WorkerConvertOptions,
+  ): Promise<Conversion>;
+  dispose(): void;
+}
+
+export declare function createWorkerConverter(options: {
+  readonly moduleUrl: string;
+  readonly workerUrl: string;
+  readonly signal?: AbortSignal;
+}): Promise<WorkerConverter>;
+
 export declare function readSource(
   source: File | Blob | ArrayBuffer | Uint8Array,
   explicitName?: string,
@@ -127,3 +153,6 @@ export declare const abi: {
   readonly statusInvalidHandle: number;
   readonly requestSchema: number;
 };
+
+/** The adapter release; a module from another release is rejected. */
+export declare const version: string;
