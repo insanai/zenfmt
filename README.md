@@ -3,6 +3,11 @@
 A document converter in Zig: read a document in one format, write it in
 another, with one representation in the middle.
 
+[Pandoc](https://pandoc.org/) showed how useful a universal document converter
+can be. zenfmt is a small attempt to explore that idea in Zig. It does not have
+Pandoc's breadth; it concentrates on a compact engine, explicit conversion
+reports, and the formats listed below.
+
 **Current release: 0.2.0.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and the IR v2
 layer, facets, and writer lowering in

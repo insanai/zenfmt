@@ -40,10 +40,15 @@ def homepage(capabilities: dict, benchmark: dict | None) -> Page:
 
     body = f"""
 <section class="hero">
-  <p class="eyebrow">Your document. Clean Markdown.</p>
-  <h1>Drop it. zenfmt it.</h1>
-  <p class="lede">Private browser conversion powered by Zig and WebAssembly.</p>
-  <p class="promise">No upload · no account · no waiting</p>
+  <p class="eyebrow">zenfmt {_escape(capabilities["version"])}</p>
+  <h1>Convert documents to Markdown.</h1>
+  <p class="lede">
+    Pandoc showed how useful a universal document converter can be. zenfmt is
+    a small attempt to explore that idea with an engine written in Zig.
+  </p>
+  <p class="promise">
+    This page converts locally in your browser. It does not upload the file.
+  </p>
 </section>
 
 <section class="workspace" aria-label="Convert a document">
@@ -149,7 +154,7 @@ def _benchmark_summary(benchmark: dict | None) -> str:
     wasm = browser.get("artifact", {})
     return (
         '<section class="benchmark-summary">'
-        '<p class="eyebrow">Measured, not marketed</p>'
+        '<p class="eyebrow">A small reference benchmark</p>'
         "<h2>The conversion benchmark</h2>"
         f"<p>{_escape(headline.get('summary', 'Recorded results are available.'))}</p>"
         '<div class="metric-grid">'
@@ -309,8 +314,8 @@ def download_page(capabilities: dict, version: str) -> Page:
     body = f"""
 <h1>Download zenfmt {_escape(version)}</h1>
 <p class="lede">
-  One engine, every supported target. All of them read the same {formats}
-  formats and write the same Markdown.
+  zenfmt {_escape(version)} is built for the targets below. Each uses the same
+  conversion engine, reads the same {formats} formats, and writes Markdown.
 </p>
 <p>
   <a href="https://github.com/insanai/zenfmt/releases/tag/v{_escape(version)}">Release notes</a>
@@ -462,7 +467,7 @@ AnyDoc, Pandoc.</p>
 <h2>Native coverage</h2>
 <table><thead><tr><th>Tool</th><th>Converted</th><th>Corpus</th></tr></thead><tbody>{coverage_rows}</tbody></table>
 <h2>Native shared-file latency</h2>
-<p>Ratio is the other tool's median wall time divided by zenfmt's. Above 1.0× means zenfmt was faster.</p>
+<p>Ratio is the other tool's median wall time divided by zenfmt's. A value above 1.0× means the other tool took longer on the shared files in this run.</p>
 <table><thead><tr><th>Comparison</th><th>Shared files</th><th>Wall ratio</th></tr></thead><tbody>{comparison_rows}</tbody></table>
 <h2>Browser lens</h2>
 <p>zenfmt converted {browser["coverage"][0]["converted"]} of {browser["coverage"][0]["total"]} files through the released WASM adapter. Warm rows use three warm-ups and fifteen measured samples per file; raw samples, p95 and median absolute deviation are in <code>wasm.json</code>.</p>

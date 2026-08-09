@@ -76,12 +76,11 @@ def main() -> int:
         count, ratio = geometric_ratio(native, tool)
         comparisons[tool] = {"shared_files": count, "wall_ratio": ratio}
 
-    anydoc = comparisons["anydoc"]
-    pandoc = comparisons["pandoc"]
     summary = (
-        f"zenfmt converted {coverage[0]['converted']} of {coverage[0]['total']} corpus files. "
-        f"On shared native files it was {anydoc['wall_ratio']:.1f}× faster than AnyDoc "
-        f"and {pandoc['wall_ratio']:.1f}× faster than Pandoc."
+        f"On this {coverage[0]['total']}-file corpus, zenfmt converted "
+        f"{coverage[0]['converted']} files, AnyDoc converted {coverage[1]['converted']}, "
+        f"and Pandoc converted {coverage[2]['converted']}. The method, shared-file "
+        "timings, machine details, and raw samples are available below."
     )
     output = {
         "schema": 1,

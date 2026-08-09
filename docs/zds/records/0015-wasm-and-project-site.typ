@@ -65,10 +65,10 @@
   rect((14.25, 9.98), (15.42, 10.28), fill: panel, stroke: 0.5pt + rule, radius: 0.12)
   content((14.835, 10.13), box-label([Light ▾], size: 6.7pt))
 
-  content((0.55, 9.12), anchor: "west", box-label([YOUR DOCUMENT. CLEAN MARKDOWN.], size: 6.3pt, weight: "bold", fill: blue))
-  content((0.55, 8.5), anchor: "west", box-label([Drop it. zenfmt it.], size: 20pt, weight: "bold"))
-  content((0.55, 7.98), anchor: "west", box-label([Private browser conversion powered by Zig + WebAssembly.], size: 8.2pt, fill: muted))
-  content((14.85, 8.35), anchor: "east", box-label([No upload · no account · no waiting], size: 6.7pt, fill: green))
+  content((0.55, 9.12), anchor: "west", box-label([ZENFMT 0.2.0], size: 6.3pt, weight: "bold", fill: blue))
+  content((0.55, 8.5), anchor: "west", box-label([Convert documents to Markdown.], size: 20pt, weight: "bold"))
+  content((0.55, 7.98), anchor: "west", box-label([A document converter inspired by Pandoc, with an engine written in Zig.], size: 8.2pt, fill: muted))
+  content((14.85, 8.35), anchor: "east", box-label([Conversion stays in this browser.], size: 6.7pt, fill: green))
 
   rect((0.55, 4.42), (6.65, 7.48), fill: white, stroke: 0.8pt + rule, radius: 0.16)
   content((0.88, 7.15), anchor: "west", box-label([1 · SOURCE DOCUMENT], size: 6.4pt, weight: "bold", fill: muted))
@@ -89,7 +89,7 @@
   rect((0.55, 3.63), (15.45, 4.12), fill: blue-light, stroke: 0.5pt + rgb("b8c9fb"), radius: 0.09)
   content((0.85, 3.875), anchor: "west", box-label([Need help?  Quick start  ·  Supported formats  ·  Read the book  ·  Why this works (ZDS)], size: 7pt, weight: "bold", fill: blue))
 
-  content((0.55, 3.03), anchor: "west", box-label([MEASURED, NOT MARKETED], size: 6.3pt, weight: "bold", fill: blue))
+  content((0.55, 3.03), anchor: "west", box-label([A SMALL REFERENCE BENCHMARK], size: 6.3pt, weight: "bold", fill: blue))
   content((0.55, 2.55), anchor: "west", box-label([The conversion benchmark], size: 13pt, weight: "bold"))
   rect((0.55, 0.45), (4.35, 2.15), fill: white, stroke: 0.6pt + rule, radius: 0.12)
   content((0.88, 1.8), anchor: "west", box-label([FORMAT COVERAGE], size: 6.2pt, weight: "bold", fill: muted))
@@ -169,8 +169,8 @@
   rect((0, 0), (6.2, 11.5), fill: paper, stroke: 0.8pt + ink, radius: 0.2)
   content((0.45, 11.05), anchor: "west", box-label([zenfmt], size: 8.5pt, weight: "bold"))
   content((5.75, 11.05), anchor: "east", box-label([Help · Menu], size: 7pt, weight: "bold", fill: blue))
-  content((0.45, 10.23), anchor: "west", box-label([Drop it.], size: 17pt, weight: "bold"))
-  content((0.45, 9.74), anchor: "west", box-label([Get clean Markdown locally.], size: 7.2pt, fill: muted))
+  content((0.45, 10.23), anchor: "west", box-label([Convert a document.], size: 17pt, weight: "bold"))
+  content((0.45, 9.74), anchor: "west", box-label([Conversion stays in this browser.], size: 7.2pt, fill: muted))
   rect((0.45, 7.3), (5.75, 9.25), fill: white, stroke: 0.6pt + rule, radius: 0.13)
   content((0.75, 8.92), anchor: "west", box-label([1 · SOURCE], size: 6.2pt, weight: "bold", fill: muted))
   rect((0.78, 7.72), (5.42, 8.62), fill: panel, stroke: (paint: blue, thickness: 0.7pt, dash: "dashed"), radius: 0.1)
@@ -270,9 +270,11 @@ code window displays the Markdown. The document is never uploaded and the
 Markdown is never interpreted as HTML.
 
 The website is not merely a demo. It becomes the project front door at
-`https://insanai.github.io/zenfmt/`: an original zenfmt experience inspired by
-the directness of AnyDoc and the bold editorial confidence of Notion, while
-remaining faster to understand, keyboard accessible, privacy preserving, and
+`https://insanai.github.io/zenfmt/`. Pandoc showed how useful a universal
+document converter can be; zenfmt is a small attempt to explore that idea with
+an engine written in Zig. The site borrows useful interaction ideas from
+AnyDoc and a restrained editorial layout from Notion, without borrowing their
+voice or identity. It remains keyboard accessible, privacy preserving, and
 free of a server runtime. It presents the converter first, an auditable
 benchmark dashboard second, and clear routes into the zenfmt book, Zen
 Discussion records, downloads, and GitHub. The default theme is light; the
@@ -386,7 +388,7 @@ In scope:
   Markdown-writer bundle;
 - a versioned low-level WASM ABI and ergonomic browser JavaScript API;
 - worker-based local document conversion on the GitHub Pages homepage;
-- the original zenfmt site design, responsive layouts, and theme selector;
+- the zenfmt site design, responsive layouts, and theme selector;
 - book and ZDS HTML with one shared documentation shell and stable routes;
 - linked, downloadable book and ZDS PDFs;
 - contextual help that connects the converter, book, and ZDS;
@@ -1386,7 +1388,8 @@ same release and benchmarked implementation revision. A following data-only
 commit may add those raw/generated results and this record's lifecycle state;
 the release gate proves no conversion, binding, build, or site source changed
 after the recorded revision. The dashboard must never contain a typed-in
-latency, ratio, coverage count, bundle size, or winner. Headline comparisons
+latency, ratio, coverage count, bundle size, or ranking. Public copy describes
+the corpus and observed ratios without declaring a winner. Comparisons
 use the geometric mean of per-file ratios over files both tools successfully
 convert. Unsupported and failed files remain visible and are never treated as
 infinitely slow.
@@ -1484,7 +1487,7 @@ The homepage shows a small dashboard: coverage, one shared-corpus latency
 comparison for the selected lens, and provenance/reproduction links. The full
 page adds support matrix, per-file bars, cold/warm split, memory, bundle size,
 quality probes, raw table, method, caveats, and accessible data tables behind
-each chart. Color is never the only carrier of winner, failure, or unsupported
+each chart. Color is never the only carrier of comparison, failure, or unsupported
 state. Tool order is stable: zenfmt, AnyDoc, Pandoc.
 
 Reference results are regenerated deliberately on the designated host for a
