@@ -90,12 +90,11 @@ jobs:
           enable-cache: true
 
       # The every-format requirement is only meaningful with a fixture for
-      # every reader, and one format — xlsb — has no committed fixture
-      # because no open tool writes it. The corpus supplies it. Fetching is
-      # safe to depend on now that the script verifies each file against a
-      # recorded digest and fails rather than proceeding on a mismatch.
-      - name: Fetch and verify the benchmark corpus
-        run: sh benchmarks/fetch_corpus.sh
+      # every reader. XLSB is the sole reader without a committed fixture,
+      # because no open tool writes it, so fetch only that corpus entry. The
+      # script still verifies its recorded digest.
+      - name: Fetch and verify the XLSB fixture
+        run: sh benchmarks/fetch_corpus.sh grid.xlsb
 
       # This gate exists in the build and was never wired to CI, so the
       # every-format requirement and the installed-artifact tests were only

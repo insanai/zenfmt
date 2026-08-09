@@ -2,7 +2,8 @@
 # Fetches the benchmark corpus described by benchmarks/corpus.json: real-world
 # documents from public sample repositories (filesamples.com, Apache POI and
 # LibreOffice test data, Project Gutenberg, W3C). The corpus is not committed;
-# run this script once before `zig build benchmark`.
+# run this script once before `zig build benchmark`. Pass one or more manifest
+# filenames to fetch and verify only those entries.
 #
 # Every file is verified against the SHA-256 recorded in the manifest. A
 # published benchmark number is only meaningful if the bytes it was measured
@@ -31,11 +32,18 @@ digest() {
 
 # The manifest is the single source of names, URLs, and digests. Reading it
 # with python keeps that true rather than restating the list in shell.
-entries="$(python3 - "$manifest" <<'PY'
+entries="$(python3 - "$manifest" "$@" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as handle:
     manifest = json.load(handle)
+selected = set(sys.argv[2:])
+known = {entry["name"] for entry in manifest["files"]}
+unknown = selected - known
+if unknown:
+    raise SystemExit("unknown corpus file: " + ", ".join(sorted(unknown)))
 for entry in manifest["files"]:
+    if selected and entry["name"] not in selected:
+        continue
     source = entry["source"]
     if not source.startswith("http"):
         source = "-"
@@ -110,4 +118,8 @@ if [ -s "$failures" ]; then
 fi
 
 echo
-echo "corpus verified against $manifest"
+if [ "$#" -eq 0 ]; then
+    echo "corpus verified against $manifest"
+else
+    echo "selected corpus files verified against $manifest"
+fi
