@@ -146,10 +146,17 @@ fn decodePath(
         return error.InvalidRequest;
     if (len == 0 or len > 32 * 1024) return error.InvalidRequest;
     if (builtin.os.tag == .windows) {
-        const wide: [*]const u16 = @ptrCast(@alignCast(ptr));
+        const byte_len = std.math.mul(usize, len, @sizeOf(u16)) catch
+            return error.InvalidRequest;
+        const source: [*]const u8 = @ptrCast(ptr);
+        const wide = try arena.alloc(u16, len);
+        // `PathSlice` deliberately promises no alignment. ctypes and other C
+        // callers may provide a byte buffer at any address, so copy its
+        // UTF-16LE representation before giving it to the Unicode decoder.
+        @memcpy(std.mem.sliceAsBytes(wide), source[0..byte_len]);
         const path = std.unicode.wtf16LeToWtf8Alloc(
             arena,
-            wide[0..len],
+            wide,
         ) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
         };
@@ -164,6 +171,24 @@ fn decodePath(
         return error.InvalidRequest;
     }
     return try arena.dupe(u8, path);
+}
+
+test "Windows path decoding accepts unaligned UTF-16LE" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+
+    const expected = "folder/note.md";
+    const encoded = std.unicode.wtf8ToWtf16LeStringLiteral(expected);
+    const encoded_bytes = std.mem.sliceAsBytes(encoded);
+    var storage: [64]u8 align(2) = undefined;
+    @memcpy(storage[1..][0..encoded_bytes.len], encoded_bytes);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const decoded = try decodePath(arena.allocator(), .{
+        .ptr = @ptrCast(&storage[1]),
+        .len = encoded.len,
+    });
+    try std.testing.expectEqualStrings(expected, decoded);
 }
 
 fn decodeStrict(text: []const u8) ?core.Strictness {

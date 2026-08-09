@@ -15,7 +15,11 @@ fn byteSlice(bytes: []const u8) abi.Slice {
     return .{ .ptr = if (bytes.len == 0) null else bytes.ptr, .len = bytes.len };
 }
 
-fn pathSlice(path: []const u8) abi.PathSlice {
+fn pathSlice(comptime path: []const u8) abi.PathSlice {
+    if (builtin.os.tag == .windows) {
+        const wide = std.unicode.wtf8ToWtf16LeStringLiteral(path);
+        return .{ .ptr = @ptrCast(wide.ptr), .len = wide.len };
+    }
     return .{ .ptr = @ptrCast(path.ptr), .len = path.len };
 }
 
