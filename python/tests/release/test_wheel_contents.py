@@ -57,8 +57,10 @@ def test_wheel_contents(wheel_path: Path) -> None:
         tag_line = next(
             line for line in wheel_metadata.splitlines() if line.startswith("Tag:")
         )
-        assert "py3-none-" in tag_line
-        assert "any" not in tag_line
+        interpreter, abi, platform = tag_line.removeprefix("Tag: ").split("-", 2)
+        assert interpreter == "py3"
+        assert abi == "none"
+        assert platform != "any"
 
         metadata = next(
             wheel.read(name).decode()
