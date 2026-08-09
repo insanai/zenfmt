@@ -425,8 +425,8 @@ h1:hover .permalink, h2:hover .permalink, h3:hover .permalink,
 }
 
 @media (max-width: 48rem) {
-  .site-header nav { order: 2; width: 100%; overflow-x: auto; }
-  .site-header nav ul { flex-wrap: nowrap; }
+  .site-header nav { order: 2; width: 100%; }
+  .site-header nav ul { flex-wrap: wrap; gap: 0.4rem 1rem; }
   .hero .promise { position: static; }
   .targets { grid-template-columns: 1fr; }
   .target-featured { grid-column: auto; }

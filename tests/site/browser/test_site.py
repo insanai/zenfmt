@@ -46,6 +46,11 @@ def test_workspace_keeps_markdown_readable(browser: Browser, site_url: str) -> N
     output_pane = page.locator(".pane-output").bounding_box()
     assert source is not None and output_pane is not None
     assert output_pane["y"] > source["y"] + source["height"]
+
+    page.set_viewport_size({"width": 390, "height": 844})
+    navigation = page.get_by_role("navigation", name="Site")
+    assert navigation.evaluate("node => node.scrollWidth <= node.clientWidth")
+    expect(navigation.get_by_role("link", name="Security")).to_be_in_viewport()
     context.close()
 
 
