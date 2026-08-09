@@ -62,6 +62,7 @@ pub fn add(
     const run_stages = b.addRunArtifact(stages);
     run_stages.has_side_effects = true;
     run_stages.setCwd(b.path("."));
+    run_stages.addArgs(&.{ "--version", version, "--revision", revision });
     if (b.args) |args| run_stages.addArgs(args);
     const stages_step = b.step(
         "benchmark-stages",

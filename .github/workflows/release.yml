@@ -23,6 +23,8 @@ jobs:
   verify-version:
     name: Version parity gate
     runs-on: ubuntu-latest
+    outputs:
+      implementation-revision: ${{ steps.benchmark.outputs.revision }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -39,11 +41,13 @@ jobs:
           zig build -Doptimize=ReleaseSafe
           test "$(./zig-out/bin/zenfmt --version)" = "zenfmt $zon_version"
       - name: Benchmark data must describe the released implementation
+        id: benchmark
         shell: bash
         run: |
           set -eux
           benchmark_revision="$(python3 -c \
             'import json; print(json.load(open("benchmarks/results/site.json"))["git_revision"])')"
+          echo "revision=$benchmark_revision" >> "$GITHUB_OUTPUT"
           git merge-base --is-ancestor "$benchmark_revision" HEAD
           git diff --quiet "$benchmark_revision"..HEAD -- . \
             ':(exclude)benchmarks/results/**' \
@@ -140,7 +144,9 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
       - name: Build and audit the module
-        run: zig build wasm-check capabilities -Dgit-revision=${{ github.sha }}
+        run: >-
+          zig build wasm-check capabilities
+          -Dgit-revision=${{ needs.verify-version.outputs.implementation-revision }}
       - name: Package the browser distribution
         shell: bash
         run: |
@@ -355,7 +361,9 @@ jobs:
 
   build-release-site:
     name: Build the tagged Pages site
-    needs: github-release
+    needs:
+      - github-release
+      - verify-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -378,7 +386,7 @@ jobs:
           zig build site-check \
             -Dsite-base=/zenfmt/ \
             -Dsource-date-epoch="$SOURCE_DATE_EPOCH" \
-            -Dgit-revision=${{ github.sha }}
+            -Dgit-revision=${{ needs.verify-version.outputs.implementation-revision }}
       - name: Prove Pages uses the released module
         env:
           GH_TOKEN: ${{ github.token }}
@@ -398,7 +406,7 @@ jobs:
           uv run --project docs/site playwright install --with-deps chromium
           zig build site-browser-test \
             -Dsite-base=/zenfmt/ \
-            -Dgit-revision=${{ github.sha }}
+            -Dgit-revision=${{ needs.verify-version.outputs.implementation-revision }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -30,6 +30,8 @@ const out_path = "benchmarks/results/stages.json";
 const Options = struct {
     iterations: u32 = default_iterations,
     file: ?[]const u8 = null,
+    version: []const u8 = "unknown",
+    revision: []const u8 = "unknown",
 };
 
 /// The probe writer: covers nothing, emits nothing, costs nothing. A
@@ -99,8 +101,8 @@ pub fn main(init: std.process.Init) !u8 {
     var options: Options = .{};
     parseArgs(init.minimal.args, &options) catch {
         std.debug.print(
-            "benchmark-stages: expected --file NAME and/or " ++
-                "--iterations N (1..{d})\n" ++
+            "benchmark-stages: expected --file NAME, --iterations N " ++
+                "(1..{d}), --version VERSION, and/or --revision SHA\n" ++
                 "hint: zig build benchmark-stages -- --file data.csv " ++
                 "--iterations 25\n",
             .{max_iterations},
@@ -139,7 +141,13 @@ pub fn main(init: std.process.Init) !u8 {
 
     var machine: std.Io.Writer.Allocating = .init(gpa);
     defer machine.deinit();
-    try renderJson(&machine.writer, results.items, options.iterations);
+    try renderJson(
+        &machine.writer,
+        results.items,
+        options.iterations,
+        options.version,
+        options.revision,
+    );
     Io.Dir.cwd().writeFile(io, .{ .sub_path = out_path, .data = machine.written() }) catch |err| {
         std.debug.print("benchmark-stages: cannot write {s}: {t}\n", .{ out_path, err });
         return 1;
@@ -154,6 +162,10 @@ fn parseArgs(args: std.process.Args, options: *Options) !void {
     while (iterator.next()) |arg| {
         if (std.mem.eql(u8, arg, "--file")) {
             options.file = iterator.next() orelse return error.InvalidArgument;
+        } else if (std.mem.eql(u8, arg, "--version")) {
+            options.version = iterator.next() orelse return error.InvalidArgument;
+        } else if (std.mem.eql(u8, arg, "--revision")) {
+            options.revision = iterator.next() orelse return error.InvalidArgument;
         } else if (std.mem.eql(u8, arg, "--iterations")) {
             const text_value = iterator.next() orelse return error.InvalidArgument;
             options.iterations = try std.fmt.parseInt(u32, text_value, 10);
@@ -294,10 +306,13 @@ fn renderJson(
     writer: *std.Io.Writer,
     results: []const StageResult,
     iterations: u32,
+    version: []const u8,
+    revision: []const u8,
 ) !void {
     try writer.print(
-        "{{\"derived\":[\"lowering_ms\"],\"iterations\":{d},\"files\":[",
-        .{iterations},
+        "{{\"version\":\"{s}\",\"git_revision\":\"{s}\"," ++
+            "\"derived\":[\"lowering_ms\"],\"iterations\":{d},\"files\":[",
+        .{ version, revision, iterations },
     );
     for (results, 0..) |result, index| {
         for (result.name) |byte| std.debug.assert(byte >= 0x20 and byte != '"' and byte != '\\');

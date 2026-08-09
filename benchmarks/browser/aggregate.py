@@ -58,6 +58,10 @@ def main() -> int:
         raise RuntimeError("Native benchmark version does not match")
     if native.get("git_revision") != args.revision:
         raise RuntimeError("Native benchmark revision does not match")
+    if data["stages"].get("version") != args.version:
+        raise RuntimeError("Stage benchmark version does not match")
+    if data["stages"].get("git_revision") != args.revision:
+        raise RuntimeError("Stage benchmark revision does not match")
     coverage = []
     for tool in ("zenfmt", "anydoc", "pandoc", "zenfmt-python-wheel"):
         converted = sum(
