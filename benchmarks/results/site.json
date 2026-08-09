@@ -1,0 +1,111 @@
+{
+  "aggregates": {
+    "browser": {
+      "artifact": {
+        "artifact_sha256": "52f2f024acde30b95e4efe8f3be18d79aa700deb652d8546838f67bb3e488698",
+        "gzip_bytes": 561910,
+        "name": "zenfmt",
+        "optimization": "ReleaseSafe",
+        "raw_bytes": 1730054,
+        "target": "wasm32-freestanding"
+      },
+      "cold": {
+        "compile_ms": 4.300000011920929,
+        "fetch_ms": 8.300000011920929,
+        "first_ready_ms": 23.19999998807907,
+        "instantiate_ms": 10.599999964237213
+      },
+      "competitors": [
+        {
+          "reason": "No pinned browser distribution exposes a maintained file-to-Markdown API contract.",
+          "state": "not_benchmarked",
+          "tool": "anydoc"
+        },
+        {
+          "reason": "No maintained Pandoc WASM distribution meets the pinned harness contract.",
+          "state": "not_benchmarked",
+          "tool": "pandoc"
+        }
+      ],
+      "coverage": [
+        {
+          "converted": 16,
+          "tool": "zenfmt",
+          "total": 16
+        }
+      ],
+      "median_ms": 16.962499994784594
+    },
+    "headline": {
+      "summary": "On this 16-file corpus, zenfmt converted 16 files, AnyDoc converted 14, and Pandoc converted 6. The method, shared-file timings, machine details, and raw samples are available below."
+    },
+    "native": {
+      "comparisons": {
+        "anydoc": {
+          "shared_files": 14,
+          "wall_ratio": 9.077634045662057
+        },
+        "pandoc": {
+          "shared_files": 6,
+          "wall_ratio": 19.315159770946853
+        },
+        "zenfmt-python-wheel": {
+          "shared_files": 16,
+          "wall_ratio": 16.355081477032556
+        }
+      },
+      "coverage": [
+        {
+          "converted": 16,
+          "tool": "zenfmt",
+          "total": 16
+        },
+        {
+          "converted": 14,
+          "tool": "anydoc",
+          "total": 16
+        },
+        {
+          "converted": 6,
+          "tool": "pandoc",
+          "total": 16
+        },
+        {
+          "converted": 16,
+          "tool": "zenfmt-python-wheel",
+          "total": 16
+        }
+      ]
+    },
+    "quality": {
+      "passed": 16,
+      "rule": "nonempty UTF-8, stable artifact digest, and byte parity with the native memory API",
+      "total": 16
+    }
+  },
+  "git_revision": "9f409998eb602476d2a72e3fa69651cd618cf227",
+  "schema": 1,
+  "sources": {
+    "corpus": {
+      "path": "benchmarks/corpus.json",
+      "sha256": "c8b36e4556df6a9fa02e82ef69674cbb4ef38246e9292adc6a510247449c4611"
+    },
+    "native": {
+      "path": "benchmarks/results/latest.json",
+      "sha256": "27b6c8cc4e7fd4284de43d35b8238ea6c86f6b0642dacd2a33a0172d54835d43"
+    },
+    "python": {
+      "path": "benchmarks/results/python.json",
+      "sha256": "5250308e94039409c35a982e4eafe588b3c9cd777d1493f199258171dccbbfef"
+    },
+    "stages": {
+      "path": "benchmarks/results/stages.json",
+      "sha256": "7eb91dfc5e07bc76bb584304715cb1d7ed8747912a5b9a9e61fe03aa30f42492"
+    },
+    "wasm": {
+      "path": "benchmarks/results/wasm.json",
+      "sha256": "e6a25bf0c48f464f750e212da6ada371238b8564131ff5e3a2a10b27fa50ef16"
+    }
+  },
+  "zenfmt_version": "0.2.0"
+}

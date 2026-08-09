@@ -1,12 +1,12 @@
 #let zds-number = "0015"
 #let zds-title = "Browser WebAssembly and the zenfmt Project Site"
-#let zds-state = "prediscussion"
+#let zds-state = "committed"
 #let zds-created = "2026-08-08"
 #let zds-discussion = "The implementation blueprint for the 0.2.0 browser WASM release, conversion playground, project website, HTML book and ZDS, and public benchmark dashboard"
 #let zds-labels = ("wasm", "browser", "website", "documentation", "benchmark", "release",)
 #let zds-authors = ("Vikrant Rathore", "Ronak Rathore (assistance)",)
 #let zds-category = "Implementation Specification"
-#let zds-status = "Prediscussion"
+#let zds-status = "Committed"
 #let zds-last-updated = "2026-08-09"
 
 #import "../../shared/zds.typ": zds-document
