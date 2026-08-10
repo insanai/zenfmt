@@ -204,3 +204,16 @@
 #document("pdf/zds-0015-wasm-and-project-site.pdf")[
   #include "records/0015-wasm-and-project-site.typ"
 ]
+
+#document(
+  "zds/0016-server.html",
+  title: [ZDS 0016: The zenfmt Server: REST, Streaming, and the Administered Service],
+  author: ("Zen Contributors",),
+  description: [The zenfmt server: reusable CLI and service libraries, REST and streaming conversion, two-role administration on embedded zaxonlite, observability, a themed Zig WebAssembly interface, and reproducible Tika and Docling comparisons],
+)[
+  #include "records/0016-server.typ"
+]
+
+#document("pdf/zds-0016-server.pdf")[
+  #include "records/0016-server.typ"
+]
