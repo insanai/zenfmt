@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- The static shell (ZDS 0016, The Web Interface): one root element, the
+     stylesheet and glue references, and the noscript page. Application
+     markup never grows here; the ui module renders everything into #app.
+     The double-brace placeholders resolve at startup to hash-suffixed
+     immutable asset paths. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>zenfmt</title>
+    <link rel="stylesheet" href="{{CSS}}" />
+    <script type="module" src="{{JS}}" defer></script>
+    <meta name="zenfmt-ui-wasm" content="{{WASM}}" />
+  </head>
+  <body>
+    <noscript>
+      <div class="zf-shell">
+        <h1>zenfmt</h1>
+        <p>
+          This interface needs JavaScript and WebAssembly. The API does not:
+        </p>
+        <pre>curl -s -T report.docx "http://127.0.0.1:8998/api/v1/convert?to=markdown"</pre>
+        <p>
+          <code>GET /api/v1/formats</code> lists the readers, writers, and
+          limits of this deployment.
+        </p>
+      </div>
+    </noscript>
+    <div id="app" class="zf-shell"></div>
+  </body>
+</html>
