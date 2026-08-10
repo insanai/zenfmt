@@ -21,6 +21,7 @@ const Options = struct {
     zenfmt: []const u8 = "zig-out/bin/zenfmt",
     pandoc: []const u8 = "pandoc",
     anydoc: []const u8 = "benchmarks/.anydoc/node_modules/.bin/anydoc",
+    docling: []const u8 = "benchmarks/.venv-docling/bin/python",
     python: []const u8 = "benchmarks/.venv-wheel/bin/python",
     corpus: []const u8 = "benchmarks/corpus",
     out: []const u8 = "benchmarks/results/results.md",
@@ -39,10 +40,16 @@ const zenfmt_extensions: []const []const u8 = &.{
     "pdf",  "doc",  "xls",      "ppt",  "pps",  "pot",  "xlsb",
 };
 
+// Display order (ZDS 0016): zenfmt first, then the external comparators
+// Docling, AnyDoc, and Pandoc, then the installed zenfmt wheel — an
+// additional zenfmt surface, not a fifth independent product. The
+// head-to-head pairs below take tools 1, 2, 3, so this order also fixes
+// which comparators appear in the geometric-mean table.
 const Tool = enum {
     zenfmt,
-    pandoc,
+    docling,
     anydoc,
+    pandoc,
     zenfmt_python,
 
     fn name(tool: Tool) []const u8 {
@@ -58,6 +65,13 @@ const Tool = enum {
     fn supports(tool: Tool, extension: []const u8) bool {
         const table: []const []const u8 = switch (tool) {
             .zenfmt, .zenfmt_python => zenfmt_extensions,
+            // Docling's model-free backends only (ZDS 0016): the Office
+            // Open XML, HTML, and CSV parsers that load no layout, OCR, or
+            // table model. PDF and images route through model pipelines and
+            // are deliberately out of this profile.
+            .docling => &.{
+                "docx", "xlsx", "pptx", "html", "htm", "csv", "md", "markdown", "adoc",
+            },
             .pandoc => &.{
                 "docx", "odt", "epub", "html", "htm", "csv", "rtf", "rst", "md", "markdown",
             },
@@ -199,6 +213,7 @@ fn parseArgs(args: std.process.Args, options: *Options) void {
             .{ .name = "--zenfmt", .slot = &options.zenfmt },
             .{ .name = "--pandoc", .slot = &options.pandoc },
             .{ .name = "--anydoc", .slot = &options.anydoc },
+            .{ .name = "--docling", .slot = &options.docling },
             .{ .name = "--python", .slot = &options.python },
             .{ .name = "--corpus", .slot = &options.corpus },
             .{ .name = "--out", .slot = &options.out },
@@ -292,10 +307,27 @@ fn benchmarkTool(
     };
     if (!measurement.supported) return measurement;
 
+    // Docling is a heavy, local-only comparator (a Python toolkit that
+    // imports a scientific stack): its rows take several minutes and it is
+    // never installed in CI. When its pinned environment is absent, record
+    // the file as not-benchmarked for Docling rather than a spurious
+    // failure, so `zig build benchmark` runs without it.
+    if (tool == .docling and !executableExists(io, options.docling)) {
+        measurement.supported = false;
+        return measurement;
+    }
+
     const argv: []const []const u8 = switch (tool) {
         .zenfmt => &.{ options.zenfmt, path, "--stdout", "--quiet" },
         .pandoc => &.{ options.pandoc, path, "-t", "gfm", "-o", "/dev/null" },
         .anydoc => &.{ options.anydoc, path, "-o", "/dev/null" },
+        // Docling's cold row: a fresh interpreter per sample, exactly as the
+        // AnyDoc and Pandoc cold rows include their process startup. `-I`
+        // isolates the adapter, which converts only model-free formats and
+        // fails a sample rather than loading a model.
+        .docling => &.{
+            options.docling, "-I", "benchmarks/docling_adapter.py", "--convert", path,
+        },
         // A fresh interpreter per run: the installed wheel's cold row,
         // directly comparable to the CLI child-process row. `-I` keeps the
         // checkout off sys.path so only the clean-installed wheel runs.
@@ -318,6 +350,13 @@ fn benchmarkTool(
     measurement.max_rss = medianOf(samples[0..count], "max_rss");
     _ = gpa;
     return measurement;
+}
+
+/// True when `path` names an existing file (a tool's interpreter or
+/// binary). A bare command name with no slash is assumed present on PATH.
+fn executableExists(io: Io, path: []const u8) bool {
+    if (std.mem.indexOfScalar(u8, path, '/') == null) return true;
+    if (Io.Dir.cwd().statFile(io, path, .{})) |_| return true else |_| return false;
 }
 
 fn runOnce(io: Io, argv: []const []const u8) !Sample {

@@ -6,6 +6,8 @@ docs/build/
 docs/packages/
 benchmarks/corpus/
 benchmarks/.anydoc/
+benchmarks/.tika/
+benchmarks/.venv-docling/
 benchmarks/.browser/
 benchmarks/.venv-wheel/
 .venv/

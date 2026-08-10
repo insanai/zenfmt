@@ -272,6 +272,7 @@ const fmt_paths = [_][]const u8{
     "server",                   "tests",
     "examples",                 "bindings",
     "benchmarks/benchmark.zig", "benchmarks/stages.zig",
+    "benchmarks/server.zig",
 };
 
 fn addFormatting(b: *std.Build, steps: python.Steps) void {

@@ -63,7 +63,7 @@ def main() -> int:
     if data["stages"].get("git_revision") != args.revision:
         raise RuntimeError("Stage benchmark revision does not match")
     coverage = []
-    for tool in ("zenfmt", "anydoc", "pandoc", "zenfmt-python-wheel"):
+    for tool in ("zenfmt", "docling", "anydoc", "pandoc", "zenfmt-python-wheel"):
         converted = sum(
             next(row for row in file["tools"] if row["tool"] == tool)["ok"]
             for file in native["files"]
@@ -72,15 +72,17 @@ def main() -> int:
             {"tool": tool, "converted": converted, "total": len(native["files"])}
         )
     comparisons = {}
-    for tool in ("anydoc", "pandoc", "zenfmt-python-wheel"):
+    for tool in ("docling", "anydoc", "pandoc", "zenfmt-python-wheel"):
         count, ratio = geometric_ratio(native, tool)
         comparisons[tool] = {"shared_files": count, "wall_ratio": ratio}
 
+    by_tool = {row["tool"]: row["converted"] for row in coverage}
     summary = (
         f"On this {coverage[0]['total']}-file corpus, zenfmt converted "
-        f"{coverage[0]['converted']} files, AnyDoc converted {coverage[1]['converted']}, "
-        f"and Pandoc converted {coverage[2]['converted']}. The method, shared-file "
-        "timings, machine details, and raw samples are available below."
+        f"{by_tool['zenfmt']} files, Docling (parser only) converted "
+        f"{by_tool['docling']}, AnyDoc converted {by_tool['anydoc']}, and Pandoc "
+        f"converted {by_tool['pandoc']}. The method, shared-file timings, machine "
+        "details, and raw samples are available below."
     )
     output = {
         "schema": 1,
