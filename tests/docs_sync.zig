@@ -9,7 +9,7 @@ const testing = std.testing;
 const core = @import("zenfmt_core");
 
 const reference_path = "docs/book/08_reference.typ";
-const source_roots = [_][]const u8{ "core", "support", "formats", "src" };
+const source_roots = [_][]const u8{ "core", "support", "formats", "src", "server" };
 
 fn collectSourceCodes(
     arena: std.mem.Allocator,

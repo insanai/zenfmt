@@ -71,6 +71,13 @@
       "route": "book/benchmark/",
       "title": "The Measure of the Tool",
       "summary": "Method, corpus, and recorded results."
+    },
+    {
+      "id": "server",
+      "source": "docs/book/10_server.typ",
+      "route": "book/server/",
+      "title": "The Server",
+      "summary": "The REST and streaming API, open and secure modes, and deployment."
     }
   ],
   "routes": {

@@ -353,8 +353,8 @@ nothing about HTTP; the engine knows nothing about either. This is the
 same discipline that keeps `core/` free of per-format knowledge
 (ZDS 0002), applied one level up.
 
-One request travels the system as follows. A worker owns the connection
-and parses the head with `std.http.Server`. Middleware assigns a request
+One request travels the system as follows. A service task owns the
+connection and parses the head with `std.http.Server`. Middleware assigns a request
 id, records the start time, resolves the principal, and checks the route's
 required role. The conversion handler reads the body into the request
 arena under the body limit, builds `zenfmt.ConvertOptions` with
@@ -426,9 +426,13 @@ only std. It owns:
 
 `src/cli.zig` becomes zencli's first consumer: its flag table and
 positional grammar re-declare through zencli types, its parser calls
-zencli's, and its output is byte-identical. The CLI's end-to-end tests run
-unchanged and gate the extraction: any help-text or exit-code drift is a
-test failure, not a review discussion.
+zencli's, and its output is byte-identical. The repository has no CLI
+behavior suite today, so the extraction's first deliverable is that
+suite: help-text snapshots, parse edge cases, exit codes, and
+usage-report rendering, written against the current `src/cli.zig` and
+wired into `zig build test`. The suite then runs unchanged across the
+extraction and gates it: any help-text or exit-code drift is a test
+failure, not a review discussion.
 
 == The subcommand rule
 
@@ -462,14 +466,22 @@ reader/writer pairs).
 == HTTP kernel
 
 The kernel is a classic bounded threaded design, chosen over an event
-loop because conversions are CPU-bound and arena-heavy; a thread per
+loop because conversions are CPU-bound and arena-heavy; a service task per
 active connection with a hard cap is simpler to reason about, and the cap
-is the point.
+is the point. A connection's task spends most of its life parked in a
+read, so the task count tracks the connection slots; the processor bound
+is a separate conversion semaphore. Kernel concurrency uses `std.Io`
+tasks in one bounded group rather than raw threads, because only Io tasks
+can be cancelled portably (the acceptor blocked in `accept` is unblocked
+by cancelling its task; a connection blocked in a read is unblocked by
+shutting its socket down).
 
-- One acceptor thread owns the `std.Io.net` listener.
-- A fixed worker pool (default: logical CPU count, flag-capped) takes
-  accepted connections from a bounded handoff queue; a full queue refuses
-  the connection immediately rather than parking it invisibly.
+- One acceptor task owns the `std.Io.net` listener and hands each
+  accepted connection to a service task.
+- One service task per active connection, capped by the connection slots;
+  the CPU-bound work is bounded separately by the conversion semaphore
+  (default: logical CPU count, flag-capped), so parked tasks are cheap and
+  conversions never oversubscribe the processor.
 - Connection state is a static array of `max_connections` slots (default
   128) allocated once at startup. The slot itself requires no heap allocation
   per connection. A connection beyond capacity
@@ -480,7 +492,13 @@ is the point.
   with `server.head-too-large`.
 - Keep-alive is supported with a bounded request count per connection and
   an idle deadline; header read and body read carry deadlines so a
-  slow-loris peer costs one slot for a bounded time, never forever.
+  slow-loris peer costs one slot for a bounded time, never forever. The
+  standard library exposes no per-read socket timeout, so deadlines are
+  enforced by a watchdog task: each slot publishes its current deadline in
+  an atomic before parking in a read, and the watchdog scans the slot
+  array once per second and shuts down (`Stream.shutdown`) any expired
+  socket, which wakes the parked read with end-of-stream. Deadlines
+  therefore land within one watchdog tick of nominal.
 - Request bodies stream through `readerExpectContinue`, honoring
   `Expect: 100-continue` so oversized uploads are refused from the
   `Content-Length` before the client sends a byte when possible, and at
@@ -542,9 +560,14 @@ the response writer.
 
 *Health.* `/healthz` answers `200` whenever the process can answer at all
 (liveness). `/readyz` consults registered readiness checks. These include the
-worker pool and, in secure mode, a store ping. The endpoint answers `503` with the
+kernel's task group and, in secure mode, a store ping. The endpoint answers `503` with the
 failing check names until all pass (readiness). Both endpoints are
 unauthenticated in both modes; they expose no data beyond check names.
+When `--metrics-address` is set, the whole operational plane (`/healthz`,
+`/readyz`, `/metrics`) moves to a second, deliberately small kernel
+instance (four connection slots) bound to that address, and the main
+router stops serving those paths; the kernel is instantiable more than
+once in a process precisely so this stays one mechanism.
 
 == Authentication core
 
@@ -556,10 +579,20 @@ library defines:
 - password hashing with `std.crypto.pwhash.argon2` (Argon2id), PHC-string
   encoded so parameters travel with the hash and can be raised later
   without a migration; first-release parameters are the OWASP interactive
-  profile (19 MiB memory, 2 iterations, parallelism 1), constants in one
-  place with the rationale;
-- opaque tokens: 256-bit values from `std.crypto.random`, transmitted
-  once, stored only as SHA-256 digests; comparison is constant-time;
+  profile (19 MiB memory, 2 iterations, parallelism 1), which is exactly
+  the standard library's `Params.owasp_2id` constant, cited in one place
+  with the rationale. Because each verification costs 19 MiB, concurrent
+  verifications are bounded by a static semaphore (default 2); an arrival
+  beyond the bound waits briefly and then receives `server.busy`;
+- opaque tokens: 256-bit values from the Io interface's cryptographically
+  secure generator (`Io.random`; `std.crypto.random` no longer exists in
+  Zig 0.16), transmitted once, stored only as SHA-256 digests; comparison
+  is constant-time over the digests;
+- credential presentation on the wire: a session travels only in the
+  session cookie; an API key travels only as
+  `Authorization: Bearer zfk_<id>.<secret>`, where the public id half
+  selects the row and the secret half is digest-compared in constant
+  time. No other presentation is accepted;
 - session and API-key descriptors as plain structs plus a `Store`
   interface (vtable) that the application implements over zaxonlite. The
   operations are lookup by digest, insert, touch, and revoke. This boundary
@@ -620,8 +653,9 @@ commits, and breaking changes require `v2` alongside `v1`.
     and live server events from the bounded ring.],
   [`GET /healthz`, `GET /readyz`], [anonymous], [both], [Liveness and
     readiness as defined above.],
-  [`GET /metrics`], [anonymous], [both], [Prometheus text exposition; may
-    be restricted by `--metrics-address` (open question 3).],
+  [`GET /metrics`], [anonymous], [both], [Prometheus text exposition;
+    served from the separate operational listener when
+    `--metrics-address` is set.],
   [interface routes], [per page], [both], [`GET /`, `/login`, `/account`,
     `/admin/...`, and `/assets/{name}`; asset names carry content hashes
     and are immutable.],
@@ -645,7 +679,8 @@ curl -s -T report.docx \
   It comes from, in priority order, the `filename` of a multipart
   part, the `X-Zenfmt-Name` header, a `Content-Disposition` filename, or
   the fixed name `upload` plus an extension guessed by content sniffing
-  (`detect.sniff`). Detection failure is the engine's `usage` report, not
+  (`detect.sniff`, exposed from the core as a behavior-neutral public
+  export for the server). Detection failure is the engine's `usage` report, not
   a server invention.
 - `multipart/form-data` with a single `file` part is accepted
   equivalently, because HTML forms and the interface's upload path
@@ -736,6 +771,9 @@ manner of the engine's stable-code suite.
     the route does not accept.],
   [`server.missing-input`], [400], [Empty body where a document was
     required.],
+  [`server.invalid-query`], [400], [A query parameter carries a value the
+    route does not recognize: an unknown parameter name, or a bad
+    `?strict=` grade.],
   [`server.unknown-route`], [404], [No route matches; the admin plane in
     open mode answers this identically to a truly absent path.],
   [`server.method-not-allowed`], [405], [Path exists, method does not;
@@ -832,7 +870,8 @@ CREATE TABLE sessions (
                     REFERENCES users(id) ON DELETE CASCADE,
   created_at      INTEGER NOT NULL,
   absolute_expiry INTEGER NOT NULL,   /* created_at + 24h */
-  idle_expiry     INTEGER NOT NULL,   /* last use + 2h, touched lazily */
+  idle_expiry     INTEGER NOT NULL,   /* last use + 2h, touched at most
+                                         every 5 minutes */
   peer            TEXT NOT NULL
 ) STRICT;
 
@@ -997,8 +1036,10 @@ Inside, the module is an ordinary bounded application in the ZDS 0002
 style:
 
 - a route enum (converter, login, account, admin users, admin audit,
-  admin status) with hash-based navigation, exactly as autodoc
-  navigates declarations;
+  admin status) with path-based navigation: the server serves the same
+  shell at every page path, the glue reports `location.pathname` at
+  startup and on history traversal, and the module's `navigate` command
+  pushes a new path onto the history without a reload;
 - one state struct per route, arena-allocated, reset on navigation; no
   recursion, every collection bounded by the API's own pagination;
 - an HTML builder in the manner of `lib/docs/wasm/html_render.zig`:
@@ -1029,7 +1070,8 @@ instantiation. A mismatch is a load failure rather than a guess (the
   inset: 6pt,
   table.header([*Direction*], [*Messages*]),
   [module → glue (commands)], [`patch` (element id, HTML), `title`,
-    `focus` (element id), `navigate` (hash), `fetch` (request id,
+    `focus` (element id), `navigate` (path, via `history.pushState`),
+    `fetch` (request id,
     method, path, bounded header set, body view), `sse_open` /
     `sse_close`, `download` (name, media type, bytes view),
     `dialog_open` / `dialog_close`, `clipboard` (text), `theme_apply`
@@ -1241,10 +1283,11 @@ zenfmt serve [options]
                          allow cleartext secure mode on a non-loopback bind
   --max-body BYTES       request body cap (default 64 MiB)
   --connections N        connection slots (default 128)
-  --workers N            worker threads (default: logical CPUs)
-  --conversions N        concurrent conversion cap (default: workers)
+  --conversions N        concurrent conversion cap (default: logical CPUs)
   --limit NAME=VALUE     engine limit override, repeatable (same grammar
                          as the conversion CLI)
+  --metrics-address A:P  bind /healthz, /readyz, and /metrics on a separate
+                         listener instead of the main port
   --log-format FMT       text | json (default text)
   --log-level LEVEL      err | warn | info | debug (default info)
   --no-ui                serve the API and operational plane only
@@ -1276,8 +1319,11 @@ zenfmt serve --secure --data-dir /var/lib/zenfmt --behind-proxy
   table.header([*Resource*], [*Default bound*], [*On exhaustion*]),
   [connection slots], [128, static array], [`503 server.busy`,
     `Retry-After`],
-  [worker threads], [logical CPUs], [fixed at startup],
-  [concurrent conversions], [= workers, semaphore], [`503 server.busy`],
+  [operational listener slots], [4, static array], [`503 server.busy`],
+  [concurrent password verifications], [2, semaphore], [brief wait, then
+    `503 server.busy`],
+  [service tasks], [= connection slots], [fixed at startup],
+  [concurrent conversions], [logical CPUs, semaphore], [`503 server.busy`],
   [request head], [16 KiB per slot], [`431 server.head-too-large`],
   [request body], [64 MiB], [`413 server.body-too-large`],
   [batch parts], [16], [`400` usage report],
@@ -1383,8 +1429,8 @@ pub const Options = struct {
     allow_insecure_network: bool = false,
     max_body_bytes: u64 = 64 * 1024 * 1024,
     connections: u32 = 128,
-    workers: ?u32 = null,        // null: logical CPU count
-    conversions: ?u32 = null,    // null: workers
+    conversions: ?u32 = null,    // null: logical CPU count
+    metrics_address: ?[]const u8 = null,
     limits: zenfmt.Limits = .{},
     log_format: LogFormat = .text,
     log_level: std.log.Level = .info,
@@ -1883,8 +1929,8 @@ io_uring and kqueue single-threaded designs shine at high-concurrency
 I/O multiplexing. This workload is the opposite shape: few connections,
 each carrying a CPU-bound conversion. Threads with static caps match
 both the workload and `SharedNode`'s blocking API. Rejected for the
-first release; the listener/worker seam is where a future record would
-swap this.
+first release; the listener/service-task seam is where a future record
+would swap this.
 
 == A supervised conversion process pool
 
@@ -2004,22 +2050,25 @@ deadlines and streaming responses covers the engine's actual conversion
 times, which the benchmark record documents. Deferred until a real
 workload demands it.
 
-= Open Questions
+= Resolved Questions
 
-+ Is `8998` the right default port, or should the server use Tika's `9998` to
-  reduce operational changes while preserving the explicit protocol boundary?
-+ Should CI exercise the reverse-proxy fragments against a real Caddy
-  container, or is that deferred to the deployment guide's manual
-  checklist?
-+ Should `/metrics` accept an optional `--metrics-address` so secure
-  deployments can bind the operational plane to a separate loopback
-  listener?
-+ Should a read-only backup endpoint (`GET /api/v1/backup`,
-  administrator, streaming the SQLite image) exist in the first release,
-  or does shell access via zaxonlite tooling suffice?
-+ Does the first release pin the interface to English, or does the
-  report-rendering path leave room for the engine's future localization
-  story?
+The discussion phase settled the record's open questions as follows
+(2026-08-10):
+
++ The default port stays `8998`. Adjacency to Tika's `9998` keeps
+  migration legible while side-by-side operation (including the loopback
+  benchmark) needs no remapping.
++ The reverse-proxy fragments are verified through a manual checklist in
+  the deployment guide; CI stays container-free.
++ `--metrics-address` ships in the first release, as specified in the
+  observability and CLI sections above.
++ No backup endpoint ships in the first release; operators back up
+  through zaxonlite's own tooling against the data directory. A future
+  endpoint would want `SharedNode` to expose the streaming backup handle
+  that today exists only on `Node`.
++ The first release's interface is English. Reports render verbatim
+  through the shared renderer, so a future engine localization story
+  requires no interface rework.
 
 = Acknowledgements
 

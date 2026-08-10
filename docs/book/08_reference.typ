@@ -449,6 +449,61 @@ the writer degraded it deliberately, and the manifest says so.
     reStructuredText.],
 )
 
+=== Server (`server.*`)
+
+The zenfmt server (ZDS 0016) reuses the engine's report shape for every
+server-origin failure: same fields, same JSON, the `server.` prefix. The
+HTTP status travels beside the envelope; the exit class mirrors the
+engine's mapping.
+
+#table(
+  columns: (auto, auto, auto, 1fr),
+  table.header([*Code*], [*Severity*], [*Exit class*], [*Meaning*]),
+  [`server.head-too-large`], [error], [usage], [The request head exceeded
+    the connection's fixed 16 KiB buffer. HTTP 431.],
+  [`server.body-too-large`], [error], [limit], [The request body exceeds
+    `--max-body`; refused at the declared length when possible, at the cap
+    otherwise. HTTP 413.],
+  [`server.unsupported-media`], [error], [usage], [A content type or
+    multipart shape the route does not accept. HTTP 415.],
+  [`server.missing-input`], [error], [usage], [An empty body where a
+    document was required. HTTP 400.],
+  [`server.invalid-query`], [error], [usage], [A query parameter carries a
+    value the route does not recognize. HTTP 400.],
+  [`server.unknown-route`], [error], [usage], [No route matches the
+    path; the admin plane in open mode answers identically. HTTP 404.],
+  [`server.method-not-allowed`], [error], [usage], [The path exists under
+    another method; `Allow` enumerates them. HTTP 405.],
+  [`server.unauthorized`], [error], [usage], [No usable principal on an
+    authenticated route. HTTP 401.],
+  [`server.invalid-credentials`], [error], [usage], [Login failed;
+    identical timing and body whether the account exists or not.
+    HTTP 401.],
+  [`server.forbidden`], [error], [usage], [The principal's role is below
+    the route's requirement, or an ownership rule was violated. HTTP 403.],
+  [`server.password-change-required`], [error], [usage], [The account
+    carries a one-time password; only the password-change route is
+    permitted. HTTP 403.],
+  [`server.last-administrator`], [error], [usage], [Refused deletion,
+    demotion, or disabling of the final administrator. HTTP 409.],
+  [`server.rate-limited`], [error], [limit], [The caller's rate bucket is
+    exhausted; `Retry-After` is set. HTTP 429.],
+  [`server.busy`], [error], [conversion], [Connection slots or the
+    conversion cap are exhausted; `Retry-After` is set. HTTP 503.],
+  [`server.limit-override-forbidden`], [error], [usage], [`?limit=` from a
+    principal below administrator. HTTP 403.],
+  [`server.store-unavailable`], [error], [conversion], [A store read or
+    write failed or timed out; the log carries the detail, the envelope
+    does not. HTTP 503.],
+  [`server.shutting-down`], [error], [conversion], [The request arrived
+    after the drain began. HTTP 503.],
+  [`server.out-of-memory`], [error], [conversion], [The reserved static
+    report, mirroring `core.out-of-memory`: preallocated, allocation-free
+    to emit. HTTP 500.],
+  [`server.open-network-bind`], [warning], [none], [Startup warning, not
+    an HTTP response: open mode bound a non-loopback address.],
+)
+
 == Limits
 
 Every bound has a name, a default, and a `--limit NAME=VALUE` override.

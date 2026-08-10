@@ -28,3 +28,4 @@
 #include "book/07_library.typ"
 #include "book/08_reference.typ"
 #include "book/09_benchmark.typ"
+#include "book/10_server.typ"

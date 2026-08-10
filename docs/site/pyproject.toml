@@ -46,6 +46,7 @@ select = ["E", "W", "F", "I", "UP", "B", "S", "C4", "RET", "SIM", "RUF", "PT"]
     "S608",   # f-strings render escaped HTML, never an SQL query
 ]
 "../../tests/**" = ["S101"]
+"../../server/tests/**" = ["S101"]
 "../../benchmarks/browser/run.py" = [
     "S603", # explicit argv invokes the just-built CLI without a shell
 ]

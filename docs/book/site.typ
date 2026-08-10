@@ -65,3 +65,7 @@
 #chapter("benchmark", [The Measure of the Tool], [
   Benchmark method, corpus provenance, and recorded results.
 ])[#include "09_benchmark.typ"]
+
+#chapter("server", [The Server], [
+  The REST and streaming API, open and secure modes, and deployment.
+])[#include "10_server.typ"]
