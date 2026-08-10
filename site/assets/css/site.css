@@ -345,6 +345,12 @@ h1:hover .permalink, h2:hover .permalink, h3:hover .permalink,
 }
 .reference-baseline { margin-top: 2rem; }
 .reference-baseline table { display: block; overflow-x: auto; }
+.benchmark-lens {
+  margin: 2rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+.benchmark-lens h3 { margin-bottom: 0.35rem; }
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

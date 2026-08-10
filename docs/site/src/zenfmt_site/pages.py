@@ -167,46 +167,28 @@ zenfmt serve --secure --data-dir ./zenfmt-data</code></pre>
 def _benchmark_summary(
     benchmark: dict | None, baselines: dict, current_version: str
 ) -> str:
-    """Show the aggregate when complete, otherwise identify each raw lens."""
-    if not benchmark:
-        return (
-            '<section class="benchmark-summary">'
-            "<h2>The conversion benchmark</h2>"
-            "<p>The full release benchmark is incomplete.</p>"
-            f"{_baseline_summary(baselines, current_version)}"
-            '<p><a href="{LINK:benchmark/}">Method and raw data</a></p>'
-            "</section>"
-        )
-    aggregates = benchmark.get("aggregates", {})
-    headline = aggregates.get("headline", {})
-    native = aggregates.get("native", {})
-    coverage = native.get("coverage", [])
-    ours = next((row for row in coverage if row.get("tool") == "zenfmt"), {})
-    docling = native.get("comparisons", {}).get("docling", {})
-    docling_coverage = next(
-        (row for row in coverage if row.get("tool") == "docling"), {}
+    """Lead with the three native resource measures, then the server lens."""
+    native = baselines.get("native") or {}
+    server = baselines.get("server") or {}
+    current = native.get("version") == current_version
+    state = "Recorded for this release" if current else "Earlier reference run"
+    complete = benchmark is not None
+    note = (
+        "The complete release benchmark is recorded."
+        if complete
+        else "The full release benchmark is incomplete."
     )
-    server = aggregates.get("server", {})
-    startup = server.get("startup", {})
-    return (
-        '<section class="benchmark-summary">'
-        '<p class="eyebrow">A small reference benchmark</p>'
-        "<h2>The conversion benchmark</h2>"
-        f"<p>{_escape(headline.get('summary', 'Recorded results are available.'))}</p>"
-        '<div class="metric-grid">'
-        '<div class="metric"><span>Format corpus</span>'
-        f"<strong>{_escape(ours.get('converted', '—'))}/{_escape(ours.get('total', '—'))}</strong>"
-        "<small>zenfmt successful</small></div>"
-        '<div class="metric"><span>Docling parser only</span>'
-        f"<strong>{_escape(docling_coverage.get('converted', 0))}/{_escape(docling_coverage.get('total', 0))}</strong>"
-        f"<small>{_escape(_ratio(docling.get('wall_ratio')))} on {_escape(docling.get('shared_files', 0))} shared files</small></div>"
-        '<div class="metric"><span>Server startup</span>'
-        f"<strong>{_escape(_paired_seconds(startup))}</strong>"
-        "<small>zenfmt / Tika Server</small></div>"
-        "</div>"
-        '<p><a href="{LINK:benchmark/}">Method and raw data</a></p>'
-        "</section>"
-    )
+    return f"""
+<section class="benchmark-summary">
+  <p class="eyebrow">A small reference benchmark</p>
+  <h2>The conversion benchmark</h2>
+  <p>{note} {state}. Ratios divide the comparison tool by zenfmt, so a value
+  above 1.0 means the comparison used more of that measure on shared files.</p>
+  {_native_metric_grid(native, "AnyDoc")}
+  {_server_metric_grid(server)}
+  <p><a href="{{LINK:benchmark/}}">Explanation, method, and raw data</a></p>
+</section>
+"""
 
 
 def _ratio(value: float | None) -> str:
@@ -226,7 +208,11 @@ def _paired_seconds(startup: dict) -> str:
 
 
 def _native_comparison(native: dict, tool: str) -> dict:
-    ratios: list[float] = []
+    ratios: dict[str, list[float]] = {
+        "wall_ratio": [],
+        "cpu_ratio": [],
+        "rss_ratio": [],
+    }
     converted = 0
     for file in native.get("files", []):
         rows = {row.get("tool"): row for row in file.get("tools", [])}
@@ -234,54 +220,83 @@ def _native_comparison(native: dict, tool: str) -> dict:
         other = rows.get(tool, {})
         if other.get("ok"):
             converted += 1
-        if ours.get("ok") and other.get("ok") and ours.get("wall_ms", 0) > 0:
-            ratios.append(other["wall_ms"] / ours["wall_ms"])
-    ratio = None
-    if ratios:
-        ratio = math.exp(sum(math.log(value) for value in ratios) / len(ratios))
+        if not ours.get("ok") or not other.get("ok"):
+            continue
+        for name, metric in (
+            ("wall_ratio", "wall_ms"),
+            ("cpu_ratio", "cpu_ms"),
+            ("rss_ratio", "max_rss_mb"),
+        ):
+            if ours.get(metric, 0) > 0 and other.get(metric, 0) > 0:
+                ratios[name].append(other[metric] / ours[metric])
     return {
         "converted": converted,
         "total": len(native.get("files", [])),
-        "shared_files": len(ratios),
-        "wall_ratio": ratio,
+        "shared_files": len(ratios["wall_ratio"]),
+        **{name: _geometric_mean(values) for name, values in ratios.items()},
     }
 
 
-def _baseline_summary(baselines: dict, current_version: str) -> str:
-    native = baselines.get("native") or {}
-    server = baselines.get("server") or {}
-    if not native and not server:
-        return ""
-    docling = _native_comparison(native, "docling")
-    startup = server.get("startup", {})
+def _geometric_mean(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return math.exp(sum(math.log(value) for value in values) / len(values))
+
+
+def _native_metric_grid(native: dict, comparison: str) -> str:
+    stats = _native_comparison(native, comparison.lower())
+    shared = stats["shared_files"]
+    return f"""
+<div class="benchmark-lens">
+  <h3>Native CLI</h3>
+  <p>Geometric means over the {shared} files converted by zenfmt and
+  {_escape(comparison)}.</p>
+  <div class="metric-grid">
+    <div class="metric"><span>Speed ratio</span><strong>{_ratio(stats["wall_ratio"])}</strong><small>{_escape(comparison)} wall time / zenfmt</small></div>
+    <div class="metric"><span>CPU ratio</span><strong>{_ratio(stats["cpu_ratio"])}</strong><small>{_escape(comparison)} CPU time / zenfmt</small></div>
+    <div class="metric"><span>Peak memory ratio</span><strong>{_ratio(stats["rss_ratio"])}</strong><small>{_escape(comparison)} peak RSS / zenfmt</small></div>
+  </div>
+</div>
+"""
+
+
+def _server_comparison(server: dict) -> dict:
+    ratios = [
+        row["tika"]["wall_ms"] / row["zenfmt"]["wall_ms"]
+        for row in server.get("files", [])
+        if row["zenfmt"].get("ok")
+        and row["tika"].get("ok")
+        and row["zenfmt"].get("wall_ms", 0) > 0
+    ]
     throughput = (server.get("throughput") or [{}])[0]
-    native_version = native.get("version", "earlier")
-    server_version = server.get("version", "earlier")
-    native_state = "Recorded" if native_version == current_version else "Earlier"
-    server_state = "Recorded" if server_version == current_version else "Earlier"
-    return (
-        '<div class="reference-baseline">'
-        "<p>Each result below keeps its own version. The native and server "
-        "lenses completed for this release. The browser aggregate remains "
-        "incomplete.</p>"
-        '<div class="metric-grid">'
-        '<div class="metric"><span>'
-        f"{native_state} {_escape(native_version)} Docling parser only</span>"
-        f"<strong>{docling['converted']}/{docling['total']}</strong>"
-        f"<small>{_escape(_ratio(docling['wall_ratio']))} on {docling['shared_files']} shared files</small></div>"
-        f'<div class="metric"><span>{server_state} {_escape(server_version)} server startup</span>'
-        f"<strong>{_escape(_paired_seconds(startup))}</strong>"
-        "<small>zenfmt / Tika Server</small></div>"
-        f'<div class="metric"><span>{server_state} {_escape(server_version)} throughput at 1 client</span>'
-        f"<strong>{_escape(throughput.get('zenfmt_docs_per_s', 'pending'))} / {_escape(throughput.get('tika_docs_per_s', 'pending'))}</strong>"
-        "<small>zenfmt / Tika documents per second</small></div>"
-        "</div>"
-        "<p><small>Native revision "
-        f"<code>{_escape(native.get('git_revision', 'unknown'))}</code>. Server "
-        f"revision <code>{_escape(server.get('git_revision', 'unknown'))}</code>."
-        "</small></p>"
-        "</div>"
-    )
+    return {
+        "shared_files": len(ratios),
+        "wall_ratio": _geometric_mean(ratios),
+        "throughput": throughput,
+    }
+
+
+def _server_metric_grid(server: dict) -> str:
+    if not server:
+        return ""
+    stats = _server_comparison(server)
+    rss = server.get("peak_rss_mb", {})
+    rss_ratio = None
+    if rss.get("zenfmt", 0) > 0 and rss.get("tika", 0) > 0:
+        rss_ratio = rss["tika"] / rss["zenfmt"]
+    throughput = stats["throughput"]
+    return f"""
+<div class="benchmark-lens">
+  <h3>Long-running server, measured separately</h3>
+  <p>Warm HTTP conversion against Apache Tika Server on the same host and
+  corpus. These values are not mixed into the native CLI ratios.</p>
+  <div class="metric-grid">
+    <div class="metric"><span>Warm latency ratio</span><strong>{_ratio(stats["wall_ratio"])}</strong><small>Tika / zenfmt over {stats["shared_files"]} shared files</small></div>
+    <div class="metric"><span>Peak memory ratio</span><strong>{_ratio(rss_ratio)}</strong><small>Tika / zenfmt sampled RSS</small></div>
+    <div class="metric"><span>Throughput at 1 client</span><strong>{_escape(throughput.get("zenfmt_docs_per_s", "pending"))} / {_escape(throughput.get("tika_docs_per_s", "pending"))}</strong><small>zenfmt / Tika documents per second</small></div>
+  </div>
+</div>
+"""
 
 
 def security_page() -> Page:
@@ -540,9 +555,11 @@ def _native_result_tables(native: dict) -> tuple[str, str]:
         )
         if tool != "zenfmt":
             comparison_rows.append(
-                f'<tr><th scope="row">zenfmt / {_escape(label)}</th>'
+                f'<tr><th scope="row">{_escape(label)} / zenfmt</th>'
                 f"<td>{stats['shared_files']}</td>"
-                f"<td>{_escape(_ratio(stats['wall_ratio']))}</td></tr>"
+                f"<td>{_escape(_ratio(stats['wall_ratio']))}</td>"
+                f"<td>{_escape(_ratio(stats['cpu_ratio']))}</td>"
+                f"<td>{_escape(_ratio(stats['rss_ratio']))}</td></tr>"
             )
     return "".join(native_rows), "".join(comparison_rows)
 
@@ -582,16 +599,21 @@ def _native_recorded_details(native: dict, current_version: str) -> str:
     native_rows, comparison_rows = _native_result_tables(native)
     return f"""
 <div class="recorded-lens">
-<h3>Native converter lens</h3>
+<h2>Native CLI benchmark</h2>
 <p class="notice">{_lens_identity(native, current_version, "native lens")}</p>
+{_native_metric_grid(native, "AnyDoc")}
 <p>Docling uses parser-only backends. OCR, VLM, ASR, layout models, table
 models, enrichment, and accelerators are disabled. Unsupported files remain
 visible rather than switching to an AI pipeline.</p>
 <table><thead><tr><th>Tool</th><th>Converted</th><th>Corpus</th></tr></thead>
 <tbody>{native_rows}</tbody></table>
-<p>The ratio is the other tool's wall time divided by zenfmt's wall time over
-shared successful files. It is context, not a quality score.</p>
-<table><thead><tr><th>Comparison</th><th>Shared files</th><th>Wall ratio</th></tr></thead>
+<p>Each ratio divides the comparison tool by zenfmt over shared successful
+files. Speed is elapsed wall time, CPU is user plus system processor time,
+and peak memory is resident set size. Above 1.0 means the comparison used
+more of that measure in this run. These ratios are context, not quality
+scores.</p>
+<table><thead><tr><th>Comparison tool / zenfmt</th><th>Shared files</th>
+<th>Speed</th><th>CPU use</th><th>Peak memory</th></tr></thead>
 <tbody>{comparison_rows}</tbody></table>
 </div>
 """
@@ -605,8 +627,9 @@ def _server_recorded_details(server: dict, current_version: str) -> str:
     rss = server.get("peak_rss_mb", {})
     return f"""
 <div class="recorded-lens">
-<h3>Long-running server lens</h3>
+<h2>Long-running server benchmark</h2>
 <p class="notice">{_lens_identity(server, current_version, "server lens")}</p>
+{_server_metric_grid(server)}
 <div class="metric-grid">
 <div class="metric"><span>Startup</span><strong>{_escape(_paired_seconds(startup))}</strong><small>zenfmt / Tika Server</small></div>
 <div class="metric"><span>Peak RSS</span><strong>{_escape(rss.get("zenfmt", "pending"))} / {_escape(rss.get("tika", "pending"))} MiB</strong><small>parent and direct parser children</small></div>
@@ -637,84 +660,59 @@ releases are shown for context but are not combined into one result.</p>
 """
 
 
-def benchmark_page(
-    benchmark: dict | None, baselines: dict, current_version: str
-) -> Page:
-    """The benchmark dashboard.
-
-    A complete aggregate gets the release heading. Independently recorded
-    lenses retain their own version and revision so partial runs stay useful
-    without presenting an older measurement as current.
-    """
-    if benchmark:
-        aggregates = benchmark.get("aggregates", {})
-        native = aggregates["native"]
-        browser = aggregates["browser"]
-        quality = aggregates["quality"]
-        coverage_rows = "".join(
-            "<tr>"
-            f'<th scope="row">{_escape(row["tool"])}</th>'
-            f"<td>{_escape(row['converted'])}</td><td>{_escape(row['total'])}</td>"
-            "</tr>"
-            for row in native["coverage"]
-        )
-        comparison_rows = "".join(
-            "<tr>"
-            f'<th scope="row">zenfmt vs {_escape(tool)}</th>'
-            f"<td>{_escape(values['shared_files'])}</td>"
-            f"<td>{_escape(_ratio(values['wall_ratio']))}</td>"
-            "</tr>"
-            for tool, values in native["comparisons"].items()
-        )
-        competitor_rows = "".join(
-            f"<li><strong>{_escape(row['tool'])}:</strong> "
-            f"{_escape(row['state'].replace('_', ' '))} — {_escape(row['reason'])}</li>"
-            for row in browser["competitors"]
-        )
-        cold = browser["cold"]
-        artifact = browser["artifact"]
-        state = f"""
-<p class="notice">Recorded for zenfmt {benchmark["zenfmt_version"]} at
-<code>{_escape(benchmark["git_revision"])}</code>. Tool order remains zenfmt,
-Docling parser only, AnyDoc, Pandoc, and the zenfmt wheel.</p>
+def _browser_benchmark_details(benchmark: dict) -> str:
+    aggregates = benchmark.get("aggregates", {})
+    browser = aggregates["browser"]
+    quality = aggregates["quality"]
+    competitor_rows = "".join(
+        f"<li><strong>{_escape(row['tool'])}:</strong> "
+        f"{_escape(row['state'].replace('_', ' '))} — {_escape(row['reason'])}</li>"
+        for row in browser["competitors"]
+    )
+    cold = browser["cold"]
+    artifact = browser["artifact"]
+    provenance = "".join(
+        f'<tr><th scope="row">{_escape(name)}</th>'
+        f"<td><code>{_escape(source['sha256'])}</code></td></tr>"
+        for name, source in benchmark["sources"].items()
+    )
+    return f"""
+<h2>Browser and WebAssembly benchmark</h2>
 <div class="metric-grid">
   <div class="metric"><span>WASM raw</span><strong>{_escape(_size(artifact["raw_bytes"]))}</strong><small>{_escape(artifact["gzip_bytes"])} bytes gzip</small></div>
   <div class="metric"><span>Cold ready</span><strong>{cold["first_ready_ms"]:.1f} ms</strong><small>fetch + compile + instantiate</small></div>
   <div class="metric"><span>Parity</span><strong>{quality["passed"]}/{quality["total"]}</strong><small>browser artifacts equal native</small></div>
 </div>
-<h2>Native coverage</h2>
-<table><thead><tr><th>Tool</th><th>Converted</th><th>Corpus</th></tr></thead><tbody>{coverage_rows}</tbody></table>
-<h2>Native shared-file latency</h2>
-<p>Ratio is the other tool's median wall time divided by zenfmt's. A value above 1.0× means the other tool took longer on the shared files in this run.</p>
-<table><thead><tr><th>Comparison</th><th>Shared files</th><th>Wall ratio</th></tr></thead><tbody>{comparison_rows}</tbody></table>
-<h2>Browser lens</h2>
 <p>zenfmt converted {browser["coverage"][0]["converted"]} of {browser["coverage"][0]["total"]} files through the released WASM adapter. Warm rows use three warm-ups and fifteen measured samples per file; raw samples, p95 and median absolute deviation are in <code>wasm.json</code>.</p>
 <ul>{competitor_rows}</ul>
 <h2>Output preservation gate</h2>
 <p>{_escape(quality["rule"])}. {quality["passed"]} of {quality["total"]} browser files passed before their timing was admitted.</p>
 <h2>Provenance</h2>
-<table><thead><tr><th>Input</th><th>SHA-256</th></tr></thead><tbody>{"".join(f'<tr><th scope="row">{_escape(name)}</th><td><code>{_escape(source["sha256"])}</code></td></tr>' for name, source in benchmark["sources"].items())}</tbody></table>
+<table><thead><tr><th>Input</th><th>SHA-256</th></tr></thead><tbody>{provenance}</tbody></table>
 """
-    else:
-        state = (
-            '<p class="notice">The full benchmark is incomplete for this release.</p>'
-            "<p>"
-            "  Completed lenses are shown below with their own identities. "
-            "  Older lenses remain reference values and are not presented as "
-            "  measurements of the current release."
-            "</p>"
-        )
 
-    body = f"""
-<h1>The conversion benchmark</h1>
-{state}
-{
-        _recorded_benchmark_details(
-            baselines,
-            current_version,
-        )
-    }
 
+def _benchmark_state(benchmark: dict | None) -> tuple[str, str]:
+    if benchmark:
+        notice = f"""
+<p class="notice">Recorded for zenfmt {benchmark["zenfmt_version"]} at
+<code>{_escape(benchmark["git_revision"])}</code>. Tool order remains zenfmt,
+Docling parser only, AnyDoc, Pandoc, and the zenfmt wheel.</p>
+"""
+        return notice, _browser_benchmark_details(benchmark)
+    notice = (
+        '<p class="notice">The full benchmark is incomplete for this release.</p>'
+        "<p>"
+        "  Completed lenses are shown below with their own identities. "
+        "  Older lenses remain reference values and are not presented as "
+        "  measurements of the current release."
+        "</p>"
+    )
+    return notice, ""
+
+
+def _benchmark_method() -> str:
+    return """
 <h2>What is measured, and separately</h2>
 <p>
   Three questions are kept apart because they have different answers.
@@ -729,9 +727,9 @@ Docling parser only, AnyDoc, Pandoc, and the zenfmt wheel.</p>
 <p>
   The native and browser lenses admit timing only after their output checks
   pass. Their head-to-head comparisons use only shared successful files. The
-  0.3 server lens has a smaller gate: a successful response with a nonempty
-  body. It does not yet prove semantic quality or direct-to-server byte
-  parity, so its timings should be read with that limitation.
+  server lens has a smaller gate: a successful response with a nonempty body.
+  It does not yet prove semantic quality or direct-to-server byte parity, so
+  its timings should be read with that limitation.
 </p>
 
 <h2>Three lenses, never blended</h2>
@@ -753,6 +751,30 @@ Docling parser only, AnyDoc, Pandoc, and the zenfmt wheel.</p>
   <code>benchmarks/fetch_corpus.sh</code> verifies every digest and refuses to
   proceed on a mismatch.
 </p>
+"""
+
+
+def benchmark_page(
+    benchmark: dict | None, baselines: dict, current_version: str
+) -> Page:
+    """The benchmark dashboard.
+
+    A complete aggregate gets the release heading. Independently recorded
+    lenses retain their own version and revision so partial runs stay useful
+    without presenting an older measurement as current.
+    """
+    notice, browser_details = _benchmark_state(benchmark)
+    body = f"""
+<h1>The conversion benchmark</h1>
+{notice}
+{
+        _recorded_benchmark_details(
+            baselines,
+            current_version,
+        )
+    }
+{browser_details}
+{_benchmark_method()}
 """
     return Page(
         route="benchmark/",

@@ -335,38 +335,60 @@ benchmark.
 
 == The headline
 
+#let anydoc_headline = head_to_head(bench.files, 2)
 #tile_row(
-  {
-    let all = converted(bench.files, 0)
-    stat_tile(
-      [#all / #bench.files.len()],
-      [corpus files converted],
-      [anydoc #converted(bench.files, 2), pandoc #converted(bench.files, 3), Docling #converted(bench.files, 1)],
-      fill: green_light,
-      stroke: green,
-    )
-  },
-  {
-    let h = head_to_head(bench.files, 2)
-    stat_tile(
-      [#calc.round(h.wall, digits: 1)x],
-      [faster than anydoc],
-      [geometric mean over the #h.files files both convert; #calc.round(h.rss, digits: 1)x less peak memory],
-    )
-  },
-  {
-    let h = head_to_head(bench.files, 3)
-    stat_tile(
-      [#calc.round(h.wall, digits: 1)x],
-      [faster than pandoc],
-      [geometric mean over the #h.files files both convert; #calc.round(h.rss, digits: 1)x less peak memory],
-    )
-  },
+  stat_tile(
+    [#calc.round(anydoc_headline.wall, digits: 1)x],
+    [speed ratio],
+    [anydoc wall time / zenfmt over #anydoc_headline.files shared files],
+  ),
+  stat_tile(
+    [#calc.round(anydoc_headline.cpu, digits: 1)x],
+    [CPU ratio],
+    [anydoc user + system CPU time / zenfmt],
+  ),
+  stat_tile(
+    [#calc.round(anydoc_headline.rss, digits: 1)x],
+    [peak memory ratio],
+    [anydoc peak resident memory / zenfmt],
+  ),
 )
 
-The geometric mean is the honest average for ratios. A 100x win on one
-file cannot buy back ten 2x losses. A tool that halves one ratio while
-doubling another lands exactly where it started.
+The three cards use AnyDoc because it shares the most successful corpus
+files with zenfmt. A ratio divides AnyDoc by zenfmt, so a value above one
+means AnyDoc used more of that measure in this run. The geometric mean is
+used because it treats proportional changes symmetrically. These values
+describe one corpus and one host; they are not quality scores.
+
+#figure(
+  placement: auto,
+  kind: table,
+  table(
+    columns: (auto, auto, auto, auto, auto),
+    align: (left, right, right, right, right),
+    table.header(
+      [*Comparison tool / zenfmt*], [*Shared files*], [*Speed*],
+      [*CPU use*], [*Peak memory*],
+    ),
+    ..(1, 2, 3)
+      .map(i => {
+        let h = head_to_head(bench.files, i)
+        (
+          [#tool_labels.at(i)],
+          [#h.files],
+          [#calc.round(h.wall, digits: 1)x],
+          [#calc.round(h.cpu, digits: 1)x],
+          [#calc.round(h.rss, digits: 1)x],
+        )
+      })
+      .flatten(),
+  ),
+  caption: [
+    Geometric-mean resource ratios over shared successful files. Each value
+    is the comparison tool divided by zenfmt. Larger than one means the
+    comparison used more elapsed time, CPU time, or peak memory in this run.
+  ],
+)
 
 == Support is a result
 
@@ -486,6 +508,31 @@ structured inputs the ordering is not close: pandoc climbs to about two
 seconds on the EPUB book and the 850 KiB HTML page, where zenfmt stays
 well under a tenth of a second.
 
+== CPU use
+
+#chart_figure(
+  [
+    Median user plus system CPU time per conversion, log-10 axis.
+  ],
+  {
+    legend
+    log_bars(bench.files, "cpu_ms", "ms", 3.6)
+  },
+  alt: "Grouped bar chart of median CPU time per corpus file on a log-10 "
+    + "axis, one bar per tool per file. The ordering broadly follows wall "
+    + "latency because each command performs one conversion at a time. "
+    + "Files a tool does not convert have no bar. Exact values are in the "
+    + "table below.",
+  data: metric_table(bench.files, "cpu_ms", "ms"),
+)
+
+CPU time measures processor work rather than what a person waits for. It
+includes user and operating-system time reported for the child process.
+On this single-conversion workload it follows wall latency closely, but it
+remains separate because a service pays CPU even when requests overlap.
+The ratio table above uses the same shared successful files as the speed
+comparison.
+
 == Memory
 
 #chart_figure(
@@ -592,9 +639,12 @@ Two facts fall out. Parsing dominates the container formats: an ODT or a
 PPTX spends almost all its time inside the archive and XML, and the
 Markdown writer is nearly free. The 633 KiB CSV now spends 63 ms reading,
 8 ms in the lowering residual, and 10 ms in the writer. Stage separation
-found the previous writer regression: a hard-cap-sized inline-close stack
-was being safety-initialized for every cell. Reusing one stack sized to
-`max_depth` made the table path faster and reduced its working memory.
+found the 0.3.0 regression: validation and lowering each created
+hard-cap-sized scratch storage repeatedly as they visited a wide document.
+The current implementation allocates one scratch area for each validation
+or lowering plan and reuses it synchronously. That keeps the same bounds
+and decisions while avoiding work proportional to the node count times the
+hard cap.
 
 == The Python wheel
 

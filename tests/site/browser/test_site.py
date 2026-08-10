@@ -66,6 +66,11 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     page.reload()
     expect(page.get_by_label("Theme")).to_have_value("dark")
 
+    page.get_by_label("Theme").select_option("light")
+    expect(page.locator("html")).to_have_class("theme-light")
+    page.get_by_label("Theme").select_option("system")
+    expect(page.locator("html")).to_have_class("theme-system")
+
     page.get_by_label("Search docs").fill("first conversion")
     result = page.locator("[data-search-results]")
     expect(result).to_be_visible()
@@ -75,8 +80,8 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     wasm = page.get_by_role("link", name="Download WASM bundle")
     expect(wasm).to_have_attribute(
         "href",
-        "https://github.com/insanai/zenfmt/releases/download/v0.3.0/"
-        "zenfmt-0.3.0-wasm32-freestanding.tar.gz",
+        "https://github.com/insanai/zenfmt/releases/download/v0.3.1/"
+        "zenfmt-0.3.1-wasm32-freestanding.tar.gz",
     )
     assert page.locator(".download-button").count() >= 11
 
@@ -140,18 +145,21 @@ def test_server_and_recorded_benchmarks_are_explained(
 
     summary = page.locator(".benchmark-summary")
     expect(summary).to_contain_text("full release benchmark is incomplete")
-    expect(summary).to_contain_text("Recorded 0.3.0 Docling parser only")
-    expect(summary).to_contain_text("Recorded 0.3.0 server startup")
-    expect(summary).to_contain_text("Docling parser only")
-    expect(summary).to_contain_text("5/16")
-    expect(summary).to_contain_text("68.5×")
-    expect(summary).to_contain_text("0.11 / 10.98 s")
+    expect(summary).to_contain_text("Native CLI")
+    expect(summary).to_contain_text("Speed ratio")
+    expect(summary).to_contain_text("CPU ratio")
+    expect(summary).to_contain_text("Peak memory ratio")
+    expect(summary).to_contain_text("Long-running server, measured separately")
 
     page.goto(f"{site_url}benchmark/")
     baseline = page.locator(".reference-baseline")
-    expect(baseline).to_contain_text("Current release native lens: zenfmt 0.3.0")
-    expect(baseline).to_contain_text("Current release server lens: zenfmt 0.3.0")
+    expect(baseline).to_contain_text("Earlier reference native lens: zenfmt 0.3.0")
+    expect(baseline).to_contain_text("Earlier reference server lens: zenfmt 0.3.0")
+    expect(baseline).to_contain_text("Native CLI benchmark")
+    expect(baseline).to_contain_text("Speed")
+    expect(baseline).to_contain_text("CPU use")
+    expect(baseline).to_contain_text("Peak memory")
+    expect(baseline).to_contain_text("Long-running server benchmark")
     expect(baseline).to_contain_text("Docling parser only")
     expect(baseline).to_contain_text("Tika Server")
-    expect(baseline).to_contain_text("53.1 / 2147.5 MiB")
     context.close()

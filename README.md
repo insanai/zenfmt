@@ -8,7 +8,7 @@ can be. zenfmt is a small attempt to explore that idea in Zig. It does not have
 Pandoc's breadth; it concentrates on a compact engine, explicit conversion
 reports, and the formats listed below.
 
-**Current release: 0.3.0.** The architecture is specified in
+**Current release: 0.3.1.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and the IR v2
 layer, facets, and writer lowering in
 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ); the library, CLI,
@@ -97,7 +97,7 @@ archives and the complete wheel matrix are available from
 
 ## Browser and WebAssembly
 
-Release 0.3.0 includes the self-contained `zenfmt serve` service alongside the
+Release 0.3.1 includes the self-contained `zenfmt serve` service alongside the
 first-class `wasm32-freestanding` distribution and the static project site
 specified by [ZDS 0015](docs/zds/records/0015-wasm-and-project-site.typ).
 The browser module has no host imports: document conversion runs in a dedicated
@@ -113,7 +113,7 @@ zig build site-browser-test  # real Chromium conversion and interaction suite
 
 The versioned WASM bundle, standalone module, native CLI archives, Python
 wheels, book PDF, and complete ZDS PDF set are published together on the
-0.3.0 GitHub release. The site exposes direct target downloads and keeps the
+0.3.1 GitHub release. The site exposes direct target downloads and keeps the
 Book and ZDS in the help path from every conversion state.
 
 ## Server
@@ -222,11 +222,32 @@ zig build fmt-check   # formatting
 
 ## Benchmark
 
-`zig build benchmark` converts a downloaded corpus of real-world documents
-with zenfmt, [pandoc](https://pandoc.org/), and firecrawl's
-[anydoc](https://github.com/firecrawl/anydoc), measuring wall-clock latency,
-CPU time, and peak RSS per conversion (median of five runs, child-process
-rusage). Results land in `benchmarks/results/results.md`.
+The reference benchmark converts 16 real documents and reports three separate
+resource measures. Speed is elapsed wall time, CPU use is user plus system
+processor time, and memory is peak resident set size. Ratios divide the
+comparison tool by zenfmt over files both tools converted successfully.
+
+| Native CLI comparison | Shared files | Speed | CPU use | Peak memory |
+|---|---:|---:|---:|---:|
+| AnyDoc / zenfmt | 14 | 7.0x | 8.0x | 10.1x |
+| Pandoc / zenfmt | 6 | 15.9x | 15.3x | 16.6x |
+| Docling parser only / zenfmt | 5 | 182.2x | 196.3x | 47.5x |
+
+These are geometric means from one modest Apple-silicon machine and this
+small fixed corpus. They are useful reference values, not quality scores or a
+promise about every document. Docling uses model-free parsers only. OCR, VLM,
+ASR, layout models, table models, enrichment, and accelerators are disabled.
+
+The long-running server benchmark follows the native CLI benchmark and is
+kept separate. It compares warm HTTP conversion, sampled memory, startup, and
+short throughput runs with Apache Tika Server on the same host and corpus.
+
+`zig build benchmark` measures zenfmt, [Docling](https://docling-project.github.io/docling/),
+[AnyDoc](https://github.com/firecrawl/anydoc), and
+[Pandoc](https://pandoc.org/) with one discarded warm-up and five measured
+runs. Results land in `benchmarks/results/results.md`. The
+[benchmark dashboard](https://insanai.github.io/zenfmt/benchmark/) explains
+the method and links the raw records.
 
 ```sh
 sh benchmarks/fetch_corpus.sh                          # once: the corpus
