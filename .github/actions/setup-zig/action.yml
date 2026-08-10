@@ -17,5 +17,5 @@ runs:
       shell: bash
       run: |
         package_cache="$RUNNER_TEMP/zenfmt-zig-global-cache"
-        mkdir -p "$package_cache"
+        mkdir -p "$package_cache/tmp"
         echo "ZIG_GLOBAL_CACHE_DIR=$package_cache" >> "$GITHUB_ENV"
