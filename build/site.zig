@@ -109,24 +109,24 @@ pub fn addFormatting(
     apply_step: *std.Build.Step,
 ) void {
     const lint = uv.run(project, &.{
-        "ruff",                  "check",
-        "docs/site",             "tests/site",
-        "benchmarks/browser",    "tools/release_manifest.py",
-        "tools/release_sbom.py",
+        "ruff",                      "check",
+        "docs/site",                 "tests/site",
+        "server/tests",              "benchmarks/browser",
+        "tools/release_manifest.py", "tools/release_sbom.py",
     });
     const format_check = uv.run(project, &.{
-        "ruff",                      "format",                "--check",
-        "docs/site",                 "tests/site",            "benchmarks/browser",
-        "tools/release_manifest.py", "tools/release_sbom.py",
+        "ruff",               "format",                    "--check",
+        "docs/site",          "tests/site",                "server/tests",
+        "benchmarks/browser", "tools/release_manifest.py", "tools/release_sbom.py",
     });
     check_step.dependOn(&lint.step);
     check_step.dependOn(&format_check.step);
 
     const format = uv.run(project, &.{
-        "ruff",                  "format",
-        "docs/site",             "tests/site",
-        "benchmarks/browser",    "tools/release_manifest.py",
-        "tools/release_sbom.py",
+        "ruff",                      "format",
+        "docs/site",                 "tests/site",
+        "server/tests",              "benchmarks/browser",
+        "tools/release_manifest.py", "tools/release_sbom.py",
     });
     apply_step.dependOn(&format.step);
     _ = b;

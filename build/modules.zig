@@ -158,6 +158,21 @@ pub fn createShared(
     };
 }
 
+/// The command-line kernel (ZDS 0016): the comptime flag-table machinery
+/// extracted from the CLI, importing only std, published so downstream
+/// front ends can reuse the grammar engine.
+pub fn createZencli(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    return b.addModule("zencli", .{
+        .root_source_file = b.path("cli/zencli/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+}
+
 /// The command-line front end, deliberately outside the umbrella.
 ///
 /// It reaches `std.process` and threaded I/O, neither of which exists on
@@ -172,8 +187,10 @@ pub fn createCli(
     umbrella: *std.Build.Module,
     core: *std.Build.Module,
     build_info: *std.Build.Module,
+    zencli: *std.Build.Module,
+    server: ?*std.Build.Module,
 ) *std.Build.Module {
-    return b.addModule("zenfmt_cli", .{
+    const cli = b.addModule("zenfmt_cli", .{
         .root_source_file = b.path("src/cli.zig"),
         .target = target,
         .optimize = optimize,
@@ -181,8 +198,15 @@ pub fn createCli(
             .{ .name = "zenfmt", .module = umbrella },
             .{ .name = "zenfmt_core", .module = core },
             .{ .name = "zenfmt_build", .module = build_info },
+            .{ .name = "zencli", .module = zencli },
         },
     });
+    // The serve subcommand dispatch (ZDS 0016): present exactly when the
+    // build compiles the server in; the `-Dserver=false` CLI never sees it.
+    if (server) |server_module| {
+        cli.addImport("zenfmt_server", server_module);
+    }
+    return cli;
 }
 
 fn define(

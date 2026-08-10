@@ -20,6 +20,7 @@ const benchmark = @import("build/benchmark.zig");
 const docs = @import("build/docs.zig");
 const wasm = @import("build/wasm.zig");
 const site = @import("build/site.zig");
+const server = @import("build/server.zig");
 
 /// The canonical monorepo version (ZDS 0014): one `build.zig.zon` value
 /// embedded in the CLI, the Python bridge, the browser module, and the
@@ -46,6 +47,14 @@ pub fn build(b: *std.Build) void {
         "Source revision embedded in build artifacts; CI passes the commit SHA",
     ) orelse "unknown";
     build_info.addOption([]const u8, "revision", revision);
+    // ZDS 0016: the serve subcommand and everything HTTP compile in by
+    // default; `-Dserver=false` is the pure converter binary.
+    const server_enabled = b.option(
+        bool,
+        "server",
+        "Compile the zenfmt server and the serve subcommand (default true)",
+    ) orelse true;
+    build_info.addOption(bool, "server", server_enabled);
     const build_info_module = build_info.createModule();
 
     const graph = modules.create(b, target, optimize, build_info_module, true);
@@ -56,6 +65,18 @@ pub fn build(b: *std.Build) void {
         graph.get("zenfmt_core"),
         true,
     );
+    const zencli_module = modules.createZencli(b, target, optimize);
+    const server_modules = server.create(
+        b,
+        target,
+        optimize,
+        server_enabled,
+        graph.umbrella,
+        graph.get("zenfmt_core"),
+        shared.capabilities,
+        build_info_module,
+        zencli_module,
+    );
     const cli_module = modules.createCli(
         b,
         target,
@@ -63,9 +84,11 @@ pub fn build(b: *std.Build) void {
         graph.umbrella,
         graph.get("zenfmt_core"),
         build_info_module,
+        zencli_module,
+        if (server_modules) |sm| sm.server else null,
     );
     const cli = addCli(b, target, optimize, graph, cli_module);
-    addTests(b, target, optimize, test_step, graph);
+    addTests(b, target, optimize, test_step, graph, cli_module, zencli_module);
 
     const bridge = python.addBridge(
         b,
@@ -84,6 +107,18 @@ pub fn build(b: *std.Build) void {
         bridge,
         cli,
         revision,
+    );
+
+    server.addSteps(
+        b,
+        target,
+        optimize,
+        test_step,
+        server_modules,
+        cli,
+        graph.umbrella,
+        graph.get("zenfmt_core"),
+        python_steps.uv,
     );
 
     const wasm_steps = wasm.add(b, optimize, build_info_module, test_step, version);
@@ -172,11 +207,21 @@ fn addTests(
     optimize: std.builtin.OptimizeMode,
     test_step: *std.Build.Step,
     graph: modules.Set,
+    cli_module: *std.Build.Module,
+    zencli_module: *std.Build.Module,
 ) void {
     for (graph.modules) |entry| {
         const unit_tests = b.addTest(.{ .root_module = entry.module });
         test_step.dependOn(&b.addRunArtifact(unit_tests).step);
     }
+
+    // The CLI and zencli modules sit outside the graph (they reach
+    // std.process), so their behavior gates — the ZDS 0016 extraction
+    // contract — are wired explicitly.
+    const cli_tests = b.addTest(.{ .root_module = cli_module });
+    test_step.dependOn(&b.addRunArtifact(cli_tests).step);
+    const zencli_tests = b.addTest(.{ .root_module = zencli_module });
+    test_step.dependOn(&b.addRunArtifact(zencli_tests).step);
 
     const end_to_end_sources = [_][]const u8{
         "tests/conversion.zig",
@@ -220,13 +265,13 @@ fn addTests(
 }
 
 const fmt_paths = [_][]const u8{
-    "build.zig",             "build",
-    "tools",                 "core",
-    "support",               "formats",
-    "src",                   "cli",
-    "tests",                 "examples",
-    "bindings",              "benchmarks/benchmark.zig",
-    "benchmarks/stages.zig",
+    "build.zig",                "build",
+    "tools",                    "core",
+    "support",                  "formats",
+    "src",                      "cli",
+    "server",                   "tests",
+    "examples",                 "bindings",
+    "benchmarks/benchmark.zig", "benchmarks/stages.zig",
 };
 
 fn addFormatting(b: *std.Build, steps: python.Steps) void {
