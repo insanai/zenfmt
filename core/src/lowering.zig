@@ -339,6 +339,13 @@ pub const Plan = struct {
     inline_frames: []InlineFrame,
     block_ancestors: []u32,
     inline_ancestors: []u32,
+    /// Reused proposal scratch for `choose`, allocated once. `choose` runs
+    /// once per non-exact node; a fresh `[max_alternatives_hard]Alternative =
+    /// undefined` per call is a ReleaseSafe fill that scales with node count
+    /// (see the matching hoist in `ast.validate`). One arena buffer, refilled
+    /// by `propose` on each call and read only up to `alternatives.len`,
+    /// removes it. `choose` is not re-entrant, so sharing is sound.
+    alternative_storage: *[max_alternatives_hard]Alternative,
 
     pub fn build(
         arena: std.mem.Allocator,
@@ -390,6 +397,7 @@ pub const Plan = struct {
             .inline_frames = try arena.alloc(InlineFrame, max_depth),
             .block_ancestors = try arena.alloc(u32, max_depth),
             .inline_ancestors = try arena.alloc(u32, max_depth),
+            .alternative_storage = try arena.create([max_alternatives_hard]Alternative),
         };
     }
 
@@ -546,9 +554,8 @@ pub const Plan = struct {
         children_cost: LossCost,
         limits: limits_mod.Limits,
     ) PlanError!LossCost {
-        var storage: [max_alternatives_hard]Alternative = undefined;
         var alternatives: Alternatives = .{
-            .items = &storage,
+            .items = plan.alternative_storage,
             .limit = limits.max_lowering_alternatives,
         };
         assert(!plan.isExact(node));

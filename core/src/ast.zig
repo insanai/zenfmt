@@ -679,21 +679,36 @@ pub const ValidateError = error{InvalidDocument};
 /// every filter stage, in every test, and on every fuzz iteration. A plugin
 /// that produces a structurally impossible tree fails here even when nothing
 /// crashes.
+/// The forest walkers' ancestor stacks, sized to the depth hard cap and owned
+/// by one `validate` call. They are deliberately hoisted here rather than
+/// declared inside `validateBlockForest`/`validateInlineForest`: those run once
+/// per block and once per inline forest, so a fresh `[max_depth_hard_cap]Frame
+/// = undefined` on each call is a ~49 KiB ReleaseSafe fill per node. On a wide
+/// document (a CSV table is one inline forest per cell) that fill dominated the
+/// whole conversion. One filled-once scratch, reused across every node in the
+/// call, removes it. The walkers are not re-entrant, so a single shared pair is
+/// sound.
+const Scratch = struct {
+    blocks: [limits_mod.max_depth_hard_cap]BlockFrame,
+    inlines: [limits_mod.max_depth_hard_cap]InlineFrame,
+};
+
 pub fn validate(doc: *const Document, limits: limits_mod.Limits) ValidateError!void {
     const store = doc.store;
     if (!std.unicode.utf8ValidateSlice(store.text.items)) return error.InvalidDocument;
     if (store.text.items.len > limits.max_decoded_text_bytes) return error.InvalidDocument;
     if (store.blocks.len + store.inlines.len > limits.max_nodes) return error.InvalidDocument;
 
+    var scratch: Scratch = undefined;
     const block_count: u32 = @intCast(store.blocks.len);
     if (doc.body.endRaw() > block_count) return error.InvalidDocument;
-    try validateBlockForest(store, doc.body, limits);
+    try validateBlockForest(store, doc.body, limits, &scratch);
 
     // Every note payload and metadata blocks value names a valid block
     // forest of its own.
     for (store.block_ranges.items) |range| {
         if (range.endRaw() > block_count) return error.InvalidDocument;
-        try validateBlockForest(store, range, limits);
+        try validateBlockForest(store, range, limits, &scratch);
     }
 
     const map_count = store.meta_maps.items.len;
@@ -716,6 +731,7 @@ fn validateBlockForest(
     store: *const Store,
     range: BlockRange,
     limits: limits_mod.Limits,
+    scratch: *Scratch,
 ) ValidateError!void {
     const slice = store.blocks.slice();
     const tags = slice.items(.tag);
@@ -724,7 +740,7 @@ fn validateBlockForest(
     const attrs_column = slice.items(.attrs);
     const inline_ranges = slice.items(.inlines);
 
-    var stack: [limits_mod.max_depth_hard_cap]BlockFrame = undefined;
+    const stack = &scratch.blocks;
     var depth: u32 = 0;
     var cursor = range.startRaw();
     const end = range.endRaw();
@@ -751,6 +767,7 @@ fn validateBlockForest(
             attrs_column[cursor],
             inline_ranges[cursor],
             limits,
+            scratch,
         );
 
         try validateBlockExtension(
@@ -762,7 +779,7 @@ fn validateBlockForest(
         );
 
         try advanceBlock(
-            &stack,
+            stack,
             &depth,
             &cursor,
             tag,
@@ -833,13 +850,14 @@ fn validateBlockNode(
     attrs_index: OptionalAttrsIndex,
     inlines: InlineRange,
     limits: limits_mod.Limits,
+    scratch: *Scratch,
 ) ValidateError!void {
     try validateAttrs(store, attrs_index);
     if (!payload.blockPayloadValid(store, tag, payload_index)) return error.InvalidDocument;
     switch (payload.blockContent(tag)) {
         .inlines => {
             if (inlines.endRaw() > store.inlines.len) return error.InvalidDocument;
-            try validateInlineForest(store, inlines, limits);
+            try validateInlineForest(store, inlines, limits, scratch);
         },
         .blocks, .none => {
             if (!inlines.isEmpty()) return error.InvalidDocument;
@@ -861,6 +879,7 @@ fn validateInlineForest(
     store: *const Store,
     range: InlineRange,
     limits: limits_mod.Limits,
+    scratch: *Scratch,
 ) ValidateError!void {
     const slice = store.inlines.slice();
     const tags = slice.items(.tag);
@@ -868,7 +887,7 @@ fn validateInlineForest(
     const payloads = slice.items(.payload);
     const attrs_column = slice.items(.attrs);
 
-    var stack: [limits_mod.max_depth_hard_cap]InlineFrame = undefined;
+    const stack = &scratch.inlines;
     var depth: u32 = 0;
     var cursor = range.startRaw();
     const end = range.endRaw();
