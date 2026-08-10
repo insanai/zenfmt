@@ -863,23 +863,7 @@ pub fn Bundle(comptime spec: anytype) type {
                 if (from_extension) |by_name| return by_name;
             }
             const sniff_bytes = try inputAllBytes(arena, input, reports);
-            const from_content: ?[]const u8 = switch (sniff(sniff_bytes)) {
-                .docx => "docx",
-                .xlsx => "xlsx",
-                .xlsb => "xlsb",
-                .pptx => "pptx",
-                .odt => "odt",
-                .ods => "ods",
-                .odp => "odp",
-                .epub => "epub",
-                .zip => "docx",
-                .rtf => "rtf",
-                .pdf => "pdf",
-                .doc => "doc",
-                .xls => "xls",
-                .ppt => "ppt",
-                .none => null,
-            };
+            const from_content = sniffFormat(sniff_bytes);
 
             if (from_extension) |by_name| {
                 const by_bytes = from_content orelse return by_name;
@@ -909,6 +893,30 @@ pub fn Bundle(comptime spec: anytype) type {
 }
 
 // --------------------------------------------------- engine mechanics
+
+/// Content sniffing for hosts that receive bare bytes (ZDS 0016, the
+/// server's input-name fallback): the format id detection would infer from
+/// content alone, or null when the bytes resemble nothing. The mapping is
+/// the one detection itself uses, including the bare-ZIP default to `docx`.
+pub fn sniffFormat(bytes: []const u8) ?[]const u8 {
+    return switch (detect.sniff(bytes)) {
+        .docx => "docx",
+        .xlsx => "xlsx",
+        .xlsb => "xlsb",
+        .pptx => "pptx",
+        .odt => "odt",
+        .ods => "ods",
+        .odp => "odp",
+        .epub => "epub",
+        .zip => "docx",
+        .rtf => "rtf",
+        .pdf => "pdf",
+        .doc => "doc",
+        .xls => "xls",
+        .ppt => "ppt",
+        .none => null,
+    };
+}
 
 pub const ResolvedInput = detect.ResolvedInput;
 const resolveInput = detect.resolveInput;

@@ -17,20 +17,16 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
 const zenfmt = @import("zenfmt");
+const zencli = @import("zencli");
 
 const version_text = "zenfmt " ++ @import("zenfmt_build").version ++ "\n";
 
-const exit_ok: u8 = 0;
-const exit_conversion: u8 = 1;
-const exit_usage: u8 = 2;
-const exit_limit: u8 = 3;
+const exit_ok = zencli.exit_ok;
+const exit_conversion = zencli.exit_conversion;
+const exit_usage = zencli.exit_usage;
+const exit_limit = zencli.exit_limit;
 
-const Flag = struct {
-    long: []const u8,
-    short: ?[]const u8 = null,
-    value: ?[]const u8 = null,
-    help: []const u8,
-};
+const Flag = zencli.Flag;
 
 /// One table drives parsing and `--help`; they cannot drift apart.
 const flags = [_]Flag{
@@ -52,35 +48,29 @@ const flags = [_]Flag{
     .{ .long = "--version", .short = "-V", .help = "Show the version." },
 };
 
-const help_text = blk: {
-    var text: []const u8 =
-        \\zenfmt converts documents. The common cases:
-        \\
-        \\    zenfmt report.docx                 # report.md + report.md.zenfmt.json
-        \\    zenfmt report.docx -o notes.md     # notes.md + notes.md.zenfmt.json
-        \\    zenfmt report.docx --stdout        # document bytes only on stdout
-        \\
-        \\usage: zenfmt [options] INPUT
-        \\
-        \\INPUT is a file path, or `-` for stdin (requires --from and either
-        \\-o PATH or --stdout).
-        \\
-        \\
-    ;
-    for (flags) |flag| {
-        var left: []const u8 = "  ";
-        if (flag.short) |short| {
-            left = left ++ short ++ ", ";
-        } else {
-            left = left ++ "    ";
-        }
-        left = left ++ flag.long;
-        if (flag.value) |value| left = left ++ " " ++ value;
-        while (left.len < 28) left = left ++ " ";
-        text = text ++ left ++ flag.help ++ "\n";
-    }
-    break :blk text;
-};
+const help_preamble =
+    \\zenfmt converts documents. The common cases:
+    \\
+    \\    zenfmt report.docx                 # report.md + report.md.zenfmt.json
+    \\    zenfmt report.docx -o notes.md     # notes.md + notes.md.zenfmt.json
+    \\    zenfmt report.docx --stdout        # document bytes only on stdout
+    \\
+    \\usage: zenfmt [options] INPUT
+    \\
+    \\INPUT is a file path, or `-` for stdin (requires --from and either
+    \\-o PATH or --stdout).
+    \\
+    \\
+;
+
+/// True when the serve subcommand is compiled in (`-Dserver`, ZDS 0016).
+const server_enabled = @import("zenfmt_build").server;
+
+const help_text = zencli.helpText(help_preamble, &flags) ++
+    (if (server_enabled)
+        "\nzenfmt serve runs the document server; see `zenfmt serve --help`.\n"
+    else
+        "");
 
 const ReportForm = enum { text, json };
 
@@ -142,6 +132,23 @@ fn run(
     defer iterator.deinit();
     while (iterator.next()) |arg| try argv.append(arena, try arena.dupe(u8, arg));
 
+    // The subcommand rule (ZDS 0016): a first positional argument of exactly
+    // `serve` selects the server; a file named serve is written `./serve`.
+    if (comptime server_enabled) {
+        if (CliParser.firstPositional(argv.items)) |positional| {
+            if (std.mem.eql(u8, positional.arg, "serve")) {
+                const server = @import("zenfmt_server");
+                var serve_argv: std.ArrayList([]const u8) = .empty;
+                try serve_argv.ensureTotalCapacity(arena, argv.items.len - 1);
+                for (argv.items, 0..) |arg, index| {
+                    if (index == positional.index) continue;
+                    serve_argv.appendAssumeCapacity(arg);
+                }
+                return server.serve_command.main(gpa, io, serve_argv.items, out, err_out);
+            }
+        }
+    }
+
     var cli: Cli = .{};
     var parse_error: ?UsageError = null;
     parseArgs(argv.items, &cli, &parse_error);
@@ -194,11 +201,7 @@ fn run(
     }
 
     if (conversion.status == .failed) {
-        return switch (conversion.exit_class) {
-            .usage => exit_usage,
-            .limit => exit_limit,
-            .conversion => exit_conversion,
-        };
+        return zencli.classExitCode(conversion.exit_class);
     }
 
     if (cli.metadata_out) |path| {
@@ -214,69 +217,37 @@ fn run(
 
 // -------------------------------------------------------------- parsing
 
-const UsageError = struct {
-    message: []const u8,
-    /// Index into argv of the offending argument, when one exists.
-    highlight: ?u32 = null,
+const UsageError = zencli.UsageError;
+
+const CliParser = zencli.Parser(&flags);
+
+/// The zencli sink for the conversion grammar: flags apply through
+/// `applyFlag`, and the positional contract is a single input.
+const FlagSink = struct {
+    cli: *Cli,
+
+    pub fn applyFlag(sink: *FlagSink, name: []const u8, value: ?[]const u8) bool {
+        return applyCliFlag(sink.cli, name, value);
+    }
+
+    pub fn positional(sink: *FlagSink, arg: []const u8) bool {
+        if (sink.cli.input != null) return false;
+        sink.cli.input = arg;
+        return true;
+    }
 };
 
 fn parseArgs(argv: []const []const u8, cli: *Cli, parse_error: *?UsageError) void {
-    var i: usize = 1;
-    while (i < argv.len) : (i += 1) {
-        const arg = argv[i];
-        if (arg.len == 0) continue;
-        if (arg[0] != '-' or std.mem.eql(u8, arg, "-")) {
-            if (cli.input != null) {
-                parse_error.* = .{
-                    .message = "I can convert one input per invocation, and this is a second one.",
-                    .highlight = @intCast(i),
-                };
-                return;
-            }
-            cli.input = arg;
-            continue;
-        }
-
-        // `--flag=value` splits into name and inline value.
-        const equals = std.mem.indexOfScalar(u8, arg, '=');
-        const name = if (equals) |index| arg[0..index] else arg;
-        const inline_value = if (equals) |index| arg[index + 1 ..] else null;
-
-        const value: ?[]const u8, const consumed_next: bool = blk: {
-            // A flag that takes no value still accepts an inline one when
-            // it is graded, like `--strict=exact`; `applyFlag` decides.
-            if (!flagTakesValue(name)) break :blk .{ inline_value, false };
-            if (inline_value) |v| break :blk .{ v, false };
-            if (i + 1 < argv.len) break :blk .{ argv[i + 1], true };
-            parse_error.* = .{
-                .message = "This option needs a value and none followed it.",
-                .highlight = @intCast(i),
-            };
-            return;
-        };
-
-        if (!applyFlag(cli, name, value)) {
-            parse_error.* = .{
-                .message = "I do not recognize this option.",
-                .highlight = @intCast(i),
-            };
-            return;
-        }
-        if (consumed_next) i += 1;
-    }
+    var sink: FlagSink = .{ .cli = cli };
+    CliParser.parse(
+        argv,
+        &sink,
+        "I can convert one input per invocation, and this is a second one.",
+        parse_error,
+    );
 }
 
-fn flagTakesValue(name: []const u8) bool {
-    inline for (flags) |flag| {
-        if (flag.value != null) {
-            if (std.mem.eql(u8, name, flag.long)) return true;
-            if (flag.short) |short| if (std.mem.eql(u8, name, short)) return true;
-        }
-    }
-    return false;
-}
-
-fn applyFlag(cli: *Cli, name: []const u8, value: ?[]const u8) bool {
+fn applyCliFlag(cli: *Cli, name: []const u8, value: ?[]const u8) bool {
     if (matches(name, "--from", "-f")) {
         cli.from = value.?;
     } else if (matches(name, "--to", "-t")) {
@@ -533,4 +504,271 @@ fn renderReportsJson(
         try err_out.writeAll(bytes);
         try err_out.writeAll("\n");
     }
+}
+
+// ---------------------------------------------------------------- tests
+//
+// The CLI behavior gate (ZDS 0016, The zencli Library): these tests pin the
+// observable command-line contract — the generated help text, the parse
+// grammar, the exit codes, and the usage diagnostic — so the zencli
+// extraction is a refactor gated by byte identity, not a review discussion.
+
+const testing = std.testing;
+
+/// The byte-exact `--help` output.
+const help_golden =
+    \\zenfmt converts documents. The common cases:
+    \\
+    \\    zenfmt report.docx                 # report.md + report.md.zenfmt.json
+    \\    zenfmt report.docx -o notes.md     # notes.md + notes.md.zenfmt.json
+    \\    zenfmt report.docx --stdout        # document bytes only on stdout
+    \\
+    \\usage: zenfmt [options] INPUT
+    \\
+    \\INPUT is a file path, or `-` for stdin (requires --from and either
+    \\-o PATH or --stdout).
+    \\
+    \\  -f, --from FORMAT         Input format. Default: from the extension, then from content.
+    \\  -t, --to FORMAT           Output format. Default: markdown.
+    \\  -o, --output PATH         Output file. Default: INPUT with the new extension.
+    \\      --stdout              Write the document to stdout instead of a file.
+    \\      --metadata-out PATH   Persist the manifest produced with --stdout.
+    \\      --overwrite           Replace existing artifact and manifest paths.
+    \\      --preserve-facets     Serialize full facet rows into the manifest.
+    \\      --filters             Run the pipeline compiled into this binary.
+    \\      --list-formats        Print the registry's readers and writers.
+    \\      --list-filters        Print the filters compiled into this binary.
+    \\      --strict              Refuse declared loss; grades: content (default), structure, exact.
+    \\      --quiet               Suppress notes.
+    \\      --reports FORM        text (default) or json.
+    \\      --limit NAME=VALUE    Override one resource limit.
+    \\  -h, --help                Show this help.
+    \\  -V, --version             Show the version.
+    \\
+;
+
+test "help text matches the golden snapshot" {
+    const expected = help_golden ++ (if (server_enabled)
+        "\nzenfmt serve runs the document server; see `zenfmt serve --help`.\n"
+    else
+        "");
+    try testing.expectEqualStrings(expected, help_text);
+}
+
+test "exit codes are the published contract" {
+    try testing.expectEqual(@as(u8, 0), exit_ok);
+    try testing.expectEqual(@as(u8, 1), exit_conversion);
+    try testing.expectEqual(@as(u8, 2), exit_usage);
+    try testing.expectEqual(@as(u8, 3), exit_limit);
+}
+
+const Parsed = struct { cli: Cli, err: ?UsageError };
+
+fn testParse(argv: []const []const u8) Parsed {
+    var cli: Cli = .{};
+    var parse_error: ?UsageError = null;
+    parseArgs(argv, &cli, &parse_error);
+    return .{ .cli = cli, .err = parse_error };
+}
+
+test "parse: defaults with a single input" {
+    const parsed = testParse(&.{ "zenfmt", "in.docx" });
+    try testing.expectEqual(@as(?UsageError, null), parsed.err);
+    try testing.expectEqualStrings("in.docx", parsed.cli.input.?);
+    try testing.expectEqual(zenfmt.Strictness.off, parsed.cli.strict);
+    try testing.expectEqual(ReportForm.text, parsed.cli.reports_form);
+    try testing.expect(!parsed.cli.quiet);
+    try testing.expect(!parsed.cli.to_stdout);
+    try testing.expectEqual(@as(?[]const u8, null), parsed.cli.from);
+    try testing.expectEqual(@as(?[]const u8, null), parsed.cli.to);
+}
+
+test "parse: inline and following values are equivalent" {
+    const parsed = testParse(&.{ "zenfmt", "--from=docx", "--to", "markdown", "doc.bin" });
+    try testing.expectEqual(@as(?UsageError, null), parsed.err);
+    try testing.expectEqualStrings("docx", parsed.cli.from.?);
+    try testing.expectEqualStrings("markdown", parsed.cli.to.?);
+    try testing.expectEqualStrings("doc.bin", parsed.cli.input.?);
+}
+
+test "parse: short flags alias their long spellings" {
+    const parsed = testParse(&.{ "zenfmt", "-f", "docx", "-t", "markdown", "-o", "out.md", "x" });
+    try testing.expectEqual(@as(?UsageError, null), parsed.err);
+    try testing.expectEqualStrings("docx", parsed.cli.from.?);
+    try testing.expectEqualStrings("markdown", parsed.cli.to.?);
+    try testing.expectEqualStrings("out.md", parsed.cli.output.?);
+    try testing.expectEqualStrings("x", parsed.cli.input.?);
+}
+
+test "parse: bare --strict grades to content and never consumes the next argument" {
+    const bare = testParse(&.{ "zenfmt", "--strict", "in.docx" });
+    try testing.expectEqual(@as(?UsageError, null), bare.err);
+    try testing.expectEqual(zenfmt.Strictness.content, bare.cli.strict);
+    try testing.expectEqualStrings("in.docx", bare.cli.input.?);
+
+    const graded = testParse(&.{ "zenfmt", "--strict=exact", "in.docx" });
+    try testing.expectEqual(zenfmt.Strictness.exact, graded.cli.strict);
+
+    const structure = testParse(&.{ "zenfmt", "--strict=structure", "in.docx" });
+    try testing.expectEqual(zenfmt.Strictness.structure, structure.cli.strict);
+
+    const bad = testParse(&.{ "zenfmt", "--strict=bogus", "in.docx" });
+    try testing.expectEqualStrings("I do not recognize this option.", bad.err.?.message);
+    try testing.expectEqual(@as(?u32, 1), bad.err.?.highlight);
+}
+
+test "parse: boolean flags reject inline values" {
+    const quiet = testParse(&.{ "zenfmt", "--quiet=yes", "in.docx" });
+    try testing.expectEqualStrings("I do not recognize this option.", quiet.err.?.message);
+
+    const facets = testParse(&.{ "zenfmt", "--preserve-facets=1", "in.docx" });
+    try testing.expectEqualStrings("I do not recognize this option.", facets.err.?.message);
+}
+
+test "parse: unknown option is highlighted" {
+    const parsed = testParse(&.{ "zenfmt", "--nope", "in.docx" });
+    try testing.expectEqualStrings("I do not recognize this option.", parsed.err.?.message);
+    try testing.expectEqual(@as(?u32, 1), parsed.err.?.highlight);
+}
+
+test "parse: a value flag at the end of argv is a usage error" {
+    const parsed = testParse(&.{ "zenfmt", "--from" });
+    try testing.expectEqualStrings(
+        "This option needs a value and none followed it.",
+        parsed.err.?.message,
+    );
+    try testing.expectEqual(@as(?u32, 1), parsed.err.?.highlight);
+}
+
+test "parse: a second positional is refused" {
+    const parsed = testParse(&.{ "zenfmt", "a.docx", "b.docx" });
+    try testing.expectEqualStrings(
+        "I can convert one input per invocation, and this is a second one.",
+        parsed.err.?.message,
+    );
+    try testing.expectEqual(@as(?u32, 2), parsed.err.?.highlight);
+}
+
+test "parse: --limit overrides one limit and refuses bad ones" {
+    const inline_form = testParse(&.{ "zenfmt", "--limit=max_depth=64", "in.docx" });
+    try testing.expectEqual(@as(?UsageError, null), inline_form.err);
+    try testing.expectEqual(@as(u32, 64), inline_form.cli.limits.max_depth);
+
+    const following = testParse(&.{ "zenfmt", "--limit", "max_depth=64", "in.docx" });
+    try testing.expectEqual(@as(u32, 64), following.cli.limits.max_depth);
+
+    const zero = testParse(&.{ "zenfmt", "--limit=max_depth=0", "in.docx" });
+    try testing.expectEqualStrings("I do not recognize this option.", zero.err.?.message);
+
+    const unknown = testParse(&.{ "zenfmt", "--limit=nope=1", "in.docx" });
+    try testing.expectEqualStrings("I do not recognize this option.", unknown.err.?.message);
+}
+
+test "parse: --reports accepts text and json only" {
+    const json_form = testParse(&.{ "zenfmt", "--reports", "json", "in.docx" });
+    try testing.expectEqual(ReportForm.json, json_form.cli.reports_form);
+
+    const text_form = testParse(&.{ "zenfmt", "--reports=text", "in.docx" });
+    try testing.expectEqual(ReportForm.text, text_form.cli.reports_form);
+
+    const bad = testParse(&.{ "zenfmt", "--reports=xml", "in.docx" });
+    try testing.expectEqualStrings("I do not recognize this option.", bad.err.?.message);
+}
+
+test "parse: `-` is the stdin positional and empty arguments are skipped" {
+    const stdin = testParse(&.{ "zenfmt", "-" });
+    try testing.expectEqual(@as(?UsageError, null), stdin.err);
+    try testing.expectEqualStrings("-", stdin.cli.input.?);
+
+    const empty = testParse(&.{ "zenfmt", "", "in.docx" });
+    try testing.expectEqualStrings("in.docx", empty.cli.input.?);
+}
+
+test "parse: help and version flags are recognized" {
+    try testing.expect(testParse(&.{ "zenfmt", "--help" }).cli.show_help);
+    try testing.expect(testParse(&.{ "zenfmt", "-h" }).cli.show_help);
+    try testing.expect(testParse(&.{ "zenfmt", "--version" }).cli.show_version);
+    try testing.expect(testParse(&.{ "zenfmt", "-V" }).cli.show_version);
+}
+
+fn testValidateMessage(cli: *Cli) []const u8 {
+    var usage_error: ?UsageError = null;
+    const validated = validate(cli, &usage_error);
+    testing.expect(validated == null) catch unreachable;
+    return usage_error.?.message;
+}
+
+test "validate: the five usage rules" {
+    var missing: Cli = .{};
+    try testing.expect(std.mem.startsWith(
+        u8,
+        testValidateMessage(&missing),
+        "I need an input file to convert.",
+    ));
+
+    var stdin_from: Cli = .{ .input = "-" };
+    try testing.expect(std.mem.startsWith(
+        u8,
+        testValidateMessage(&stdin_from),
+        "Reading from stdin needs --from,",
+    ));
+
+    var stdin_out: Cli = .{ .input = "-", .from = "docx" };
+    try testing.expect(std.mem.startsWith(
+        u8,
+        testValidateMessage(&stdin_out),
+        "Reading from stdin needs an output:",
+    ));
+
+    var metadata: Cli = .{ .input = "a.docx", .metadata_out = "m.json" };
+    try testing.expect(std.mem.startsWith(
+        u8,
+        testValidateMessage(&metadata),
+        "--metadata-out only applies with --stdout;",
+    ));
+
+    var conflict: Cli = .{ .input = "a.docx", .to_stdout = true, .output = "o.md" };
+    try testing.expect(std.mem.startsWith(
+        u8,
+        testValidateMessage(&conflict),
+        "--stdout and -o conflict;",
+    ));
+}
+
+test "validate: a plain path and stdin both pass" {
+    var usage_error: ?UsageError = null;
+    var path: Cli = .{ .input = "a.docx" };
+    const validated = validate(&path, &usage_error).?;
+    try testing.expectEqualStrings("a.docx", validated.input);
+    try testing.expect(!validated.stdin);
+
+    var stdin: Cli = .{ .input = "-", .from = "docx", .to_stdout = true };
+    try testing.expect(validate(&stdin, &usage_error).?.stdin);
+}
+
+test "derived output path replaces the extension in place" {
+    const replaced = try derivedOutputPath(testing.allocator, "dir/report.docx", "md");
+    defer testing.allocator.free(replaced);
+    try testing.expectEqualStrings("dir/report.md", replaced);
+
+    const gained = try derivedOutputPath(testing.allocator, "notes", "md");
+    defer testing.allocator.free(gained);
+    try testing.expectEqualStrings("notes.md", gained);
+}
+
+test "usage error renders the Elm-style report" {
+    var buffer: [4096]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    const argv = [_][]const u8{ "zenfmt", "--nope" };
+    try renderUsageError(
+        testing.allocator,
+        .{ .message = "I do not recognize this option.", .highlight = 1 },
+        &argv,
+        &writer,
+    );
+    const text = writer.buffered();
+    try testing.expect(std.mem.indexOf(u8, text, "I CANNOT UNDERSTAND THIS COMMAND") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "I do not recognize this option.") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "zenfmt --help") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "Nothing was converted.") != null);
 }
