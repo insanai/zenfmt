@@ -38,9 +38,10 @@ jobs:
           # documents carry the revision's date and two builds of the same
           # revision are byte-identical.
           fetch-depth: 0
-      - uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@v2.2.1
         with:
           version: ${{ env.ZIG_VERSION }}
+          use-cache: false
       - uses: typst-community/setup-typst@v5
         with:
           typst-version: ${{ env.TYPST_VERSION }}
