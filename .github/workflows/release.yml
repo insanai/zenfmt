@@ -306,7 +306,10 @@ jobs:
   publish-pypi:
     name: Publish Python artifacts to PyPI
     if: ${{ !contains(github.ref_name, '-') }}
-    needs: matrix
+    needs:
+      - matrix
+      - test-cli
+      - verify-wasm
     runs-on: ubuntu-latest
     environment:
       name: pypi

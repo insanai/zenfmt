@@ -623,13 +623,15 @@ test "secure login rate limit answers with a retry hint" {
     var secure = try SecureHarness.start();
     defer secure.stop();
 
+    // Admission happens before JSON parsing. Malformed credentials exercise
+    // the same bucket without making the test depend on Argon2 timing.
     var attempt: usize = 0;
     while (attempt < 10) : (attempt += 1) {
         const response = try secure.harness.request(
             arena,
             .POST,
             "/api/v1/session",
-            "{\"name\":\"missing\",\"password\":\"wrong\"}",
+            "{",
             &.{.{ .name = "content-type", .value = "application/json" }},
         );
         try testing.expectEqual(@as(u16, 401), response.status);
@@ -638,7 +640,7 @@ test "secure login rate limit answers with a retry hint" {
         arena,
         .POST,
         "/api/v1/session",
-        "{\"name\":\"missing\",\"password\":\"wrong\"}",
+        "{",
         &.{.{ .name = "content-type", .value = "application/json" }},
     );
     try testing.expectEqual(@as(u16, 429), limited.status);

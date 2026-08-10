@@ -93,8 +93,9 @@ pub fn add(
     const native_tests = b.addTest(.{
         .root_module = bindingModule(b, b.graph.host, .Debug, build_info),
     });
-    test_step.dependOn(&b.addRunArtifact(native_tests).step);
-    check_step.dependOn(test_step);
+    const run_native_tests = b.addRunArtifact(native_tests);
+    test_step.dependOn(&run_native_tests.step);
+    check_step.dependOn(&run_native_tests.step);
 
     return .{
         .build = build_step,
