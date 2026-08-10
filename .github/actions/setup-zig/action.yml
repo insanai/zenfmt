@@ -1,0 +1,21 @@
+name: Set up Zig
+description: Install Zig with an isolated global package cache.
+
+inputs:
+  version:
+    description: The exact Zig version to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: mlugg/setup-zig@v2.2.1
+      with:
+        version: ${{ inputs.version }}
+        use-cache: false
+    - name: Separate the package and build caches
+      shell: bash
+      run: |
+        package_cache="$RUNNER_TEMP/zenfmt-zig-global-cache"
+        mkdir -p "$package_cache"
+        echo "ZIG_GLOBAL_CACHE_DIR=$package_cache" >> "$GITHUB_ENV"
