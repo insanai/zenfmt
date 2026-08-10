@@ -7,86 +7,86 @@ format; `failed` means it exited non-zero.
 
 | file | size | tool | wall ms | cpu ms | peak RSS MB |
 |---|---:|---|---:|---:|---:|
-| article.pdf | 18.369140625KiB | zenfmt | 5.3 | 4.4 | 3.6 |
+| article.pdf | 18.369140625KiB | zenfmt | 3.3 | 2.7 | 3.6 |
 | | | docling | unsupported | | |
-| | | anydoc | 67.7 | 68.2 | 49.7 |
+| | | anydoc | 41.7 | 42.5 | 49.7 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 94.4 | 92.5 | 31.5 |
-| book.epub | 545.4560546875KiB | zenfmt | 64.0 | 62.5 | 23.1 |
+| | | zenfmt-python-wheel | 58.9 | 57.4 | 31.3 |
+| book.epub | 545.4560546875KiB | zenfmt | 39.9 | 38.9 | 23.1 |
 | | | docling | unsupported | | |
-| | | anydoc | 97.9 | 97.5 | 54.1 |
-| | | pandoc | 2001.1 | 1991.0 | 269.0 |
-| | | zenfmt-python-wheel | 156.1 | 154.3 | 54.1 |
-| data.csv | 618.5078125KiB | zenfmt | 86.9 | 84.9 | 41.2 |
-| | | docling | 4943.5 | 4928.8 | 565.2 |
-| | | anydoc | 130.8 | 130.2 | 67.9 |
-| | | pandoc | 1280.3 | 1270.0 | 290.3 |
-| | | zenfmt-python-wheel | 177.7 | 175.9 | 73.3 |
-| deck.ppt | 2.4599609375MiB | zenfmt | 12.5 | 11.4 | 7.5 |
+| | | anydoc | 61.1 | 60.5 | 54.1 |
+| | | pandoc | 1308.0 | 1294.0 | 269.1 |
+| | | zenfmt-python-wheel | 97.5 | 96.1 | 54.2 |
+| data.csv | 618.5078125KiB | zenfmt | 53.9 | 52.7 | 41.2 |
+| | | docling | 3214.9 | 3204.7 | 565.3 |
+| | | anydoc | 84.4 | 83.7 | 71.0 |
+| | | pandoc | 824.2 | 813.4 | 290.3 |
+| | | zenfmt-python-wheel | 112.1 | 110.7 | 73.2 |
+| deck.ppt | 2.4599609375MiB | zenfmt | 8.1 | 7.4 | 7.6 |
 | | | docling | unsupported | | |
-| | | anydoc | 66.1 | 66.0 | 53.9 |
+| | | anydoc | 42.0 | 41.5 | 53.9 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 101.7 | 99.8 | 35.3 |
-| grid.xlsb | 8.9462890625KiB | zenfmt | 4.6 | 3.7 | 3.0 |
+| | | zenfmt-python-wheel | 63.7 | 62.2 | 35.3 |
+| grid.xlsb | 8.9462890625KiB | zenfmt | 3.0 | 2.4 | 3.0 |
 | | | docling | unsupported | | |
 | | | anydoc | failed | | |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 92.0 | 90.3 | 31.0 |
-| letter.odt | 4.1591796875KiB | zenfmt | 4.7 | 3.8 | 3.1 |
+| | | zenfmt-python-wheel | 58.8 | 57.4 | 30.8 |
+| letter.odt | 4.1591796875KiB | zenfmt | 2.9 | 2.3 | 3.1 |
 | | | docling | unsupported | | |
-| | | anydoc | 63.1 | 62.8 | 47.1 |
-| | | pandoc | 40.4 | 27.3 | 41.6 |
-| | | zenfmt-python-wheel | 92.7 | 90.9 | 31.0 |
-| memo.doc | 32KiB | zenfmt | 4.4 | 3.5 | 3.0 |
+| | | anydoc | 39.4 | 39.0 | 47.0 |
+| | | pandoc | 32.5 | 18.8 | 41.6 |
+| | | zenfmt-python-wheel | 58.6 | 57.1 | 30.9 |
+| memo.doc | 32KiB | zenfmt | 2.9 | 2.3 | 3.0 |
 | | | docling | unsupported | | |
-| | | anydoc | 62.2 | 61.9 | 47.3 |
+| | | anydoc | 40.0 | 39.5 | 47.2 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 92.0 | 90.3 | 30.8 |
-| notes.rtf | 32.376953125KiB | zenfmt | 4.9 | 4.0 | 3.1 |
+| | | zenfmt-python-wheel | 58.8 | 57.3 | 31.0 |
+| notes.rtf | 32.376953125KiB | zenfmt | 3.4 | 2.8 | 3.1 |
 | | | docling | unsupported | | |
-| | | anydoc | 65.6 | 65.3 | 46.4 |
-| | | pandoc | 65.9 | 47.9 | 104.5 |
-| | | zenfmt-python-wheel | 93.0 | 91.2 | 31.0 |
-| page.html | 832.595703125KiB | zenfmt | 57.9 | 56.8 | 23.3 |
-| | | docling | 4832.2 | 4818.2 | 391.9 |
+| | | anydoc | 41.1 | 40.7 | 46.4 |
+| | | pandoc | 43.0 | 32.5 | 104.5 |
+| | | zenfmt-python-wheel | 58.6 | 57.1 | 30.9 |
+| page.html | 832.595703125KiB | zenfmt | 36.4 | 35.4 | 23.4 |
+| | | docling | 3091.7 | 3081.5 | 392.0 |
 | | | anydoc | unsupported | | |
-| | | pandoc | 1991.8 | 1975.9 | 426.5 |
-| | | zenfmt-python-wheel | 147.2 | 145.4 | 53.9 |
-| report.docx | 33.5693359375KiB | zenfmt | 7.2 | 6.3 | 3.4 |
-| | | docling | 3807.7 | 3797.5 | 373.4 |
-| | | anydoc | 66.9 | 66.5 | 48.0 |
-| | | pandoc | 66.1 | 59.4 | 108.4 |
-| | | zenfmt-python-wheel | 95.6 | 93.7 | 31.2 |
-| sheet.ods | 6.107421875KiB | zenfmt | 5.1 | 4.1 | 3.1 |
+| | | pandoc | 1287.6 | 1274.2 | 426.5 |
+| | | zenfmt-python-wheel | 93.1 | 91.6 | 53.9 |
+| report.docx | 33.5693359375KiB | zenfmt | 4.3 | 3.8 | 3.4 |
+| | | docling | 2473.7 | 2463.5 | 373.3 |
+| | | anydoc | 41.2 | 40.7 | 48.0 |
+| | | pandoc | 45.0 | 39.6 | 108.4 |
+| | | zenfmt-python-wheel | 60.2 | 58.8 | 31.2 |
+| sheet.ods | 6.107421875KiB | zenfmt | 3.2 | 2.6 | 3.1 |
 | | | docling | unsupported | | |
-| | | anydoc | 65.8 | 65.6 | 47.5 |
+| | | anydoc | 40.0 | 39.5 | 47.4 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 94.9 | 93.0 | 31.0 |
-| sheet.xlsx | 12.935546875KiB | zenfmt | 6.3 | 5.3 | 3.2 |
-| | | docling | 3725.9 | 3717.3 | 370.0 |
-| | | anydoc | 64.5 | 64.1 | 47.3 |
+| | | zenfmt-python-wheel | 58.3 | 56.9 | 30.9 |
+| sheet.xlsx | 12.935546875KiB | zenfmt | 3.8 | 3.2 | 3.2 |
+| | | docling | 2432.4 | 2422.4 | 370.0 |
+| | | anydoc | 40.3 | 39.7 | 47.3 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 94.2 | 92.4 | 31.0 |
-| slides.odp | 466.00390625KiB | zenfmt | 25.5 | 24.4 | 4.4 |
+| | | zenfmt-python-wheel | 59.9 | 58.4 | 31.0 |
+| slides.odp | 466.00390625KiB | zenfmt | 15.7 | 15.0 | 4.4 |
 | | | docling | unsupported | | |
-| | | anydoc | 76.5 | 76.2 | 54.4 |
+| | | anydoc | 48.6 | 48.0 | 54.4 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 112.7 | 110.9 | 32.3 |
-| slides.pptx | 633.080078125KiB | zenfmt | 30.8 | 29.7 | 4.4 |
-| | | docling | 4254.6 | 4242.2 | 379.2 |
-| | | anydoc | 75.0 | 74.7 | 49.2 |
+| | | zenfmt-python-wheel | 71.1 | 69.6 | 32.3 |
+| slides.pptx | 633.080078125KiB | zenfmt | 19.1 | 18.3 | 4.4 |
+| | | docling | 2742.7 | 2736.1 | 379.1 |
+| | | anydoc | 46.6 | 46.1 | 49.3 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 119.1 | 117.2 | 32.3 |
-| spec.pdf | 12.953125KiB | zenfmt | 4.5 | 3.6 | 3.2 |
+| | | zenfmt-python-wheel | 74.7 | 73.3 | 32.3 |
+| spec.pdf | 12.953125KiB | zenfmt | 2.8 | 2.3 | 3.2 |
 | | | docling | unsupported | | |
-| | | anydoc | 65.7 | 66.6 | 48.9 |
+| | | anydoc | 40.8 | 41.4 | 48.9 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 92.3 | 90.4 | 31.1 |
-| table.xls | 13KiB | zenfmt | 4.8 | 3.9 | 3.1 |
+| | | zenfmt-python-wheel | 58.4 | 57.0 | 31.0 |
+| table.xls | 13KiB | zenfmt | 3.0 | 2.4 | 3.1 |
 | | | docling | unsupported | | |
-| | | anydoc | 62.9 | 62.6 | 47.0 |
+| | | anydoc | 40.5 | 40.0 | 47.0 |
 | | | pandoc | unsupported | | |
-| | | zenfmt-python-wheel | 93.0 | 91.2 | 31.1 |
+| | | zenfmt-python-wheel | 58.7 | 57.3 | 31.0 |
 
 ## Support matrix
 
@@ -102,8 +102,8 @@ format; `failed` means it exited non-zero.
 
 | pair | files | wall | cpu | peak RSS |
 |---|---:|---:|---:|---:|
-| zenfmt vs docling | 5 | 182.2x | 196.3x | 47.5x |
-| zenfmt vs anydoc | 14 | 7.0x | 8.0x | 10.1x |
-| zenfmt vs pandoc | 6 | 15.9x | 15.3x | 16.6x |
+| zenfmt vs docling | 5 | 192.1x | 206.5x | 47.5x |
+| zenfmt vs anydoc | 14 | 7.0x | 7.9x | 10.2x |
+| zenfmt vs pandoc | 6 | 17.1x | 16.1x | 16.6x |
 
 Ratios are the other tool's median divided by zenfmt's: above 1.0 means zenfmt is faster or smaller on the shared files.

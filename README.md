@@ -229,9 +229,9 @@ comparison tool by zenfmt over files both tools converted successfully.
 
 | Native CLI comparison | Shared files | Speed | CPU use | Peak memory |
 |---|---:|---:|---:|---:|
-| AnyDoc / zenfmt | 14 | 7.0x | 8.0x | 10.1x |
-| Pandoc / zenfmt | 6 | 15.9x | 15.3x | 16.6x |
-| Docling parser only / zenfmt | 5 | 182.2x | 196.3x | 47.5x |
+| AnyDoc / zenfmt | 14 | 7.0x | 7.9x | 10.2x |
+| Pandoc / zenfmt | 6 | 17.1x | 16.1x | 16.6x |
+| Docling parser only / zenfmt | 5 | 192.1x | 206.4x | 47.5x |
 
 These are geometric means from one modest Apple-silicon machine and this
 small fixed corpus. They are useful reference values, not quality scores or a
@@ -240,7 +240,11 @@ ASR, layout models, table models, enrichment, and accelerators are disabled.
 
 The long-running server benchmark follows the native CLI benchmark and is
 kept separate. It compares warm HTTP conversion, sampled memory, startup, and
-short throughput runs with Apache Tika Server on the same host and corpus.
+short throughput runs with Apache Tika Server on the same host and corpus. In
+this run, Tika used 32.3x the warm latency and 36.6x the sampled peak memory by
+the same ratio direction. At one client, zenfmt recorded 555.2 documents per
+second and Tika recorded 4.4. These server values describe this setup rather
+than every deployment.
 
 `zig build benchmark` measures zenfmt, [Docling](https://docling-project.github.io/docling/),
 [AnyDoc](https://github.com/firecrawl/anydoc), and

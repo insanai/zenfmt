@@ -2,18 +2,18 @@
   "aggregates": {
     "browser": {
       "artifact": {
-        "artifact_sha256": "d8175bfc23d789356a02d631006bb10f0b08d7121705fa226b92ab65de2fd7ae",
-        "gzip_bytes": 561910,
+        "artifact_sha256": "ea5baedb270e0affa899ab5e8e1f589c64b936cb6d604f4b69fcdd265f4f0f1d",
+        "gzip_bytes": 562110,
         "name": "zenfmt",
         "optimization": "ReleaseSafe",
-        "raw_bytes": 1730054,
+        "raw_bytes": 1730161,
         "target": "wasm32-freestanding"
       },
       "cold": {
-        "compile_ms": 4.199999988079071,
-        "fetch_ms": 8.199999988079071,
-        "first_ready_ms": 21.399999976158142,
-        "instantiate_ms": 9
+        "compile_ms": 4.399999976158142,
+        "fetch_ms": 6.100000023841858,
+        "first_ready_ms": 17.399999976158142,
+        "instantiate_ms": 6.899999976158142
       },
       "competitors": [
         {
@@ -34,30 +34,47 @@
           "total": 16
         }
       ],
-      "median_ms": 17.74999999627471
+      "median_ms": 8.03125
     },
     "headline": {
-      "summary": "On this 16-file corpus, zenfmt converted 16 files, AnyDoc converted 14, and Pandoc converted 6. The method, shared-file timings, machine details, and raw samples are available below."
+      "summary": "On this 16-file corpus, zenfmt converted 16 files, Docling (parser only) converted 5, AnyDoc converted 14, and Pandoc converted 6. The method, shared-file timings, machine details, and raw samples are available below."
     },
     "native": {
       "comparisons": {
         "anydoc": {
+          "cpu_ratio": 7.910449483430743,
+          "rss_ratio": 10.158796910084327,
           "shared_files": 14,
-          "wall_ratio": 9.097215939369
+          "wall_ratio": 6.95450342476437
+        },
+        "docling": {
+          "cpu_ratio": 206.44044239112705,
+          "rss_ratio": 47.513851655604114,
+          "shared_files": 5,
+          "wall_ratio": 192.1384124521363
         },
         "pandoc": {
+          "cpu_ratio": 16.12557257281677,
+          "rss_ratio": 16.563131652867742,
           "shared_files": 6,
-          "wall_ratio": 19.280327908827815
+          "wall_ratio": 17.121047899297427
         },
         "zenfmt-python-wheel": {
+          "cpu_ratio": 10.895578320286903,
+          "rss_ratio": 6.692283018602535,
           "shared_files": 16,
-          "wall_ratio": 16.435027291519372
+          "wall_ratio": 9.739138441845508
         }
       },
       "coverage": [
         {
           "converted": 16,
           "tool": "zenfmt",
+          "total": 16
+        },
+        {
+          "converted": 5,
+          "tool": "docling",
           "total": 16
         },
         {
@@ -81,9 +98,268 @@
       "passed": 16,
       "rule": "nonempty UTF-8, stable artifact digest, and byte parity with the native memory API",
       "total": 16
+    },
+    "server": {
+      "files": [
+        {
+          "name": "article.pdf",
+          "size": 18810,
+          "tika": {
+            "ok": true,
+            "p95_ms": 115.55,
+            "wall_ms": 21.0
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.83,
+            "wall_ms": 0.79
+          }
+        },
+        {
+          "name": "book.epub",
+          "size": 558547,
+          "tika": {
+            "ok": true,
+            "p95_ms": 913.49,
+            "wall_ms": 865.23
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 38.91,
+            "wall_ms": 38.27
+          }
+        },
+        {
+          "name": "data.csv",
+          "size": 633352,
+          "tika": {
+            "ok": true,
+            "p95_ms": 501.79,
+            "wall_ms": 115.04
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 50.73,
+            "wall_ms": 50.5
+          }
+        },
+        {
+          "name": "deck.ppt",
+          "size": 2579456,
+          "tika": {
+            "ok": true,
+            "p95_ms": 1925.57,
+            "wall_ms": 1695.33
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 5.43,
+            "wall_ms": 5.27
+          }
+        },
+        {
+          "name": "grid.xlsb",
+          "size": 9161,
+          "tika": {
+            "ok": true,
+            "p95_ms": 23.77,
+            "wall_ms": 15.29
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.45,
+            "wall_ms": 0.44
+          }
+        },
+        {
+          "name": "letter.odt",
+          "size": 4259,
+          "tika": {
+            "ok": true,
+            "p95_ms": 8.69,
+            "wall_ms": 6.83
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.41,
+            "wall_ms": 0.41
+          }
+        },
+        {
+          "name": "memo.doc",
+          "size": 32768,
+          "tika": {
+            "ok": true,
+            "p95_ms": 145.95,
+            "wall_ms": 103.94
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.41,
+            "wall_ms": 0.36
+          }
+        },
+        {
+          "name": "notes.rtf",
+          "size": 33154,
+          "tika": {
+            "ok": true,
+            "p95_ms": 16.91,
+            "wall_ms": 8.08
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.59,
+            "wall_ms": 0.59
+          }
+        },
+        {
+          "name": "page.html",
+          "size": 852578,
+          "tika": {
+            "ok": true,
+            "p95_ms": 150.99,
+            "wall_ms": 86.18
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 33.82,
+            "wall_ms": 33.19
+          }
+        },
+        {
+          "name": "report.docx",
+          "size": 34375,
+          "tika": {
+            "ok": true,
+            "p95_ms": 235.09,
+            "wall_ms": 232.21
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 1.82,
+            "wall_ms": 1.79
+          }
+        },
+        {
+          "name": "sheet.ods",
+          "size": 6254,
+          "tika": {
+            "ok": true,
+            "p95_ms": 13.66,
+            "wall_ms": 12.74
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.69,
+            "wall_ms": 0.67
+          }
+        },
+        {
+          "name": "sheet.xlsx",
+          "size": 13246,
+          "tika": {
+            "ok": true,
+            "p95_ms": 17.06,
+            "wall_ms": 11.58
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 1.31,
+            "wall_ms": 1.26
+          }
+        },
+        {
+          "name": "slides.odp",
+          "size": 477188,
+          "tika": {
+            "ok": true,
+            "p95_ms": 2928.93,
+            "wall_ms": 2919.0
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 14.03,
+            "wall_ms": 13.64
+          }
+        },
+        {
+          "name": "slides.pptx",
+          "size": 648274,
+          "tika": {
+            "ok": true,
+            "p95_ms": 3138.46,
+            "wall_ms": 3095.38
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 16.47,
+            "wall_ms": 16.41
+          }
+        },
+        {
+          "name": "spec.pdf",
+          "size": 13264,
+          "tika": {
+            "ok": true,
+            "p95_ms": 32.32,
+            "wall_ms": 10.25
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.37,
+            "wall_ms": 0.36
+          }
+        },
+        {
+          "name": "table.xls",
+          "size": 13312,
+          "tika": {
+            "ok": true,
+            "p95_ms": 16.7,
+            "wall_ms": 10.31
+          },
+          "zenfmt": {
+            "ok": true,
+            "p95_ms": 0.53,
+            "wall_ms": 0.49
+          }
+        }
+      ],
+      "peak_rss_mb": {
+        "tika": 2036.0,
+        "zenfmt": 55.6
+      },
+      "startup": {
+        "tika_ms": 6875.2,
+        "zenfmt_ms": 108.1
+      },
+      "throughput": [
+        {
+          "concurrency": 1,
+          "tika_docs_per_s": 4.4,
+          "zenfmt_docs_per_s": 555.2
+        },
+        {
+          "concurrency": 2,
+          "tika_docs_per_s": 8.3,
+          "zenfmt_docs_per_s": 1070.0
+        },
+        {
+          "concurrency": 4,
+          "tika_docs_per_s": 14.2,
+          "zenfmt_docs_per_s": 1993.4
+        },
+        {
+          "concurrency": 8,
+          "tika_docs_per_s": 14.5,
+          "zenfmt_docs_per_s": 2827.8
+        }
+      ],
+      "tika_version": "4.0.0-beta-1"
     }
   },
-  "git_revision": "7b6af5c4abd768b4d5b881b37bbb79e50d596cc5",
+  "git_revision": "e45d85979ffac036bd6dc7f40908801317946e95",
   "schema": 1,
   "sources": {
     "corpus": {
@@ -92,20 +368,24 @@
     },
     "native": {
       "path": "benchmarks/results/latest.json",
-      "sha256": "3477006767efbf249808d68e5680e2f2812c1a094a1b7d9adb4ea9322ac8fd38"
+      "sha256": "cceed09d13f8d97238aa910a674d4fc4229b80f4d04d9f8ba6b4acc2ef0679f1"
     },
     "python": {
       "path": "benchmarks/results/python.json",
-      "sha256": "8cea021c278606c9690a100a5ac3c50f2cde0c2746a70b50460f2e92d1d13303"
+      "sha256": "ecca02f264231e19ebce893d8d71f64a9895eede16d435d33a67223706e17ecf"
+    },
+    "server": {
+      "path": "benchmarks/results/server.json",
+      "sha256": "54d979d7224ca3f790524a91812b60948dec08d4b42d388ee1da0055a8850111"
     },
     "stages": {
       "path": "benchmarks/results/stages.json",
-      "sha256": "4d8a9d0fbd0d534a42c486fa5da171284622cc198c30ca60c05445c3bad56702"
+      "sha256": "4553f06219eb2aec3b936c47eb44b45adc08d2da426a2451fb788062a181a9e0"
     },
     "wasm": {
       "path": "benchmarks/results/wasm.json",
-      "sha256": "cb62fb9be7815b1c42cb2ce3c991f0b002f8130f5f146053b48ee80928fc66ee"
+      "sha256": "31a134ded53711135ed182e12332a05d0bb116252922fad11f99ccfd08630599"
     }
   },
-  "zenfmt_version": "0.2.0"
+  "zenfmt_version": "0.3.1"
 }

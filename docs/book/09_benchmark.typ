@@ -489,7 +489,7 @@ workload appropriate for the modest machines zenfmt targets.
 
 The log axis is doing real work, because the tools live on different
 decades. Most zenfmt bars sit in the single digits to low tens of
-milliseconds; the 33 KiB DOCX converts in about seven. That time is
+milliseconds; the 33 KiB DOCX converts in about four. That time is
 dominated by actual parsing, which is why the 2.5 MB `deck.ppt` costs no
 more than a small spreadsheet: the reader touches the text atoms it
 projects and skips the rest. The compiled competitors' bars start near
@@ -499,12 +499,12 @@ Docling sits a whole decade higher still: even on the files it converts,
 a fresh interpreter imports its scientific stack before the first byte is
 read, so its floor is measured in seconds, not milliseconds.
 
-zenfmt's heaviest file is `data.csv`: 25,000 rows at about ninety
+zenfmt's heaviest file is `data.csv`: 25,000 rows at about 54
 milliseconds, its slowest by a small margin. The cost is deliberate —
 zenfmt measures every column across every row so it can emit width-aligned
 GFM table pipes, an O(rows × columns) pass that anydoc skips by emitting
 ragged ones — yet even here zenfmt finishes ahead of anydoc. On large
-structured inputs the ordering is not close: pandoc climbs to about two
+structured inputs the ordering is not close: pandoc climbs to about 1.3
 seconds on the EPUB book and the 850 KiB HTML page, where zenfmt stays
 well under a tenth of a second.
 
@@ -637,8 +637,8 @@ the default remains five runs over the full corpus.
 
 Two facts fall out. Parsing dominates the container formats: an ODT or a
 PPTX spends almost all its time inside the archive and XML, and the
-Markdown writer is nearly free. The 633 KiB CSV now spends 63 ms reading,
-8 ms in the lowering residual, and 10 ms in the writer. Stage separation
+Markdown writer is nearly free. The 633 KiB CSV now spends 10.4 ms reading,
+6.6 ms in the lowering residual, and 9.9 ms in the writer. Stage separation
 found the 0.3.0 regression: validation and lowering each created
 hard-cap-sized scratch storage repeatedly as they visited a wide document.
 The current implementation allocates one scratch area for each validation
@@ -797,10 +797,11 @@ are different costs.
   Warm latency here measures steady state: both services convert one
   discarded warm-up per file before the timed samples, because Tika's
   per-client parser mode pays several seconds per forked worker on its
-  first requests. The one file where Tika leads is `data.csv`, for the same
-  reason it leads anydoc — zenfmt measures every column to align its table
-  pipes. Concurrent throughput, in documents per second, scales with cores
-  for zenfmt:
+  first requests. zenfmt had lower median latency on all 16 shared files in
+  this run. The closest was `data.csv`, where Tika used 2.3x the wall time.
+  This is one host and corpus, not a claim about every service workload.
+  Concurrent throughput, in documents per second, scaled with cores for
+  zenfmt in this short run:
 
   #{
     set text(size: 8.5pt)

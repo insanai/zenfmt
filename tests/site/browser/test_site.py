@@ -144,7 +144,8 @@ def test_server_and_recorded_benchmarks_are_explained(
     expect(server).to_contain_text("7 targets")
 
     summary = page.locator(".benchmark-summary")
-    expect(summary).to_contain_text("full release benchmark is incomplete")
+    expect(summary).to_contain_text("complete release benchmark is recorded")
+    expect(summary).to_contain_text("Recorded for this release")
     expect(summary).to_contain_text("Native CLI")
     expect(summary).to_contain_text("Speed ratio")
     expect(summary).to_contain_text("CPU ratio")
@@ -153,8 +154,8 @@ def test_server_and_recorded_benchmarks_are_explained(
 
     page.goto(f"{site_url}benchmark/")
     baseline = page.locator(".reference-baseline")
-    expect(baseline).to_contain_text("Earlier reference native lens: zenfmt 0.3.0")
-    expect(baseline).to_contain_text("Earlier reference server lens: zenfmt 0.3.0")
+    expect(baseline).to_contain_text("Current release native lens: zenfmt 0.3.1")
+    expect(baseline).to_contain_text("Current release server lens: zenfmt 0.3.1")
     expect(baseline).to_contain_text("Native CLI benchmark")
     expect(baseline).to_contain_text("Speed")
     expect(baseline).to_contain_text("CPU use")
