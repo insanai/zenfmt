@@ -97,6 +97,18 @@ pub fn login(ctx: *Context) HandlerError!void {
     const app = ctx.appAs(app_mod.App);
     const store = &app.store.?;
 
+    // Argon2id deliberately consumes meaningful CPU and memory. Two
+    // verifications may run at once; further attempts are refused promptly
+    // instead of multiplying the process working set.
+    const active = app.passwords_active.fetchAdd(1, .acq_rel);
+    if (active >= 2) {
+        _ = app.passwords_active.fetchSub(1, .acq_rel);
+        return app_mod.respondEntry(ctx, server_reports.busy, &.{
+            .{ .name = "retry-after", .value = "1" },
+        });
+    }
+    defer _ = app.passwords_active.fetchSub(1, .acq_rel);
+
     var transfer: [4096]u8 = undefined;
     const body = (try ctx.readBodyAlloc(&transfer, 64 * 1024)) orelse return;
     const creds = std.json.parseFromSliceLeaky(Credentials, ctx.arena, body, .{
@@ -153,12 +165,21 @@ pub fn logout(ctx: *Context) HandlerError!void {
     const app = ctx.appAs(app_mod.App);
     if (ctx.principal.session_digest) |digest| {
         app.store.?.authStore().revokeSession(digest) catch {};
-        app.store.?.audit(.@"session.logout", ctx.principal.name, ctx.principal.name, "{}", nowOf(ctx));
+        app.store.?.audit(
+            .@"session.logout",
+            ctx.principal.name,
+            ctx.principal.name,
+            "{}",
+            nowOf(ctx),
+        );
     }
     const cleared = try std.fmt.allocPrint(
         ctx.arena,
-        "{s}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0",
-        .{if (app.options.behind_proxy) host_cookie else session_cookie},
+        "{s}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{s}",
+        .{
+            if (app.options.behind_proxy) host_cookie else session_cookie,
+            if (app.options.behind_proxy) "; Secure" else "",
+        },
     );
     try ctx.respondBytes(.no_content, &.{.{ .name = "set-cookie", .value = cleared }}, "");
 }
@@ -179,9 +200,9 @@ pub fn changePassword(ctx: *Context) HandlerError!void {
     const body = (try ctx.readBodyAlloc(&transfer, 64 * 1024)) orelse return;
     const change = std.json.parseFromSliceLeaky(PasswordChange, ctx.arena, body, .{
         .ignore_unknown_fields = true,
-    }) catch return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{});
+    }) catch return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
     if (change.new_password.len < 8) {
-        return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{});
+        return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
     }
     var phc_buf: [auth.phc_buf_len]u8 = undefined;
     const phc = auth.hashPassword(app.gpa, ctx.io, change.new_password, &phc_buf) catch
@@ -190,7 +211,13 @@ pub fn changePassword(ctx: *Context) HandlerError!void {
         return app_mod.respondEntry(ctx, server_reports.store_unavailable, &.{});
     // Every other session of this account is revoked.
     store.revokeUserSessions(ctx.principal.user_id, ctx.principal.session_digest) catch {};
-    store.audit(.@"session.password-change", ctx.principal.name, ctx.principal.name, "{}", nowOf(ctx));
+    store.audit(
+        .@"session.password-change",
+        ctx.principal.name,
+        ctx.principal.name,
+        "{}",
+        nowOf(ctx),
+    );
     try ctx.respondBytes(.no_content, &.{}, "");
 }
 
@@ -218,7 +245,10 @@ fn createKey(ctx: *Context) HandlerError!void {
     const body = (try ctx.readBodyAlloc(&transfer, 64 * 1024)) orelse return;
     const request = std.json.parseFromSliceLeaky(KeyRequest, ctx.arena, body, .{
         .ignore_unknown_fields = true,
-    }) catch KeyRequest{};
+    }) catch return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
+    if (request.label.len == 0 or request.label.len > 64) {
+        return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
+    }
 
     const id = auth.KeyId.generate(ctx.io);
     var secret = auth.Token.generate(ctx.io);
@@ -239,9 +269,21 @@ pub fn revokeKey(ctx: *Context) HandlerError!void {
     const store = &app.store.?;
     const id = ctx.param orelse
         return app_mod.respondEntry(ctx, server_reports.unknown_route, &.{});
-    store.revokeKey(id, ctx.principal.user_id, ctx.principal.role == .administrator) catch |err| switch (err) {
-        error.NotFound => return app_mod.respondEntry(ctx, server_reports.unknown_route, &.{}),
-        else => return app_mod.respondEntry(ctx, server_reports.store_unavailable, &.{}),
+    store.revokeKey(
+        id,
+        ctx.principal.user_id,
+        ctx.principal.role == .administrator,
+    ) catch |err| switch (err) {
+        error.NotFound => return app_mod.respondEntry(
+            ctx,
+            server_reports.unknown_route,
+            &.{},
+        ),
+        else => return app_mod.respondEntry(
+            ctx,
+            server_reports.store_unavailable,
+            &.{},
+        ),
     };
     store.audit(.@"key.revoke", ctx.principal.name, id, "{}", nowOf(ctx));
     try ctx.respondBytes(.no_content, &.{}, "");

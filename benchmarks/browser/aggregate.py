@@ -38,6 +38,7 @@ def main() -> int:
         "python": args.results / "python.json",
         "wasm": args.results / "wasm.json",
         "stages": args.results / "stages.json",
+        "server": args.results / "server.json",
         "corpus": Path("benchmarks/corpus.json"),
     }
     data = {name: json.loads(path.read_text()) for name, path in paths.items()}
@@ -62,6 +63,11 @@ def main() -> int:
         raise RuntimeError("Stage benchmark version does not match")
     if data["stages"].get("git_revision") != args.revision:
         raise RuntimeError("Stage benchmark revision does not match")
+    server = data["server"]
+    if server.get("version") != args.version:
+        raise RuntimeError("Server benchmark version does not match")
+    if server.get("git_revision") != args.revision:
+        raise RuntimeError("Server benchmark revision does not match")
     coverage = []
     for tool in ("zenfmt", "docling", "anydoc", "pandoc", "zenfmt-python-wheel"):
         converted = sum(
@@ -108,6 +114,13 @@ def main() -> int:
                 "cold": wasm["cold"],
                 "artifact": wasm["tool"],
                 "competitors": wasm["competitors"],
+            },
+            "server": {
+                "tika_version": server["tika_version"],
+                "startup": server["startup"],
+                "peak_rss_mb": server["peak_rss_mb"],
+                "files": server["files"],
+                "throughput": server["throughput"],
             },
             "quality": {
                 "rule": "nonempty UTF-8, stable artifact digest, and byte parity with the native memory API",

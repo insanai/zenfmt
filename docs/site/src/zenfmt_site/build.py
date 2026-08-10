@@ -36,6 +36,8 @@ class Inputs:
     book_pdf: Path
     zds_pdfs: Path
     benchmark: Path
+    native_benchmark: Path
+    server_benchmark: Path
 
 
 def inputs_for(root: Path) -> Inputs:
@@ -49,6 +51,8 @@ def inputs_for(root: Path) -> Inputs:
         book_pdf=root / "docs/build/zenfmt-book.pdf",
         zds_pdfs=root / "docs/build",
         benchmark=root / "benchmarks/results/site.json",
+        native_benchmark=root / "benchmarks/results/latest.json",
+        server_benchmark=root / "benchmarks/results/server.json",
     )
 
 
@@ -213,6 +217,10 @@ def build(
     capabilities = pages.load_json(inputs.capabilities)
     content_map = pages.load_json(inputs.content_map)
     benchmark = _fresh_benchmark(inputs.benchmark, version)
+    baselines = {
+        "native": _recorded_benchmark(inputs.native_benchmark),
+        "server": _recorded_benchmark(inputs.server_benchmark),
+    }
 
     builder = Builder(inputs, out, base=base, version=version)
 
@@ -298,9 +306,9 @@ def build(
     if inputs.book_pdf.exists():
         builder.copy_plain(inputs.book_pdf, "pdf/zenfmt-book.pdf")
 
-    builder.emit(pages.homepage(capabilities, benchmark))
+    builder.emit(pages.homepage(capabilities, benchmark, baselines))
     builder.emit(pages.download_page(capabilities, version))
-    builder.emit(pages.benchmark_page(benchmark))
+    builder.emit(pages.benchmark_page(benchmark, baselines))
     builder.emit(pages.security_page())
     builder.emit(pages.not_found_page(base))
     builder.finish_search()
@@ -319,5 +327,15 @@ def _fresh_benchmark(path: Path, version: str) -> dict | None:
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("zenfmt_version") != version:
+        return None
+    return data
+
+
+def _recorded_benchmark(path: Path) -> dict | None:
+    """Loads a measured result without changing its recorded identity."""
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("status") == "not_benchmarked":
         return None
     return data

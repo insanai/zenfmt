@@ -79,16 +79,13 @@ data beyond check names: `GET /healthz` is liveness, `GET /readyz` is
 readiness (the worker pool and, in secure mode, a store ping), and
 `GET /metrics` is Prometheus text exposition. Every metric carries the
 `zenfmt_` prefix and only comptime-enum label values, so a scrape
-allocates nothing and cardinality is bounded by construction. When
-`--metrics-address ADDR:PORT` is set, the whole operational plane moves
-to a second small listener and the main port stops serving those paths.
+allocates nothing and cardinality is bounded by construction. The first
+release serves the operational plane on the main listener.
 
-The monitoring runbook maps each alert-worthy signal to a metric: error
-rate (`zenfmt_http_requests_total{status_class="5xx"}`), saturation
-(`zenfmt_http_rejected_total{reason="busy"}` and
-`zenfmt_conversions_active` against its cap), store health
-(`zenfmt_store_errors_total`), and authentication pressure
-(`zenfmt_auth_failures_total`).
+The monitoring runbook maps the shipped signals to metrics. These signals
+cover error rate through `zenfmt_http_requests_total`, saturation through
+`zenfmt_http_rejected_total` and `zenfmt_conversions_active`, and
+authentication pressure through `zenfmt_auth_failures_total`.
 
 == Accounts, sessions, and keys
 
@@ -143,12 +140,11 @@ pure-converter binary for size-sensitive targets.
 The standard library ships no TLS server, so in-process TLS is out of
 scope. The supported deployments are loopback (the default), a private
 network with `--secure`, or a TLS-terminating reverse proxy with
-`--behind-proxy`. In proxy mode the server honors one standardized
-`Forwarded` field, but only from an immediate peer matching a
-`--trusted-proxy` CIDR (loopback by default); the forwarded value
-influences peer attribution and rate limiting, never authorization, and
-proxy mode marks cookies `Secure`. The deployment guide ships nginx and
-Caddy fragments and a manual verification checklist.
+`--behind-proxy`. That option asserts that a trusted TLS terminating proxy
+protects the server and marks cookies `Secure`. The server ignores
+`Forwarded` and `X-Forwarded-For`, so attribution and rate limiting use the
+immediate socket peer. The deployment guide ships nginx and Caddy fragments
+and a manual verification checklist.
 
 Upgrades are stop, replace the binary, start; migrations run forward
 automatically, and a store whose schema is newer than the binary refuses

@@ -74,8 +74,8 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     wasm = page.get_by_role("link", name="Download WASM bundle")
     expect(wasm).to_have_attribute(
         "href",
-        "https://github.com/insanai/zenfmt/releases/download/v0.2.0/"
-        "zenfmt-0.2.0-wasm32-freestanding.tar.gz",
+        "https://github.com/insanai/zenfmt/releases/download/v0.3.0/"
+        "zenfmt-0.3.0-wasm32-freestanding.tar.gz",
     )
     assert page.locator(".download-button").count() >= 11
 
@@ -100,4 +100,33 @@ def test_unknown_input_gets_an_elm_style_error(browser: Browser, site_url: str) 
     )
     expect(page.locator("[data-reports]")).to_contain_text("Details")
     expect(page.locator("[data-reports]")).to_contain_text("What you can do:")
+    context.close()
+
+
+def test_server_and_recorded_benchmarks_are_explained(
+    browser: Browser, site_url: str
+) -> None:
+    context = browser.new_context()
+    page = context.new_page()
+    page.goto(site_url)
+
+    server = page.locator(".server-summary")
+    expect(server).to_contain_text("small HTTP service")
+    expect(server).to_contain_text("zenfmt serve")
+    expect(server).to_contain_text("System by default")
+    expect(server).to_contain_text("7 targets")
+
+    summary = page.locator(".benchmark-summary")
+    expect(summary).to_contain_text("Benchmark pending for this release")
+    expect(summary).to_contain_text("Earlier 0.2.0 reference run")
+    expect(summary).to_contain_text("Docling parser only")
+    expect(summary).to_contain_text("5/16")
+    expect(summary).to_contain_text("0.11 / 11.02 s")
+
+    page.goto(f"{site_url}benchmark/")
+    baseline = page.locator(".reference-baseline")
+    expect(baseline).to_contain_text("not relabeled as 0.3.0 results")
+    expect(baseline).to_contain_text("Docling parser only")
+    expect(baseline).to_contain_text("Tika Server")
+    expect(baseline).to_contain_text("54.7 / 2143.9 MiB")
     context.close()

@@ -330,7 +330,21 @@ h1:hover .permalink, h2:hover .permalink, h3:hover .permalink,
   padding: 1rem;
   background: var(--blue-light);
 }
-.benchmark-summary { margin-top: clamp(3rem, 7vw, 7rem); }
+.server-summary, .benchmark-summary {
+  margin-top: clamp(3rem, 7vw, 7rem);
+  padding-top: clamp(2rem, 4vw, 4rem);
+  border-top: 1px solid var(--rule);
+}
+.command {
+  overflow-x: auto;
+  margin: 1.5rem 0;
+  padding: 1rem;
+  border-radius: 8px;
+  background: #17191d;
+  color: #e8eaee;
+}
+.reference-baseline { margin-top: 2rem; }
+.reference-baseline table { display: block; overflow-x: auto; }
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

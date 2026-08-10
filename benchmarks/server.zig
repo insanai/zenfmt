@@ -3,8 +3,8 @@
 //! Starts zenfmt in open mode on an ephemeral loopback port and a pinned
 //! Apache Tika Server on a second, then measures the long-running HTTP
 //! service each product is: startup readiness, sequential warm latency per
-//! corpus file, concurrent throughput, and the peak resident memory of the
-//! whole service process tree. zenfmt is reached through
+//! corpus file, concurrent throughput, and sampled resident memory for the
+//! parent and its direct parser children. zenfmt is reached through
 //! `PUT /api/v1/convert?to=markdown`; Tika through its documented Markdown
 //! handler, `PUT /tika/md`.
 //!
@@ -57,6 +57,18 @@ const Server = struct {
     peak_rss_kib: u64 = 0,
 };
 
+const zenfmt_template = Server{
+    .name = "zenfmt",
+    .convert_path = "/api/v1/convert?to=markdown",
+    .ready_path = "/healthz",
+};
+
+const tika_template = Server{
+    .name = "tika",
+    .convert_path = "/tika/md",
+    .ready_path = "/tika",
+};
+
 const FileResult = struct {
     name: []const u8,
     size: u64,
@@ -96,101 +108,173 @@ pub fn main(init: std.process.Init) !u8 {
         return 1;
     }
 
-    // This lens is a local, several-minute run and is never part of CI or
-    // the release build. When the pinned Apache Tika distribution is
-    // absent, record a not-benchmarked result and exit success rather than
-    // fail, so an accidental invocation degrades instead of breaking.
+    if (!tikaAvailable(io, &options)) return 0;
+    return runBenchmark(gpa, io, &options, names);
+}
+
+fn tikaAvailable(io: Io, options: *const Options) bool {
     var jar_buf: [512]u8 = undefined;
-    const jar_path = std.fmt.bufPrint(&jar_buf, "{s}/{s}", .{ options.tika_dir, options.tika_jar }) catch return 1;
-    const has_tika = if (Io.Dir.cwd().statFile(io, jar_path, .{})) |_| true else |_| false;
-    if (!has_tika) {
-        std.debug.print(
-            "server-benchmark: {s} not found; this is a local-only benchmark. " ++
-                "Fetch Apache Tika into {s} first (see the book's server chapter). " ++
-                "Writing a not-benchmarked record.\n",
-            .{ jar_path, options.tika_dir },
-        );
-        writeNotBenchmarked(io, &options) catch {};
-        return 0;
-    }
+    const jar_path = std.fmt.bufPrint(
+        &jar_buf,
+        "{s}/{s}",
+        .{ options.tika_dir, options.tika_jar },
+    ) catch return false;
+    if (Io.Dir.cwd().statFile(io, jar_path, .{})) |_| return true else |_| {}
+    std.debug.print(
+        "server-benchmark: {s} not found; this is a local-only benchmark. " ++
+            "Fetch Apache Tika into {s} first (see the book's server " ++
+            "chapter). Writing a not-benchmarked record.\n",
+        .{ jar_path, options.tika_dir },
+    );
+    writeNotBenchmarked(io, options) catch {};
+    return false;
+}
 
-    // Launch both services, each on its own ephemeral loopback port. The
-    // startup time through the first successful readiness probe is the
-    // first recorded profile.
-    var zenfmt_server = Server{
-        .name = "zenfmt",
-        .convert_path = "/api/v1/convert?to=markdown",
-        .ready_path = "/healthz",
-    };
-    var tika_server = Server{
-        .name = "tika",
-        .convert_path = "/tika/md",
-        .ready_path = "/tika",
-    };
-
+fn runBenchmark(
+    gpa: std.mem.Allocator,
+    io: Io,
+    options: *const Options,
+    names: []const []const u8,
+) !u8 {
+    var zenfmt_server = zenfmt_template;
+    var tika_server = tika_template;
     var startup = StartupProfile{};
-    startup.zenfmt_ms = try startupMedian(gpa, io, &options, &zenfmt_server, .zenfmt);
-    startup.tika_ms = try startupMedian(gpa, io, &options, &tika_server, .tika);
+    startup.zenfmt_ms = try startupMedian(gpa, io, options, &zenfmt_server, .zenfmt);
+    startup.tika_ms = try startupMedian(gpa, io, options, &tika_server, .tika);
 
-    // The measured instances run for the rest of the benchmark.
-    try launch(gpa, io, &options, &zenfmt_server, .zenfmt);
+    try launch(gpa, io, options, &zenfmt_server, .zenfmt);
     defer stop(io, &zenfmt_server);
-    try launch(gpa, io, &options, &tika_server, .tika);
+    try launch(gpa, io, options, &tika_server, .tika);
     defer stop(io, &tika_server);
     try waitReady(gpa, io, &zenfmt_server);
     try waitReady(gpa, io, &tika_server);
 
-    // Warm both services to steady state before any timing. Tika's pipes
-    // mode forks a small pool of parser processes and pays several seconds
-    // per fork on the first requests; a global warmup pays that once, so
-    // the per-file "warm latency" measures steady state rather than the
-    // fork ramp, which the throughput and saturation profiles capture
-    // instead.
-    warmup(gpa, io, &options, &zenfmt_server, names);
-    warmup(gpa, io, &options, &tika_server, names);
-
-    // Sequential warm latency per corpus file, plus the peak resident
-    // memory of each service while it works.
-    var results: std.ArrayList(FileResult) = .empty;
+    warmup(gpa, io, options, &zenfmt_server, names);
+    warmup(gpa, io, options, &tika_server, names);
+    var results = try benchmarkFiles(
+        gpa,
+        io,
+        options,
+        &zenfmt_server,
+        &tika_server,
+        names,
+    );
     defer {
         for (results.items) |result| gpa.free(result.name);
         results.deinit(gpa);
     }
-    for (names) |name| {
-        const result = try benchmarkFile(gpa, io, &options, &zenfmt_server, &tika_server, name);
-        try results.append(gpa, result);
-        sampleRss(io, &zenfmt_server);
-        sampleRss(io, &tika_server);
-        std.debug.print("done {s}\n", .{name});
-    }
-
-    // Concurrent throughput over the files both services convert.
-    var throughput: std.ArrayList(ThroughputResult) = .empty;
+    var throughput = try benchmarkThroughput(
+        gpa,
+        io,
+        options,
+        &zenfmt_server,
+        &tika_server,
+        names,
+    );
     defer throughput.deinit(gpa);
-    for (throughput_levels) |level| {
-        const t = try throughputAt(gpa, io, &options, &zenfmt_server, &tika_server, names, level);
-        try throughput.append(gpa, t);
-        sampleRss(io, &zenfmt_server);
-        sampleRss(io, &tika_server);
-    }
 
-    var machine: std.Io.Writer.Allocating = .init(gpa);
-    defer machine.deinit();
-    try renderJson(
-        &machine.writer,
-        &options,
+    writeResults(
+        gpa,
+        io,
+        options,
         startup,
         &zenfmt_server,
         &tika_server,
         results.items,
         throughput.items,
-    );
-    Io.Dir.cwd().writeFile(io, .{ .sub_path = options.out, .data = machine.written() }) catch |err| {
-        std.debug.print("server-benchmark: cannot write {s}: {t}\n", .{ options.out, err });
-        return 1;
-    };
+    ) catch return 1;
     std.debug.print("server benchmark written to {s}\n", .{options.out});
     return 0;
+}
+
+fn writeResults(
+    gpa: std.mem.Allocator,
+    io: Io,
+    options: *const Options,
+    startup: StartupProfile,
+    zenfmt_server: *const Server,
+    tika_server: *const Server,
+    results: []const FileResult,
+    throughput: []const ThroughputResult,
+) !void {
+    var machine: std.Io.Writer.Allocating = .init(gpa);
+    defer machine.deinit();
+    try renderJson(
+        &machine.writer,
+        options,
+        startup,
+        zenfmt_server,
+        tika_server,
+        results,
+        throughput,
+    );
+    Io.Dir.cwd().writeFile(io, .{
+        .sub_path = options.out,
+        .data = machine.written(),
+    }) catch |err| {
+        std.debug.print(
+            "server-benchmark: cannot write {s}: {t}\n",
+            .{ options.out, err },
+        );
+        return error.WriteFailed;
+    };
+}
+
+fn benchmarkFiles(
+    gpa: std.mem.Allocator,
+    io: Io,
+    options: *const Options,
+    zenfmt_server: *Server,
+    tika_server: *Server,
+    names: []const []const u8,
+) !std.ArrayList(FileResult) {
+    var results: std.ArrayList(FileResult) = .empty;
+    errdefer {
+        for (results.items) |result| gpa.free(result.name);
+        results.deinit(gpa);
+    }
+    for (names) |name| {
+        const result = try benchmarkFile(
+            gpa,
+            io,
+            options,
+            zenfmt_server,
+            tika_server,
+            name,
+        );
+        try results.append(gpa, result);
+        sampleRss(io, zenfmt_server);
+        sampleRss(io, tika_server);
+        std.debug.print("done {s}\n", .{name});
+    }
+    return results;
+}
+
+fn benchmarkThroughput(
+    gpa: std.mem.Allocator,
+    io: Io,
+    options: *const Options,
+    zenfmt_server: *Server,
+    tika_server: *Server,
+    names: []const []const u8,
+) !std.ArrayList(ThroughputResult) {
+    var throughput: std.ArrayList(ThroughputResult) = .empty;
+    errdefer throughput.deinit(gpa);
+    for (throughput_levels) |level| {
+        const result = try throughputAt(
+            gpa,
+            io,
+            options,
+            zenfmt_server,
+            tika_server,
+            names,
+            level,
+        );
+        try throughput.append(gpa, result);
+        sampleRss(io, zenfmt_server);
+        sampleRss(io, tika_server);
+    }
+    return throughput;
 }
 
 const Kind = enum { zenfmt, tika };
@@ -216,7 +300,8 @@ fn startupMedian(
         const started = Io.Clock.Timestamp.now(io, .awake);
         try launch(gpa, io, options, &server, kind);
         try waitReady(gpa, io, &server);
-        samples[index] = @intCast(@max(started.durationTo(Io.Clock.Timestamp.now(io, .awake)).raw.nanoseconds, 0));
+        const elapsed = started.durationTo(Io.Clock.Timestamp.now(io, .awake));
+        samples[index] = @intCast(@max(elapsed.raw.nanoseconds, 0));
         stop(io, &server);
     }
     std.mem.sort(u64, &samples, {}, std.sort.asc(u64));
@@ -404,7 +489,13 @@ fn convertOnce(
 /// Fires a burst of conversions to bring a service's worker pool to steady
 /// state; best-effort, ignoring failures. Enough requests to warm Tika's
 /// forked parser clients several times over.
-fn warmup(gpa: std.mem.Allocator, io: Io, options: *const Options, server: *Server, names: []const []const u8) void {
+fn warmup(
+    gpa: std.mem.Allocator,
+    io: Io,
+    options: *const Options,
+    server: *Server,
+    names: []const []const u8,
+) void {
     var name_buf: [64]u8 = undefined;
     const shared = pickSharedDocument(gpa, io, options, names, &name_buf) catch return;
     defer gpa.free(shared.body);
@@ -418,7 +509,15 @@ fn warmup(gpa: std.mem.Allocator, io: Io, options: *const Options, server: *Serv
     // small responses cost only a few tens of kilobytes.
     var index: usize = 0;
     while (index < 10) : (index += 1) {
-        _ = convertOnce(arena, io, &client, server.port, server.convert_path, shared.name, shared.body) catch {};
+        _ = convertOnce(
+            arena,
+            io,
+            &client,
+            server.port,
+            server.convert_path,
+            shared.name,
+            shared.body,
+        ) catch {};
     }
 }
 
@@ -447,22 +546,42 @@ fn benchmarkFile(
 /// One warm-up request then `warm_samples` measured requests on one
 /// keep-alive client; returns the median and p95 latency, or `ok = false`
 /// when any request fails the correctness gate.
-fn warmLatency(gpa: std.mem.Allocator, io: Io, server: *Server, name: []const u8, body: []const u8) !Latency {
+fn warmLatency(
+    gpa: std.mem.Allocator,
+    io: Io,
+    server: *Server,
+    name: []const u8,
+    body: []const u8,
+) !Latency {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
     var client: std.http.Client = .{ .allocator = arena, .io = io };
     defer client.deinit();
 
-    const first = convertOnce(arena, io, &client, server.port, server.convert_path, name, body) catch
-        return .{ .ok = false };
+    const first = convertOnce(
+        arena,
+        io,
+        &client,
+        server.port,
+        server.convert_path,
+        name,
+        body,
+    ) catch return .{ .ok = false };
     if (!first.ok) return .{ .ok = false };
 
     var samples: [warm_samples]u64 = undefined;
     var index: usize = 0;
     while (index < warm_samples) : (index += 1) {
-        const sample = convertOnce(arena, io, &client, server.port, server.convert_path, name, body) catch
-            return .{ .ok = false };
+        const sample = convertOnce(
+            arena,
+            io,
+            &client,
+            server.port,
+            server.convert_path,
+            name,
+            body,
+        ) catch return .{ .ok = false };
         if (!sample.ok) return .{ .ok = false };
         samples[index] = sample.wall_ns;
     }
@@ -493,14 +612,36 @@ fn throughputAt(
     defer gpa.free(shared.body);
     return .{
         .concurrency = level,
-        .zenfmt_docs_per_s = try throughputFor(gpa, io, zenfmt_server, shared.name, shared.body, level),
+        .zenfmt_docs_per_s = try throughputFor(
+            gpa,
+            io,
+            zenfmt_server,
+            shared.name,
+            shared.body,
+            level,
+        ),
         .tika_docs_per_s = try throughputFor(gpa, io, tika_server, shared.name, shared.body, level),
     };
 }
 
-fn throughputFor(gpa: std.mem.Allocator, io: Io, server: *Server, name: []const u8, body: []const u8, level: u32) !f64 {
+fn throughputFor(
+    gpa: std.mem.Allocator,
+    io: Io,
+    server: *Server,
+    name: []const u8,
+    body: []const u8,
+    level: u32,
+) !f64 {
     const Task = struct {
-        fn run(a: std.mem.Allocator, i: Io, port: u16, path: []const u8, doc_name: []const u8, payload: []const u8, count: u32) void {
+        fn run(
+            a: std.mem.Allocator,
+            i: Io,
+            port: u16,
+            path: []const u8,
+            doc_name: []const u8,
+            payload: []const u8,
+            count: u32,
+        ) void {
             var arena_state = std.heap.ArenaAllocator.init(a);
             defer arena_state.deinit();
             const arena = arena_state.allocator();
@@ -517,7 +658,15 @@ fn throughputFor(gpa: std.mem.Allocator, io: Io, server: *Server, name: []const 
     var group: Io.Group = .init;
     var worker: u32 = 0;
     while (worker < level) : (worker += 1) {
-        group.concurrent(io, Task.run, .{ gpa, io, server.port, server.convert_path, name, body, per_worker }) catch {
+        group.concurrent(io, Task.run, .{
+            gpa,
+            io,
+            server.port,
+            server.convert_path,
+            name,
+            body,
+            per_worker,
+        }) catch {
             Task.run(gpa, io, server.port, server.convert_path, name, body, per_worker);
         };
     }
@@ -554,9 +703,9 @@ fn pickSharedDocument(
     return .{ .name = copied, .body = body };
 }
 
-/// Samples the resident memory of a service's whole process tree and keeps
-/// the running peak. `ps` reports the parent and, via a second call, its
-/// children — Tika forks parser workers whose memory belongs to the total.
+/// Samples the resident memory of a service parent and its direct children,
+/// then keeps the running peak. Tika forks parser workers whose memory belongs
+/// to this total.
 fn sampleRss(io: Io, server: *Server) void {
     const pid = server.child.id orelse return;
     var pid_buf: [16]u8 = undefined;

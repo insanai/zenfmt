@@ -720,23 +720,26 @@ are different costs.
   #tile_row(
     stat_tile(
       [#calc.round(server.startup.tika_ms / server.startup.zenfmt_ms, digits: 0)x],
-      [faster to start],
+      [startup ratio],
       [zenfmt is ready in #calc.round(server.startup.zenfmt_ms / 1000, digits: 2) s;
-        Tika's JVM and parser pool take #calc.round(server.startup.tika_ms / 1000, digits: 1) s],
+        Tika's JVM and parser pool take #calc.round(server.startup.tika_ms / 1000, digits: 1) s;
+        the ratio is Tika divided by zenfmt],
       fill: green_light,
       stroke: green,
     ),
     stat_tile(
       [#calc.round(server.peak_rss_mb.tika / server.peak_rss_mb.zenfmt, digits: 0)x],
-      [less peak memory],
+      [sampled resident ratio],
       [#calc.round(server.peak_rss_mb.zenfmt, digits: 0) MB resident against Tika's
-        #calc.round(server.peak_rss_mb.tika, digits: 0) MB process tree],
+        #calc.round(server.peak_rss_mb.tika, digits: 0) MB parent and direct
+        parser children],
     ),
     stat_tile(
       [#calc.round(srv_ratio, digits: 0)x],
-      [lower warm latency],
+      [shared warm ratio],
       [geometric mean over the #srv_shared.len() files both services convert,
-        each service warmed to steady state first],
+        each service warmed to steady state first; the ratio is Tika divided
+        by zenfmt],
     ),
   )
 
@@ -776,7 +779,7 @@ are different costs.
 
 == Reading it honestly
 
-A benchmark this favorable deserves its caveats stated plainly.
+These measurements need their caveats stated plainly.
 
 - *Startup is part of the story, but not all of it.* Subtract the 40 ms
   runtime floor from every anydoc bar, and its document work is

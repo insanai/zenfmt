@@ -51,6 +51,7 @@ def test_failure_reports_render_verbatim(page: Page) -> None:
             }
         ],
     )
+    expect(page.locator("[data-drop]")).to_contain_text("garbage.bin")
     page.click("button[data-action='convert']")
     alert = page.locator(".alert-error").first
     expect(alert).to_contain_text("CANNOT DETECT INPUT FORMAT")
@@ -59,6 +60,12 @@ def test_failure_reports_render_verbatim(page: Page) -> None:
 
 def test_theme_choice_applies_and_persists(page: Page) -> None:
     html = page.locator("html")
+    expect(page.locator("button[data-action='theme_system']")).to_have_class(
+        re.compile("btn-active")
+    )
+    assert page.evaluate("localStorage.getItem('zenfmt-theme-v1')") is None
+    page.click("button[data-action='theme_light']")
+    expect(html).to_have_attribute("data-theme", "light")
     page.click("button[data-action='theme_dark']")
     expect(html).to_have_attribute("data-theme", "dark")
     page.reload()
@@ -67,6 +74,8 @@ def test_theme_choice_applies_and_persists(page: Page) -> None:
         re.compile("btn-active")
     )
     page.click("button[data-action='theme_system']")
+    page.emulate_media(color_scheme="dark")
+    expect(html).to_have_attribute("data-theme", "dark")
 
 
 def test_noscript_page_serves_the_api_path(page: Page, server_url: str) -> None:
@@ -76,3 +85,61 @@ def test_noscript_page_serves_the_api_path(page: Page, server_url: str) -> None:
     assert "curl -s -T" in body
     assert "content-security-policy" in response.headers
     assert "wasm-unsafe-eval" in response.headers["content-security-policy"]
+
+
+def test_secure_login_and_user_management(secure_page: Page, secure_server) -> None:
+    page = secure_page
+    expect(page).to_have_url(re.compile(r"/login$"))
+    expect(page.get_by_role("heading", name="Sign in")).to_be_visible()
+    page.locator("input[name='name']").fill("admin")
+    page.locator("input[name='password']").fill(secure_server.password)
+    page.click("button[data-action='login']")
+
+    expect(page).to_have_url(re.compile(r"/account$"))
+    expect(page.get_by_text("Change the one-time password")).to_be_visible()
+    page.locator("input[name='new_password']").fill("admin-release-password")
+    page.click("button[data-action='change_password']")
+    expect(page.get_by_text("Password changed.")).to_be_visible()
+
+    page.click("button[data-action='nav:/admin/users']")
+    expect(page).to_have_url(re.compile(r"/admin/users$"))
+    expect(page.get_by_role("heading", name="Users")).to_be_visible()
+    expect(page.locator("tbody")).to_contain_text("admin")
+
+    page.click("button[data-action='manage_user:admin']")
+    expect(page.locator("#user-dialog")).to_contain_text("last active administrator")
+    expect(page.locator("select[name='manage_role']")).to_be_disabled()
+    expect(page.locator("button[data-action='delete_user']")).to_be_disabled()
+    page.click("button[data-action='close_user_dialog']")
+
+    page.click("button[data-action='create_user_dialog']")
+    expect(page.locator("#user-dialog")).to_have_attribute("open", "")
+    page.locator("input[name='user_name']").fill("release-user")
+    page.locator("select[name='user_role']").select_option("user")
+    page.click("button[data-action='create_user']")
+    expect(page.locator("#secret-dialog")).to_have_attribute("open", "")
+    expect(page.locator("#secret-dialog")).to_contain_text("release-user")
+    page.click("button[data-action='close_secret']")
+
+    page.locator("input[name='user_query']").fill("release-user")
+    page.click("button[data-action='filter_users']")
+    expect(page.locator("tbody")).to_contain_text("release-user")
+    page.click("button[data-action='manage_user:release-user']")
+    page.locator("select[name='manage_role']").select_option("administrator")
+    page.click("button[data-action='save_user']")
+    expect(page.locator("tbody")).to_contain_text("administrator")
+
+    page.click("button[data-action='manage_user:release-user']")
+    page.click("button[data-action='reset_user']")
+    expect(page.locator("#secret-dialog")).to_have_attribute("open", "")
+    page.click("button[data-action='close_secret']")
+
+    page.click("button[data-action='manage_user:release-user']")
+    page.locator("select[name='manage_disabled']").select_option("true")
+    page.click("button[data-action='save_user']")
+    expect(page.locator("tbody")).to_contain_text("Disabled")
+
+    page.click("button[data-action='manage_user:release-user']")
+    page.locator("input[name='delete_confirm']").fill("release-user")
+    page.click("button[data-action='delete_user']")
+    expect(page.locator("tbody")).not_to_contain_text("release-user")

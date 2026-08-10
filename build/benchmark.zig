@@ -140,9 +140,10 @@ pub fn add(
     aggregate.step.dependOn(&run_harness.step);
     aggregate.step.dependOn(&run_stages.step);
     aggregate.step.dependOn(&run_browser.step);
+    aggregate.step.dependOn(&run_server.step);
     const release_step = b.step(
         "benchmark-release",
-        "Regenerate native, Python, WASM, stage, and site benchmark records",
+        "Regenerate native, Python, WASM, stage, server, and site records",
     );
     release_step.dependOn(&aggregate.step);
 }

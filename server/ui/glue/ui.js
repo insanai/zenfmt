@@ -78,6 +78,19 @@ function execute(command) {
         localStorage.setItem(THEME_KEY, command.theme);
       } catch (_) {}
       break;
+    case "dialog_open": {
+      const dialog = document.getElementById(command.id);
+      if (dialog instanceof HTMLDialogElement) {
+        dialog.showModal();
+        dialog.querySelector("input,select,button")?.focus();
+      }
+      break;
+    }
+    case "dialog_close": {
+      const dialog = document.getElementById(command.id);
+      if (dialog instanceof HTMLDialogElement && dialog.open) dialog.close();
+      break;
+    }
     case "fetch":
       doFetch(command);
       break;
@@ -108,7 +121,11 @@ async function doFetch(command) {
     const form = new FormData();
     form.append("file", pendingFile, pendingFile.name);
     options.body = form;
+  } else if (command.body === "json") {
+    if (command.text) options.body = command.text;
+    options.headers["content-type"] = "application/json";
   }
+  if (command.csrf) options.headers["x-zenfmt-csrf"] = command.csrf;
   try {
     const response = await fetch(command.path, options);
     const body = await response.text();

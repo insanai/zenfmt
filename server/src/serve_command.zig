@@ -19,19 +19,55 @@ const flags = [_]Flag{
     .{ .long = "--address", .value = "ADDR", .help = "Bind address. Default: 127.0.0.1." },
     .{ .long = "--port", .value = "N", .help = "Bind port. Default: 8998." },
     .{ .long = "--secure", .help = "Enable accounts, sessions, keys, and audit." },
-    .{ .long = "--data-dir", .value = "PATH", .help = "Store directory; required with --secure." },
-    .{ .long = "--behind-proxy", .help = "Honor Forwarded from trusted proxies; Secure cookies." },
-    .{ .long = "--trusted-proxy", .value = "CIDR", .help = "Trusted proxy network, repeatable. Default: loopback." },
-    .{ .long = "--allow-insecure-network", .help = "Allow cleartext secure mode on a non-loopback bind." },
-    .{ .long = "--max-body", .value = "BYTES", .help = "Request body cap; accepts KiB/MiB/GiB. Default: 64MiB." },
-    .{ .long = "--connections", .value = "N", .help = "Connection slots. Default: 128." },
-    .{ .long = "--conversions", .value = "N", .help = "Concurrent conversion cap. Default: logical CPUs." },
-    .{ .long = "--metrics-address", .value = "A:P", .help = "Serve /healthz, /readyz, /metrics on a separate listener." },
-    .{ .long = "--limit", .value = "NAME=VALUE", .help = "Override one engine limit, repeatable." },
-    .{ .long = "--log-format", .value = "FMT", .help = "text (default) or json." },
-    .{ .long = "--log-level", .value = "LEVEL", .help = "err, warn, info (default), or debug." },
+    .{
+        .long = "--data-dir",
+        .value = "PATH",
+        .help = "Store directory; required with --secure.",
+    },
+    .{
+        .long = "--behind-proxy",
+        .help = "Assert TLS termination and mark session cookies Secure.",
+    },
+    .{
+        .long = "--allow-insecure-network",
+        .help = "Allow cleartext secure mode on a non-loopback bind.",
+    },
+    .{
+        .long = "--max-body",
+        .value = "BYTES",
+        .help = "Request body cap; accepts KiB/MiB/GiB. Default: 64MiB.",
+    },
+    .{
+        .long = "--connections",
+        .value = "N",
+        .help = "Connection slots. Default: 128.",
+    },
+    .{
+        .long = "--conversions",
+        .value = "N",
+        .help = "Concurrent conversion cap. Default: logical CPUs.",
+    },
+    .{
+        .long = "--limit",
+        .value = "NAME=VALUE",
+        .help = "Override one engine limit, repeatable.",
+    },
+    .{
+        .long = "--log-format",
+        .value = "FMT",
+        .help = "text (default) or json.",
+    },
+    .{
+        .long = "--log-level",
+        .value = "LEVEL",
+        .help = "err, warn, info (default), or debug.",
+    },
     .{ .long = "--no-ui", .help = "Serve the API and operational plane only." },
-    .{ .long = "--drain-seconds", .value = "N", .help = "Graceful shutdown deadline. Default: 30." },
+    .{
+        .long = "--drain-seconds",
+        .value = "N",
+        .help = "Graceful shutdown deadline. Default: 30.",
+    },
     .{ .long = "--help", .short = "-h", .help = "Show this help." },
     .{ .long = "--version", .short = "-V", .help = "Show the version." },
 };
@@ -53,14 +89,10 @@ const help_preamble =
 
 const help_text = zencli.helpText(help_preamble, &flags);
 
-const max_trusted_proxies = 8;
-
 const Parsed = struct {
     options: root.Options,
     show_help: bool = false,
     show_version: bool = false,
-    trusted_proxies: [max_trusted_proxies][]const u8 = undefined,
-    trusted_proxy_count: usize = 0,
 };
 
 const ServeParser = zencli.Parser(&flags);
@@ -110,10 +142,6 @@ pub fn main(
         out.writeAll(version_text) catch return zencli.exit_conversion;
         return zencli.exit_ok;
     }
-    if (parsed.trusted_proxy_count > 0) {
-        parsed.options.trusted_proxy_cidrs =
-            parsed.trusted_proxies[0..parsed.trusted_proxy_count];
-    }
     return root.run(gpa, io, parsed.options, err_out);
 }
 
@@ -131,10 +159,6 @@ fn applyServeFlag(parsed: *Parsed, name: []const u8, value: ?[]const u8) bool {
     } else if (matches(name, "--behind-proxy")) {
         if (value != null) return false;
         options.behind_proxy = true;
-    } else if (matches(name, "--trusted-proxy")) {
-        if (parsed.trusted_proxy_count == max_trusted_proxies) return false;
-        parsed.trusted_proxies[parsed.trusted_proxy_count] = value.?;
-        parsed.trusted_proxy_count += 1;
     } else if (matches(name, "--allow-insecure-network")) {
         if (value != null) return false;
         options.allow_insecure_network = true;
@@ -148,8 +172,6 @@ fn applyServeFlag(parsed: *Parsed, name: []const u8, value: ?[]const u8) bool {
         const n = std.fmt.parseInt(u32, value.?, 10) catch return false;
         if (n == 0) return false;
         options.conversions = n;
-    } else if (matches(name, "--metrics-address")) {
-        options.metrics_address = value.?;
     } else if (matches(name, "--limit")) {
         options.limits.override(value.?) catch return false;
     } else if (matches(name, "--log-format")) {
@@ -229,6 +251,28 @@ fn validate(parsed: *Parsed, parse_error: *?zencli.UsageError) void {
             "with --secure; open mode has no credentials to protect." };
         return;
     }
+    if (!options.secure and options.behind_proxy) {
+        parse_error.* = .{ .message = "--behind-proxy only applies with " ++
+            "--secure because open mode has no session cookie." };
+        return;
+    }
+    if (options.secure and !isLoopback(options.address) and
+        !options.behind_proxy and !options.allow_insecure_network)
+    {
+        parse_error.* = .{ .message = "secure mode on a non-loopback address " ++
+            "needs TLS termination through --behind-proxy, or the explicit " ++
+            "--allow-insecure-network acknowledgement." };
+        return;
+    }
+}
+
+fn isLoopback(address: []const u8) bool {
+    const parsed = std.Io.net.IpAddress.parse(address, 0) catch return false;
+    const loopback6 = [1]u8{0} ** 15 ++ [1]u8{1};
+    return switch (parsed) {
+        .ip4 => |ip4| ip4.bytes[0] == 127,
+        .ip6 => |ip6| std.mem.eql(u8, &ip6.bytes, &loopback6),
+    };
 }
 
 fn renderUsageError(
@@ -264,7 +308,12 @@ fn parseFor(argv: []const []const u8) struct { parsed: Parsed, err: ?zencli.Usag
     var parsed: Parsed = .{ .options = .{} };
     var sink: Sink = .{ .parsed = &parsed };
     var parse_error: ?zencli.UsageError = null;
-    ServeParser.parse(argv, &sink, "The serve subcommand takes no positional arguments.", &parse_error);
+    ServeParser.parse(
+        argv,
+        &sink,
+        "The serve subcommand takes no positional arguments.",
+        &parse_error,
+    );
     if (parse_error == null) validate(&parsed, &parse_error);
     return .{ .parsed = parsed, .err = parse_error };
 }
@@ -283,12 +332,12 @@ test "defaults are the open-mode one-command server" {
 
 test "flags parse into options" {
     const result = parseFor(&.{
-        "zenfmt",          "--port",            "9000",
-        "--max-body",      "256MiB",            "--connections",
-        "16",              "--no-ui",           "--log-format",
-        "json",            "--log-level",       "debug",
-        "--drain-seconds", "5",                 "--conversions",
-        "2",               "--metrics-address", "127.0.0.1:9100",
+        "zenfmt",          "--port",      "9000",
+        "--max-body",      "256MiB",      "--connections",
+        "16",              "--no-ui",     "--log-format",
+        "json",            "--log-level", "debug",
+        "--drain-seconds", "5",           "--conversions",
+        "2",
     });
     try testing.expectEqual(@as(?zencli.UsageError, null), result.err);
     const options = result.parsed.options;
@@ -300,7 +349,6 @@ test "flags parse into options" {
     try testing.expectEqual(std.log.Level.debug, options.log_level);
     try testing.expectEqual(@as(u32, 5), options.drain_seconds);
     try testing.expectEqual(@as(?u32, 2), options.conversions);
-    try testing.expectEqualStrings("127.0.0.1:9100", options.metrics_address.?);
 }
 
 test "secure mode validation" {
@@ -329,6 +377,21 @@ test "secure mode validation" {
     try testing.expectEqual(@as(?zencli.UsageError, null), good.err);
     try testing.expect(good.parsed.options.secure);
     try testing.expectEqualStrings("/var/lib/zenfmt", good.parsed.options.data_dir.?);
+
+    const exposed = parseFor(&.{
+        "zenfmt",    "--secure", "--data-dir", "/var/lib/zenfmt",
+        "--address", "0.0.0.0",
+    });
+    try testing.expect(std.mem.startsWith(
+        u8,
+        exposed.err.?.message,
+        "secure mode on a non-loopback address",
+    ));
+    const acknowledged = parseFor(&.{
+        "zenfmt",    "--secure", "--data-dir",               "/var/lib/zenfmt",
+        "--address", "0.0.0.0",  "--allow-insecure-network",
+    });
+    try testing.expectEqual(@as(?zencli.UsageError, null), acknowledged.err);
 }
 
 test "positional arguments are refused" {
@@ -339,20 +402,17 @@ test "positional arguments are refused" {
     );
 }
 
-test "repeatable flags accumulate within their bounds" {
+test "repeatable limit flags accumulate" {
     const result = parseFor(&.{
         "zenfmt",
-        "--trusted-proxy",
-        "10.0.0.0/8",
-        "--trusted-proxy",
-        "192.168.0.0/16",
         "--limit",
         "max_depth=64",
+        "--limit",
+        "max_input_bytes=2048",
     });
     try testing.expectEqual(@as(?zencli.UsageError, null), result.err);
-    try testing.expectEqual(@as(usize, 2), result.parsed.trusted_proxy_count);
-    try testing.expectEqualStrings("10.0.0.0/8", result.parsed.trusted_proxies[0]);
     try testing.expectEqual(@as(u32, 64), result.parsed.options.limits.max_depth);
+    try testing.expectEqual(@as(u64, 2048), result.parsed.options.limits.max_input_bytes);
 }
 
 test "byte sizes parse with binary suffixes only" {

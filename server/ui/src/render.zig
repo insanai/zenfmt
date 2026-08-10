@@ -26,7 +26,33 @@ pub fn page(arena: std.mem.Allocator, state: *const main.State) ![]const u8 {
     var out: std.Io.Writer.Allocating = .init(arena);
     const w = &out.writer;
     try navbar(w, state);
-    try converter(w, state);
+    if (state.notice.len > 0) {
+        try w.writeAll(
+            "<div class=\"alert alert-success zf-mt\" role=\"status\" " ++
+                "aria-live=\"polite\">",
+        );
+        try esc(w, state.notice);
+        try w.writeAll("</div>");
+    }
+    if (state.mode == .unknown) {
+        try w.writeAll(
+            "<div class=\"zf-mt\" role=\"status\"><span class=\"loading " ++
+                "loading-spinner\"></span> Loading zenfmt</div>",
+        );
+    } else if (!state.authenticated) {
+        try loginPage(w, state);
+    } else if (std.mem.eql(u8, state.path, "/account")) {
+        try accountPage(w, state);
+    } else if (std.mem.eql(u8, state.path, "/admin/users") and state.isAdministrator()) {
+        try usersPage(w, state);
+    } else if (std.mem.eql(u8, state.path, "/admin/audit") and state.isAdministrator()) {
+        try auditPage(w, state);
+    } else if (std.mem.eql(u8, state.path, "/admin/status") and state.isAdministrator()) {
+        try statusPage(w, state);
+    } else {
+        try converter(w, state);
+    }
+    if (state.one_time_secret.len > 0) try secretDialog(w, state);
     return out.written();
 }
 
@@ -34,11 +60,35 @@ fn navbar(w: *std.Io.Writer, state: *const main.State) !void {
     try w.writeAll(
         \\<div class="navbar bg-base-100 rounded-box shadow-sm">
         \\<div class="navbar-start"><span class="text-xl font-bold px-2">zenfmt</span>
-        \\<span class="badge badge-ghost">Convert</span></div>
-        \\<div class="navbar-end zf-gap-sm">
+        \\</div><div class="navbar-end zf-gap-sm zf-wrap">
     );
+    if (state.authenticated) {
+        try navButton(w, "nav:/", "Convert");
+        if (state.mode == .secure) try navButton(w, "nav:/account", "Account");
+        if (state.isAdministrator()) {
+            try navButton(w, "nav:/admin/users", "Users");
+            try navButton(w, "nav:/admin/audit", "Audit");
+            try navButton(w, "nav:/admin/status", "Status");
+        }
+    }
     try themeSelector(w, state);
+    if (state.authenticated and state.mode == .secure) {
+        try w.writeAll("<span class=\"badge badge-ghost\">");
+        try esc(w, state.session_name);
+        try w.writeAll(
+            "</span><button class=\"btn btn-sm\" data-action=\"logout\">" ++
+                "Log out</button>",
+        );
+    }
     try w.writeAll("</div></div>");
+}
+
+fn navButton(w: *std.Io.Writer, action: []const u8, label: []const u8) !void {
+    try w.writeAll("<button class=\"btn btn-ghost btn-sm\" data-action=\"");
+    try esc(w, action);
+    try w.writeAll("\">");
+    try esc(w, label);
+    try w.writeAll("</button>");
 }
 
 fn themeSelector(w: *std.Io.Writer, state: *const main.State) !void {
@@ -62,9 +112,22 @@ fn themeSelector(w: *std.Io.Writer, state: *const main.State) !void {
 }
 
 fn converter(w: *std.Io.Writer, state: *const main.State) !void {
-    try w.writeAll("<div class=\"zf-row zf-mt\">");
+    try w.print("<div class=\"zf-row zf-mt\" data-formats-ready=\"{s}\">", .{
+        if (state.formats_loaded) "true" else "false",
+    });
+    try dropZone(w, state);
+    try converterOptions(w, state);
+    try w.writeAll("</div>");
 
-    // Drop zone.
+    if (state.failure_html) |failure| {
+        try w.writeAll("<div class=\"zf-mt\" role=\"alert\" aria-live=\"polite\">");
+        try w.writeAll(failure);
+        try w.writeAll("</div>");
+    }
+    if (state.result) |result| try resultCard(w, result);
+}
+
+fn dropZone(w: *std.Io.Writer, state: *const main.State) !void {
     try w.writeAll(
         \\<div class="zf-grow"><label class="zf-drop" data-drop for="file-input">
     );
@@ -84,8 +147,9 @@ fn converter(w: *std.Io.Writer, state: *const main.State) !void {
         \\<input id="file-input" type="file" class="zf-hidden" />
         \\</label></div>
     );
+}
 
-    // Options card.
+fn converterOptions(w: *std.Io.Writer, state: *const main.State) !void {
     try w.writeAll(
         \\<div class="card bg-base-100 shadow-sm"><div class="card-body zf-col">
         \\<label class="form-control"><span class="label-text">to</span>
@@ -126,14 +190,293 @@ fn converter(w: *std.Io.Writer, state: *const main.State) !void {
             \\<button class="btn btn-primary" data-action="convert">Convert</button>
         );
     }
-    try w.writeAll("</div></div></div>");
+    try w.writeAll("</div></div>");
+}
 
-    if (state.failure_html) |failure| {
-        try w.writeAll("<div class=\"zf-mt\" role=\"alert\" aria-live=\"polite\">");
-        try w.writeAll(failure);
-        try w.writeAll("</div>");
+fn loginPage(w: *std.Io.Writer, state: *const main.State) !void {
+    try w.writeAll(
+        \\<main class="card bg-base-100 shadow-sm zf-mt zf-narrow"><div class="card-body">
+        \\<h1 class="card-title">Sign in</h1>
+        \\<label class="form-control"><span class="label-text">Name</span>
+        \\<input id="login-name" name="name" autocomplete="username"
+        \\ class="input input-bordered" /></label>
+        \\<label class="form-control"><span class="label-text">Password</span>
+        \\<input name="password" type="password" autocomplete="current-password"
+        \\ class="input input-bordered" /></label>
+    );
+    if (state.busy) {
+        try w.writeAll(
+            "<button class=\"btn btn-primary\" disabled><span class=\"loading " ++
+                "loading-spinner\"></span>Signing in</button>",
+        );
+    } else {
+        try w.writeAll("<button class=\"btn btn-primary\" data-action=\"login\">Sign in</button>");
     }
-    if (state.result) |result| try resultCard(w, result);
+    if (state.failure_html) |failure| try w.writeAll(failure);
+    try w.writeAll("</div></main>");
+}
+
+fn accountPage(w: *std.Io.Writer, state: *const main.State) !void {
+    try w.writeAll("<main class=\"zf-mt\"><h1 class=\"text-2xl font-bold\">Account</h1>");
+    if (state.must_change_password) {
+        try w.writeAll(
+            "<div class=\"alert alert-warning zf-mt\" role=\"alert\">" ++
+                "Change the one-time password before continuing.</div>",
+        );
+    }
+    if (state.failure_html) |failure| try w.writeAll(failure);
+    try w.writeAll(
+        \\<section class="card bg-base-100 shadow-sm zf-mt"><div class="card-body">
+        \\<h2 class="card-title">Change password</h2>
+        \\<label class="form-control"><span class="label-text">New password</span>
+        \\<input name="new_password" type="password" minlength="8"
+        \\ autocomplete="new-password" class="input input-bordered" /></label>
+        \\<button class="btn btn-primary" data-action="change_password">Change password</button>
+        \\</div></section>
+    );
+    if (!state.must_change_password) {
+        try w.writeAll(
+            \\<section class="card bg-base-100 shadow-sm zf-mt"><div class="card-body">
+            \\<h2 class="card-title">API keys</h2><div class="zf-row">
+            \\<label class="form-control zf-grow"><span class="label-text">Label</span>
+            \\<input name="key_label" class="input input-bordered" value="api key" /></label>
+            \\<button class="btn btn-primary zf-self-end" data-action="create_key">
+            \\Create key</button></div>
+        );
+        if (state.keys.len == 0) try w.writeAll("<p>No API keys.</p>");
+        for (state.keys) |key| {
+            try w.writeAll("<div class=\"zf-row zf-list-row\"><div class=\"zf-grow\"><strong>");
+            try esc(w, key.label);
+            try w.writeAll("</strong><br /><code>");
+            try esc(w, key.id);
+            try w.writeAll(
+                "</code></div><button class=\"btn btn-error btn-sm\" " ++
+                    "data-action=\"revoke_key:",
+            );
+            try esc(w, key.id);
+            try w.writeAll("\">Revoke</button></div>");
+        }
+        try w.writeAll("</div></section>");
+    }
+    try w.writeAll("</main>");
+}
+
+fn usersPage(w: *std.Io.Writer, state: *const main.State) !void {
+    try w.writeAll(
+        \\<main class="zf-mt"><div class="zf-row"><div class="zf-grow">
+        \\<h1 class="text-2xl font-bold">Users</h1><p>Manage access to this zenfmt server.</p></div>
+        \\<button class="btn btn-primary" data-action="create_user_dialog">
+        \\Create user</button></div>
+        \\<div class="card bg-base-100 shadow-sm zf-mt"><div class="card-body">
+        \\<div class="zf-row"><input name="user_query"
+        \\ class="input input-bordered input-sm zf-grow"
+        \\ placeholder="Search users" value="
+    );
+    try esc(w, state.user_query);
+    try w.writeAll(
+        "\" /><select name=\"user_role_filter\" " ++
+            "class=\"select select-bordered select-sm\">",
+    );
+    try filterOption(w, "all", "All roles", state.user_role_filter);
+    try filterOption(w, "administrator", "Administrators", state.user_role_filter);
+    try filterOption(w, "user", "Users", state.user_role_filter);
+    try w.writeAll(
+        "</select><select name=\"user_status_filter\" " ++
+            "class=\"select select-bordered select-sm\">",
+    );
+    try filterOption(w, "all", "All status", state.user_status_filter);
+    try filterOption(w, "active", "Active", state.user_status_filter);
+    try filterOption(w, "disabled", "Disabled", state.user_status_filter);
+    try w.writeAll(
+        "</select><button class=\"btn btn-sm\" data-action=\"filter_users\">" ++
+            "Apply</button></div>",
+    );
+    if (state.failure_html) |failure| try w.writeAll(failure);
+    try w.writeAll(
+        "<div class=\"overflow-x-auto\"><table class=\"table\"><thead><tr>" ++
+            "<th>Name</th><th>Role</th><th>Status</th><th>Credential</th>" ++
+            "<th></th></tr></thead><tbody>",
+    );
+    var shown: usize = 0;
+    for (state.users) |user| {
+        if (!userMatches(state, user)) continue;
+        shown += 1;
+        try w.writeAll("<tr><td>");
+        try esc(w, user.name);
+        try w.writeAll("</td><td><span class=\"badge badge-ghost\">");
+        try esc(w, user.role);
+        try w.writeAll("</span></td><td>");
+        try w.writeAll(if (user.disabled) "Disabled" else "Active");
+        try w.writeAll("</td><td>");
+        try w.writeAll(if (user.must_change_password) "One-time password" else "Set");
+        try w.writeAll("</td><td><button class=\"btn btn-sm\" data-action=\"manage_user:");
+        try esc(w, user.name);
+        try w.writeAll("\">Manage</button></td></tr>");
+    }
+    if (shown == 0) try w.writeAll("<tr><td colspan=\"5\">No users match these filters.</td></tr>");
+    try w.writeAll("</tbody></table></div></div></div>");
+    try userDialog(w, state);
+    try w.writeAll("</main>");
+}
+
+fn filterOption(
+    w: *std.Io.Writer,
+    value: []const u8,
+    label: []const u8,
+    selected: []const u8,
+) !void {
+    try w.print("<option value=\"{s}\"{s}>{s}</option>", .{
+        value,
+        if (std.mem.eql(u8, value, selected)) " selected" else "",
+        label,
+    });
+}
+
+fn userMatches(state: *const main.State, user: main.UserSummary) bool {
+    if (state.user_query.len > 0 and
+        std.ascii.indexOfIgnoreCase(user.name, state.user_query) == null)
+    {
+        return false;
+    }
+    if (!std.mem.eql(u8, state.user_role_filter, "all") and
+        !std.mem.eql(u8, state.user_role_filter, user.role)) return false;
+    if (std.mem.eql(u8, state.user_status_filter, "active") and user.disabled) return false;
+    if (std.mem.eql(u8, state.user_status_filter, "disabled") and !user.disabled) return false;
+    return true;
+}
+
+fn selectedUser(state: *const main.State) ?main.UserSummary {
+    for (state.users) |user| {
+        if (std.mem.eql(u8, user.name, state.selected_user)) return user;
+    }
+    return null;
+}
+
+fn isLastActiveAdministrator(state: *const main.State, selected: main.UserSummary) bool {
+    if (selected.disabled or !std.mem.eql(u8, selected.role, "administrator")) return false;
+    var count: usize = 0;
+    for (state.users) |user| {
+        if (!user.disabled and std.mem.eql(u8, user.role, "administrator")) count += 1;
+    }
+    return count == 1;
+}
+
+fn userDialog(w: *std.Io.Writer, state: *const main.State) !void {
+    const selected = selectedUser(state);
+    try w.writeAll("<dialog id=\"user-dialog\" class=\"modal\"><div class=\"modal-box\">");
+    if (state.failure_html) |failure| try w.writeAll(failure);
+    if (selected) |user| {
+        const last_administrator = isLastActiveAdministrator(state, user);
+        try w.writeAll("<h2 class=\"text-xl font-bold\">Manage ");
+        try esc(w, user.name);
+        try w.writeAll("</h2>");
+        if (last_administrator) try w.writeAll(
+            "<div class=\"alert alert-warning zf-mt\">This is the last active " ++
+                "administrator. Its role, status, and account cannot be " ++
+                "removed.</div>",
+        );
+        try w.writeAll(
+            "<label class=\"form-control\"><span class=\"label-text\">Role" ++
+                "</span><select name=\"manage_role\" " ++
+                "class=\"select select-bordered\"",
+        );
+        if (last_administrator) try w.writeAll(" disabled");
+        try w.writeAll(">");
+        try filterOption(w, "user", "User", user.role);
+        try filterOption(w, "administrator", "Administrator", user.role);
+        try w.writeAll(
+            "</select></label><label class=\"form-control\"><span " ++
+                "class=\"label-text\">Status</span><select " ++
+                "name=\"manage_disabled\" class=\"select select-bordered\"",
+        );
+        if (last_administrator) try w.writeAll(" disabled");
+        try w.writeAll(">");
+        try filterOption(w, "false", "Active", if (user.disabled) "true" else "false");
+        try filterOption(w, "true", "Disabled", if (user.disabled) "true" else "false");
+        try w.writeAll(
+            "</select></label><label class=\"form-control\"><span " ++
+                "class=\"label-text\">Type the account name to confirm " ++
+                "deletion</span><input name=\"delete_confirm\" " ++
+                "class=\"input input-bordered\"",
+        );
+        if (last_administrator) try w.writeAll(" disabled");
+        try w.writeAll(
+            " /></label><div class=\"modal-action zf-wrap\"><button " ++
+                "class=\"btn btn-primary\" data-action=\"save_user\">Save" ++
+                "</button><button class=\"btn\" data-action=\"reset_user\">" ++
+                "Reset password</button><button class=\"btn btn-error\" " ++
+                "data-action=\"delete_user\"",
+        );
+        if (last_administrator) try w.writeAll(" disabled");
+        try w.writeAll(">Delete</button>");
+    } else {
+        try w.writeAll(
+            \\<h2 class="text-xl font-bold">Create user</h2>
+            \\<label class="form-control"><span class="label-text">Name</span>
+            \\<input id="user-name" name="user_name" maxlength="64"
+            \\ class="input input-bordered" /></label>
+            \\<label class="form-control"><span class="label-text">Role</span>
+            \\<select name="user_role" class="select select-bordered">
+            \\<option value="user">User</option>
+            \\<option value="administrator">Administrator</option></select></label>
+            \\<div class="modal-action"><button class="btn btn-primary"
+            \\ data-action="create_user">Create</button>
+        );
+    }
+    try w.writeAll(
+        "<button class=\"btn\" data-action=\"close_user_dialog\">Cancel" ++
+            "</button></div></div></dialog>",
+    );
+}
+
+fn auditPage(w: *std.Io.Writer, state: *const main.State) !void {
+    try w.writeAll(
+        "<main class=\"zf-mt\"><h1 class=\"text-2xl font-bold\">Audit</h1>" ++
+            "<div class=\"card bg-base-100 shadow-sm zf-mt\"><div " ++
+            "class=\"card-body overflow-x-auto\"><table class=\"table\">" ++
+            "<thead><tr><th>Time</th><th>Actor</th><th>Action</th>" ++
+            "<th>Subject</th></tr></thead><tbody>",
+    );
+    for (state.audit) |record| {
+        try w.print("<tr><td>{d}</td><td>", .{record.at});
+        try esc(w, record.actor);
+        try w.writeAll("</td><td>");
+        try esc(w, record.action);
+        try w.writeAll("</td><td>");
+        try esc(w, record.subject);
+        try w.writeAll("</td></tr>");
+    }
+    try w.writeAll("</tbody></table></div></div></main>");
+}
+
+fn statusPage(w: *std.Io.Writer, state: *const main.State) !void {
+    try w.writeAll(
+        "<main class=\"zf-mt\"><h1 class=\"text-2xl font-bold\">Server " ++
+            "status</h1><div class=\"card bg-base-100 shadow-sm zf-mt\">" ++
+            "<div class=\"card-body\"><p>",
+    );
+    if (state.notice.len > 0) try esc(w, state.notice) else try w.writeAll("Loading status.");
+    try w.writeAll("</p></div></div></main>");
+}
+
+fn secretDialog(w: *std.Io.Writer, state: *const main.State) !void {
+    try w.writeAll(
+        "<dialog id=\"secret-dialog\" class=\"modal\"><div " ++
+            "class=\"modal-box\"><h2 class=\"text-xl font-bold\">Save this " ++
+            "secret now</h2><p>The secret for <strong>",
+    );
+    try esc(w, state.one_time_subject);
+    try w.writeAll(
+        "</strong> is shown once.</p><input class=\"input input-bordered " ++
+            "w-full\" readonly value=\"",
+    );
+    try esc(w, state.one_time_secret);
+    try w.writeAll(
+        "\" /><div class=\"modal-action\"><button class=\"btn\" " ++
+            "data-action=\"copy_secret\">Copy</button><button " ++
+            "class=\"btn btn-primary\" data-action=\"close_secret\">Done" ++
+            "</button></div></div></dialog>",
+    );
 }
 
 fn resultCard(w: *std.Io.Writer, result: main.Result) !void {
@@ -290,6 +633,62 @@ pub fn parseWriters(gpa: std.mem.Allocator, body: []const u8) ![]const []const u
         try writers.append(gpa, try gpa.dupe(u8, format));
     }
     return writers.toOwnedSlice(gpa);
+}
+
+pub fn parseUsers(gpa: std.mem.Allocator, body: []const u8) ![]const main.UserSummary {
+    const Document = struct { users: []main.UserSummary };
+    const document = try std.json.parseFromSliceLeaky(Document, gpa, body, .{
+        .ignore_unknown_fields = true,
+    });
+    return document.users;
+}
+
+pub fn parseAudit(gpa: std.mem.Allocator, body: []const u8) ![]const main.AuditRecord {
+    const Document = struct { audit: []main.AuditRecord };
+    const document = try std.json.parseFromSliceLeaky(Document, gpa, body, .{
+        .ignore_unknown_fields = true,
+    });
+    return document.audit;
+}
+
+pub fn parseKeys(gpa: std.mem.Allocator, body: []const u8) ![]const main.KeySummary {
+    const Document = struct { keys: []main.KeySummary };
+    const document = try std.json.parseFromSliceLeaky(Document, gpa, body, .{
+        .ignore_unknown_fields = true,
+    });
+    return document.keys;
+}
+
+pub fn envelopeFailure(
+    gpa: std.mem.Allocator,
+    body: []const u8,
+    fallback: []const u8,
+) ![]const u8 {
+    const outcome = parseEnvelope(gpa, body) catch return transportFailure(gpa, fallback);
+    return outcome.failure_html orelse transportFailure(gpa, fallback);
+}
+
+pub fn statusSummary(gpa: std.mem.Allocator, body: []const u8) ![]const u8 {
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const value = try std.json.parseFromSliceLeaky(
+        std.json.Value,
+        arena_state.allocator(),
+        body,
+        .{},
+    );
+    if (value != .object) return error.Malformed;
+    const version = stringOf(value.object.get("version")) orelse return error.Malformed;
+    const mode = stringOf(value.object.get("mode")) orelse return error.Malformed;
+    const uptime = value.object.get("uptime_seconds") orelse return error.Malformed;
+    const active = value.object.get("conversions_active") orelse return error.Malformed;
+    const cap = value.object.get("conversions_cap") orelse return error.Malformed;
+    if (uptime != .integer or active != .integer or cap != .integer) return error.Malformed;
+    return std.fmt.allocPrint(
+        gpa,
+        "zenfmt {s}, {s} mode, uptime {d} seconds, {d} of {d} conversion slots active.",
+        .{ version, mode, uptime.integer, active.integer, cap.integer },
+    );
 }
 
 // ---------------------------------------------------------------- tests

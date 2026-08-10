@@ -470,6 +470,8 @@ engine's mapping.
     document was required. HTTP 400.],
   [`server.invalid-query`], [error], [usage], [A query parameter carries a
     value the route does not recognize. HTTP 400.],
+  [`server.invalid-request`], [error], [usage], [A JSON body is malformed
+    or contains a value the route does not accept. HTTP 400.],
   [`server.unknown-route`], [error], [usage], [No route matches the
     path; the admin plane in open mode answers identically. HTTP 404.],
   [`server.method-not-allowed`], [error], [usage], [The path exists under

@@ -172,11 +172,6 @@ const specs = [_]zenserve.metrics.Spec{
         .kind = .counter,
         .Labels = struct { kind: AuthFailureKind },
     },
-    .{
-        .name = "zenfmt_events_dropped_total",
-        .help = "Admin events dropped past slow SSE subscribers.",
-        .kind = .counter,
-    },
 };
 
 pub const AuthFailureKind = enum { password, token, key };

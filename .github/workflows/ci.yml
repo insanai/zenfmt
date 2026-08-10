@@ -48,6 +48,9 @@ jobs:
       - name: Run the test suite
         run: zig build test
 
+      - name: Build the conversion-only configuration
+        run: zig build -Dserver=false
+
   wasm:
     name: browser module
     runs-on: ubuntu-latest
@@ -65,6 +68,12 @@ jobs:
       # "this module has no host authority" a fact rather than an assertion.
       - name: Build and audit the browser module
         run: zig build wasm-check -Dgit-revision=${{ github.sha }}
+
+      - name: Install Chromium for the server interface gate
+        run: uv run --project docs/site playwright install --with-deps chromium
+
+      - name: Exercise the open and secure server interfaces
+        run: zig build server-browser-test
 
       - name: Record the module size
         run: |

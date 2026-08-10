@@ -17,6 +17,14 @@ body {
 .zf-gap-sm { gap: 0.5rem; }
 .zf-mt { margin-top: 1rem; }
 .zf-right { margin-left: auto; }
+.zf-wrap { flex-wrap: wrap; }
+.zf-narrow { max-width: 32rem; margin-left: auto; margin-right: auto; }
+.zf-self-end { align-self: flex-end; }
+.zf-list-row {
+  align-items: center;
+  border-top: 1px solid var(--color-base-300);
+  padding-top: 0.75rem;
+}
 .zf-drop {
   border: 2px dashed var(--color-base-300);
   border-radius: var(--radius-box, 1rem);

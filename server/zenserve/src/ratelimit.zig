@@ -27,7 +27,9 @@ const tokens_per_unit = 1000;
 /// zero-refill policy is a block, not a rate, and belongs elsewhere.
 pub const Policy = struct {
     capacity: u32,
-    refill_per_second: u32,
+    /// Thousandths of one token restored per second. This supports policies
+    /// slower than one request per second without floating point.
+    refill_milli_per_second: u32,
 };
 
 /// The verdict for one request. `retry_after_seconds` is zero when
@@ -57,6 +59,7 @@ pub fn Buckets(comptime slot_count: usize) type {
             tokens_milli: u64,
             last_refill_ms: i64,
             last_use_ms: i64,
+            refill_remainder: u16,
         };
 
         const empty_slot: Slot = .{
@@ -65,6 +68,7 @@ pub fn Buckets(comptime slot_count: usize) type {
             .tokens_milli = 0,
             .last_refill_ms = 0,
             .last_use_ms = 0,
+            .refill_remainder = 0,
         };
 
         pub const init: Self = .{
@@ -85,7 +89,7 @@ pub fn Buckets(comptime slot_count: usize) type {
             now_ms: i64,
         ) Decision {
             assert(policy.capacity > 0);
-            assert(policy.refill_per_second > 0);
+            assert(policy.refill_milli_per_second > 0);
             self.mutex.lock(io) catch {
                 return .{ .allowed = false, .retry_after_seconds = 1 };
             };
@@ -110,6 +114,7 @@ pub fn Buckets(comptime slot_count: usize) type {
                 .tokens_milli = capacityMilli(policy) - tokens_per_unit,
                 .last_refill_ms = now_ms,
                 .last_use_ms = now_ms,
+                .refill_remainder = 0,
             };
             return .{ .allowed = true, .retry_after_seconds = 0 };
         }
@@ -127,10 +132,15 @@ pub fn Buckets(comptime slot_count: usize) type {
             const cap_milli = capacityMilli(policy);
             assert(slot.tokens_milli <= cap_milli);
 
-            // One millisecond refills `refill_per_second` thousandths.
+            // The numerator carries the sub-thousandth remainder across
+            // calls, so frequent requests cannot round a slow policy down to
+            // zero forever.
             const elapsed_ms: u64 = @intCast(@max(0, now_ms - slot.last_refill_ms));
-            const refilled: u128 = @as(u128, slot.tokens_milli) +
-                @as(u128, elapsed_ms) * policy.refill_per_second;
+            const numerator: u128 = @as(u128, elapsed_ms) *
+                policy.refill_milli_per_second + slot.refill_remainder;
+            const added_milli: u64 = @intCast(numerator / 1000);
+            slot.refill_remainder = @intCast(numerator % 1000);
+            const refilled: u128 = @as(u128, slot.tokens_milli) + added_milli;
             slot.tokens_milli = @intCast(@min(refilled, cap_milli));
             slot.last_refill_ms = now_ms;
             slot.last_use_ms = now_ms;
@@ -142,8 +152,8 @@ pub fn Buckets(comptime slot_count: usize) type {
             const deficit_milli = tokens_per_unit - slot.tokens_milli;
             const wait_ms = std.math.divCeil(
                 u64,
-                deficit_milli,
-                policy.refill_per_second,
+                @as(u64, deficit_milli) * 1000,
+                policy.refill_milli_per_second,
             ) catch unreachable;
             const wait_s = std.math.divCeil(u64, wait_ms, 1000) catch unreachable;
             assert(wait_s <= 1000);
@@ -177,7 +187,7 @@ test "burst up to capacity, then deny" {
     const io = threaded.io();
 
     var buckets: Buckets(16) = .init;
-    const policy: Policy = .{ .capacity = 5, .refill_per_second = 1 };
+    const policy: Policy = .{ .capacity = 5, .refill_milli_per_second = 1000 };
     var i: usize = 0;
     while (i < 5) : (i += 1) {
         const decision = buckets.allow(io, 0x1234, policy, 0);
@@ -195,7 +205,7 @@ test "refill over simulated time" {
     const io = threaded.io();
 
     var buckets: Buckets(16) = .init;
-    const policy: Policy = .{ .capacity = 3, .refill_per_second = 1 };
+    const policy: Policy = .{ .capacity = 3, .refill_milli_per_second = 1000 };
     var i: usize = 0;
     while (i < 3) : (i += 1) {
         try testing.expect(buckets.allow(io, 7, policy, 0).allowed);
@@ -220,7 +230,7 @@ test "retry-after is the ceiling of the wait, minimum one" {
     const io = threaded.io();
 
     var buckets: Buckets(16) = .init;
-    const policy: Policy = .{ .capacity = 1, .refill_per_second = 1 };
+    const policy: Policy = .{ .capacity = 1, .refill_milli_per_second = 1000 };
     try testing.expect(buckets.allow(io, 9, policy, 0).allowed);
     // Empty bucket, one token per second: exactly one second away.
     try testing.expectEqual(
@@ -234,6 +244,19 @@ test "retry-after is the ceiling of the wait, minimum one" {
     );
 }
 
+test "a sub-token-per-second policy retains fractional refill" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var buckets: Buckets(8) = .init;
+    const policy: Policy = .{ .capacity = 1, .refill_milli_per_second = 167 };
+    try testing.expect(buckets.allow(io, 1, policy, 0).allowed);
+    try testing.expect(!buckets.allow(io, 1, policy, 1000).allowed);
+    try testing.expect(!buckets.allow(io, 1, policy, 5000).allowed);
+    try testing.expect(buckets.allow(io, 1, policy, 6000).allowed);
+}
+
 test "eviction forgets the least recently used key in the window" {
     var threaded: std.Io.Threaded = .init(testing.allocator, .{});
     defer threaded.deinit();
@@ -242,7 +265,7 @@ test "eviction forgets the least recently used key in the window" {
     // Every key hashes to home slot 0, so all traffic shares one
     // eight-slot probe window.
     var buckets: Buckets(8) = .init;
-    const policy: Policy = .{ .capacity = 1, .refill_per_second = 1 };
+    const policy: Policy = .{ .capacity = 1, .refill_milli_per_second = 1000 };
 
     // Key 0 spends its only token; its bucket is empty but resident.
     try testing.expect(buckets.allow(io, 0 * 8, policy, 0).allowed);
@@ -275,7 +298,7 @@ test "probe window bounds the search" {
     // keys force one eviction even though free slots exist beyond the
     // window: the ninth key must land inside slots home..home+7.
     var buckets: Buckets(16) = .init;
-    const policy: Policy = .{ .capacity = 2, .refill_per_second = 1 };
+    const policy: Policy = .{ .capacity = 2, .refill_milli_per_second = 1000 };
     var k: u64 = 0;
     while (k < 9) : (k += 1) {
         try testing.expect(buckets.allow(io, k * 16, policy, @intCast(k)).allowed);
@@ -296,7 +319,7 @@ test "a found key deeper in the window keeps its state" {
     const io = threaded.io();
 
     var buckets: Buckets(8) = .init;
-    const policy: Policy = .{ .capacity = 2, .refill_per_second = 1 };
+    const policy: Policy = .{ .capacity = 2, .refill_milli_per_second = 1000 };
     // Three same-home keys: the third lives at slot 2.
     try testing.expect(buckets.allow(io, 0, policy, 0).allowed);
     try testing.expect(buckets.allow(io, 8, policy, 0).allowed);

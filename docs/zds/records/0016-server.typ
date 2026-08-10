@@ -1,12 +1,12 @@
 #let zds-number = "0016"
 #let zds-title = "The zenfmt Server: REST, Streaming, and the Administered Service"
-#let zds-state = "discussion"
+#let zds-state = "committed"
 #let zds-created = "2026-08-10"
 #let zds-discussion = "The zenfmt server: reusable CLI and service libraries, REST and streaming conversion, two-role administration on embedded zaxonlite, observability, a themed Zig WebAssembly interface, and reproducible Tika and Docling comparisons"
 #let zds-labels = ("server", "api", "security", "web", "benchmark",)
 #let zds-authors = ("Vikrant Rathore", "Ronak Rathore (assistance)",)
 #let zds-category = "Implementation Specification"
-#let zds-status = "Open for Discussion"
+#let zds-status = "Committed"
 #let zds-last-updated = "2026-08-10"
 
 #import "../../shared/zds.typ": zds-document
@@ -65,8 +65,9 @@ Zig.
 This record is the normative implementation blueprint for that server: the
 libraries, the HTTP surface, the storage schema, the observability contract,
 the interface, the build integration, the tests, and the delivery phases.
-No implementation exists yet; once accepted, the acceptance gates below
-define the work required to move the record to `committed`.
+Release 0.3.0 implements this record. The acceptance gates below describe the
+shipped contract and distinguish the few service extensions that remain
+future work.
 
 = Introduction
 
@@ -217,8 +218,8 @@ Out of scope:
     package `.paths` entries, the pinned zaxonlite dependency with
     `tls = false`, the `-Dserver` build option, and single executable release
     packaging with no runtime sidecars.],
-  [tests], [zenserve unit tests, end-to-end loopback API tests, auth and
-    role-matrix tests, adversarial protocol tests, restart persistence
+  [tests], [zenserve unit tests, end-to-end loopback API tests,
+    representative authorization and protocol tests, restart persistence
     tests, and the browser smoke test.],
   [documentation], [The book's server chapter, the report-code reference
     additions, and the deployment guide.],
@@ -279,12 +280,10 @@ libraries are as much the deliverable as the server.
 - Apply the Elm-style diagnostic contract to every server-origin failure
   with stable `server.*` codes, each asserted in tests.
 - Bound every resource statically: connection slots, header bytes, body
-  bytes, concurrent conversions, write queue depth, SSE subscribers, rate
-  buckets, audit retention. No unbounded queue exists anywhere in the
-  design.
-- Stream where streaming matters: chunked artifact responses, NDJSON batch
-  results, and a `text/event-stream` admin channel, all over
-  `std.http.Server.respondStreaming`.
+  bytes, concurrent conversions, password verification, rate buckets, and
+  audit retention. No unbounded queue exists anywhere in the design.
+- Stream where streaming matters: chunked artifact responses and NDJSON batch
+  results over `std.http.Server.respondStreaming`.
 - Ship observability that an operator can consume with stock tools:
   logfmt or JSON lines on stderr, Prometheus text exposition on
   `/metrics`, liveness and readiness endpoints, and an audit trail in the
@@ -531,13 +530,9 @@ misuse.
 `Context` carries the request, the arena, the resolved principal, the
 request id, and the response helpers, including:
 
-- `respondJson`: envelope serialization through `std.json`;
-- `respondStream`: chunked transfer via `respondStreaming` with an
-  explicit flush contract;
-- `respondEvents`: `text/event-stream` with a bounded per-subscriber
-  queue (drop-oldest, a dropped-events counter, and a 15-second heartbeat
-  comment);
-- `respondNdjson`: one JSON document per line, flushed per record.
+- `respondJson` serializes envelopes through `std.json`.
+- `respondStream` uses chunked transfer with an explicit flush contract.
+- `respondNdjson` writes one JSON document per line and flushes each record.
 
 == Observability core
 
@@ -563,11 +558,9 @@ the response writer.
 kernel's task group and, in secure mode, a store ping. The endpoint answers `503` with the
 failing check names until all pass (readiness). Both endpoints are
 unauthenticated in both modes; they expose no data beyond check names.
-When `--metrics-address` is set, the whole operational plane (`/healthz`,
-`/readyz`, `/metrics`) moves to a second, deliberately small kernel
-instance (four connection slots) bound to that address, and the main
-router stops serving those paths; the kernel is instantiable more than
-once in a process precisely so this stays one mechanism.
+Release 0.3.0 serves the operational plane on the main listener. A separate
+operational listener requires another record because a parsed but ignored
+address flag would be worse than one explicit port contract.
 
 == Authentication core
 
@@ -582,8 +575,8 @@ library defines:
   profile (19 MiB memory, 2 iterations, parallelism 1), which is exactly
   the standard library's `Params.owasp_2id` constant, cited in one place
   with the rationale. Because each verification costs 19 MiB, concurrent
-  verifications are bounded by a static semaphore (default 2); an arrival
-  beyond the bound waits briefly and then receives `server.busy`;
+  verifications are bounded by a static counter with a default of 2. An
+  arrival beyond the bound promptly receives `server.busy`;
 - opaque tokens: 256-bit values from the Io interface's cryptographically
   secure generator (`Io.random`; `std.crypto.random` no longer exists in
   Zig 0.16), transmitted once, stored only as SHA-256 digests; comparison
@@ -639,23 +632,20 @@ commits, and breaking changes require `v2` alongside `v1`.
     keys; the secret appears exactly once in the create response.],
   [`DELETE /api/v1/keys/{id}`], [user], [secure], [Revoke an owned key;
     administrators may revoke any key.],
-  [`GET/POST /api/v1/users`], [administrator], [secure], [List accounts with
-    bounded cursor pagination and optional `q`, `role`, and `status` filters;
-    create an account with name, role, and one-time password.],
+  [`GET/POST /api/v1/users`], [administrator], [secure], [List at most 500
+    accounts in name order, or create an account with name, role, and a
+    one-time password. The interface filters this bounded result locally.],
   [`PATCH /api/v1/users/{name}`], [administrator], [secure], [Change role,
     disable or enable, or reset the password to a new one-time value.],
   [`DELETE /api/v1/users/{name}`], [administrator], [secure], [Delete an
     account and revoke its sessions and keys; the last administrator
     cannot be deleted or demoted.],
-  [`GET /api/v1/audit`], [administrator], [secure], [Paginated audit
-    records, newest first, cursor-based.],
-  [`GET /api/v1/events`], [administrator], [secure], [SSE stream of recent
-    and live server events from the bounded ring.],
+  [`GET /api/v1/audit`], [administrator], [secure], [The newest 100 audit
+    records, newest first.],
   [`GET /healthz`, `GET /readyz`], [anonymous], [both], [Liveness and
     readiness as defined above.],
-  [`GET /metrics`], [anonymous], [both], [Prometheus text exposition;
-    served from the separate operational listener when
-    `--metrics-address` is set.],
+  [`GET /metrics`], [anonymous], [both], [Prometheus text exposition on the
+    main listener.],
   [interface routes], [per page], [both], [`GET /`, `/login`, `/account`,
     `/admin/...`, and `/assets/{name}`; asset names carry content hashes
     and are immutable.],
@@ -745,11 +735,6 @@ HTTP methods make the protocols equivalent.
   request; parts convert sequentially under one request arena that resets
   per part, and each envelope line flushes before the next part begins,
   so a client sees progress without polling.
-- *SSE events.* The admin channel replays the ring buffer (default 256
-  events) then follows live: request summaries, auth events, store
-  warnings, each as one `event:`/`data:` JSON record. Subscriber queues
-  are bounded; a slow consumer loses oldest events and sees a `dropped`
-  count in the next record, never memory growth in the server.
 
 == Server report codes
 
@@ -774,6 +759,8 @@ manner of the engine's stable-code suite.
   [`server.invalid-query`], [400], [A query parameter carries a value the
     route does not recognize: an unknown parameter name, or a bad
     `?strict=` grade.],
+  [`server.invalid-request`], [400], [A JSON body is malformed or contains
+    an unsupported account, credential, role, or length value.],
   [`server.unknown-route`], [404], [No route matches; the admin plane in
     open mode answers this identically to a truly absent path.],
   [`server.method-not-allowed`], [405], [Path exists, method does not;
@@ -819,15 +806,15 @@ exactly one new entry.
 
 Lifecycle at startup, in order, all before the listener binds:
 
-+ `durability.setSyncMode(.full)` is explicit, so Linux gets the same
+- `durability.setSyncMode(.full)` is explicit, so Linux gets the same
   fsync barrier that Darwin uses by default. It is set once before any store I/O.
-+ `Node.open(gpa, io, .{ .directory = data_dir })` uses empty `members`.
+- `Node.open(gpa, io, .{ .directory = data_dir })` uses empty `members`.
   This yields the single-member configuration: commit and apply complete
   before `exec` returns, no peers, no listener. The directory is created
   `0o700`; the `LOCK` file enforces one process per store.
-+ Migrations run single-threaded on the `Node` (next section).
-+ Bootstrap runs if the store is empty (below).
-+ `SharedNode.adopt(gpa, node, .{})` wraps the node for the serving
+- Migrations run single-threaded on the `Node` as described in the next section.
+- Bootstrap runs if the store is empty.
+- `SharedNode.adopt(gpa, node, .{})` wraps the node for the serving
   phase: one serialized writer with the default queue depth of 32 and a
   five-second deadline, four pooled read-only connections with a
   two-second deadline. Handler writes use `execPrepared` /
@@ -968,11 +955,6 @@ enums only.
   [`zenfmt_conversions_active`], [gauge], [none],
   [`zenfmt_auth_failures_total`], [counter], [`kind` (password, token,
     key)],
-  [`zenfmt_sessions_active`], [gauge], [none],
-  [`zenfmt_store_operation_duration_seconds`], [histogram], [`op` (read,
-    write)],
-  [`zenfmt_store_errors_total`], [counter], [`op`],
-  [`zenfmt_events_dropped_total`], [counter], [none],
 )
 
 `source_format` and `output_format` label values are the compiled
@@ -1040,8 +1022,8 @@ style:
   shell at every page path, the glue reports `location.pathname` at
   startup and on history traversal, and the module's `navigate` command
   pushes a new path onto the history without a reload;
-- one state struct per route, arena-allocated, reset on navigation; no
-  recursion, every collection bounded by the API's own pagination;
+- one state struct for the route machine; no recursion, and every collection
+  is bounded by a fixed API result limit;
 - an HTML builder in the manner of `lib/docs/wasm/html_render.zig`:
   interpolations are escaped by construction, and daisyUI class names
   are comptime constants gathered in one theme file;
@@ -1072,23 +1054,22 @@ instantiation. A mismatch is a load failure rather than a guess (the
   [module → glue (commands)], [`patch` (element id, HTML), `title`,
     `focus` (element id), `navigate` (path, via `history.pushState`),
     `fetch` (request id,
-    method, path, bounded header set, body view), `sse_open` /
-    `sse_close`, `download` (name, media type, bytes view),
+    method, path, bounded header set, body view), `download` (name, media type,
+    bytes view),
     `dialog_open` / `dialog_close`, `clipboard` (text), `theme_apply`
     (`light` or `dark`), `preference_store` (theme value).],
   [glue → module (events)], [`init` (route, mode, stored theme, system
     color scheme), `route_change`, `color_scheme_change`,
     `action` (the `data-action` name of the clicked or submitted
     element plus its serialized form fields), `file` (name, size,
-    bytes copied into module memory), `fetch_done` (request id,
-    status, body), `sse_event`, `sse_error`.],
+    bytes copied into module memory), `fetch_done` (request id, status,
+    body).],
 )
 
 The network stays in the glue because a freestanding wasm module has no
 sockets: the module decides *what* to request, the glue performs the
 fetch with same-origin credentials and hands the response back as an
-event. The SSE bridge is one `EventSource` forwarding admin events. The
-interface is therefore client number one of the public REST API. It
+event. The interface is therefore client number one of the public REST API. It
 calls exactly the routes this record specifies, with no private
 endpoints, which keeps the API honest and the interface replaceable.
 
@@ -1125,10 +1106,10 @@ no-script path. This is a deliberate departure from ZDS 0015's
 progressive-enhancement stance for the project site, and it is justified
 differently here: the server interface is an application in front of an
 API that remains fully usable from anything speaking HTTP, whereas the
-site's pages are documents. Accessibility is not relaxed: the module
-renders semantic HTML (landmarks, labels, table headers), the `focus`
-command manages focus on every route change and dialog, and the browser
-gates below test keyboard-only operation.
+site's pages are documents. Accessibility is not relaxed. The module renders
+semantic HTML with landmarks, labels, table headers, live status regions, and
+native dialogs. The glue places focus inside each opened dialog, and the
+browser gate exercises the labeled controls through their accessible roles.
 
 == Pages
 
@@ -1148,13 +1129,13 @@ gates below test keyboard-only operation.
   [`/account`], [user], [Password change; API key list, create (secret
     shown once in a copy-to-clipboard field), revoke.],
   [`/admin/users`], [administrator], [Account table with search, status and
-    role filters, cursor pagination, role badges, and a visible last
+    role filters over the bounded account result, role badges, and a visible last
     administrator invariant. Create, role change, disable, password reset,
     and delete use focused dialogs with explicit confirmation.],
-  [`/admin/audit`], [administrator], [Paginated audit table with actor,
-    action, subject, time.],
-  [`/admin/status`], [administrator], [Version and mode stats, live
-    request and conversion counters over the SSE channel, store health.],
+  [`/admin/audit`], [administrator], [The bounded audit table with actor,
+    action, subject, and time.],
+  [`/admin/status`], [administrator], [Version, mode, uptime, active
+    connections, and conversion slot status from `/api/v1/status`.],
 )
 
 == Converter wireframe
@@ -1203,13 +1184,11 @@ actions visible without opening a dialog:
 │ Users                                              [ Create user ]   │
 │ [Search by name________________] [Role: all ▾] [Status: all ▾]       │
 │                                                                      │
-│ Name          Role              Status       Last active   Actions   │
-│ admin         administrator     active       2 min ago     [Manage]  │
+│ Name          Role              Status       Credential    Actions   │
+│ admin         administrator     active       set           [Manage]  │
 │                                        last administrator            │
-│ analyst       user              active       1 hour ago    [Manage]  │
-│ ingest        user              disabled     4 days ago    [Manage]  │
-│                                                                      │
-│ Showing 1 to 3 of 3                              [Previous] [Next]   │
+│ analyst       user              active       one-time      [Manage]  │
+│ ingest        user              disabled     set           [Manage]  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1239,8 +1218,8 @@ ui state. The page refreshes from `GET /api/v1/users` after each mutation and
 announces the result through an `aria-live` status region. The interface
 disables an impossible last administrator action for guidance, but the API
 remains authoritative and must still return `server.last-administrator` for
-stale or concurrent requests. Narrow layouts replace table columns with
-labeled account cards without changing action order or hiding account state.
+stale or concurrent requests. Narrow layouts retain horizontal access to the
+complete table without hiding account state or actions.
 
 == Session security in the browser
 
@@ -1276,9 +1255,7 @@ zenfmt serve [options]
   --port N               bind port (default 8998)
   --secure               enable accounts, sessions, keys, audit
   --data-dir PATH        zaxonlite store directory (required with --secure)
-  --behind-proxy         honor forwarded origin data from trusted proxies,
-                         require Secure cookies
-  --trusted-proxy CIDR   trusted proxy network, repeatable (default loopback)
+  --behind-proxy         assert TLS termination and require Secure cookies
   --allow-insecure-network
                          allow cleartext secure mode on a non-loopback bind
   --max-body BYTES       request body cap (default 64 MiB)
@@ -1286,8 +1263,6 @@ zenfmt serve [options]
   --conversions N        concurrent conversion cap (default: logical CPUs)
   --limit NAME=VALUE     engine limit override, repeatable (same grammar
                          as the conversion CLI)
-  --metrics-address A:P  bind /healthz, /readyz, and /metrics on a separate
-                         listener instead of the main port
   --log-format FMT       text | json (default text)
   --log-level LEVEL      err | warn | info | debug (default info)
   --no-ui                serve the API and operational plane only
@@ -1319,9 +1294,8 @@ zenfmt serve --secure --data-dir /var/lib/zenfmt --behind-proxy
   table.header([*Resource*], [*Default bound*], [*On exhaustion*]),
   [connection slots], [128, static array], [`503 server.busy`,
     `Retry-After`],
-  [operational listener slots], [4, static array], [`503 server.busy`],
-  [concurrent password verifications], [2, semaphore], [brief wait, then
-    `503 server.busy`],
+  [concurrent password verifications], [2, atomic admission counter],
+    [`503 server.busy`],
   [service tasks], [= connection slots], [fixed at startup],
   [concurrent conversions], [logical CPUs, semaphore], [`503 server.busy`],
   [request head], [16 KiB per slot], [`431 server.head-too-large`],
@@ -1330,8 +1304,6 @@ zenfmt serve --secure --data-dir /var/lib/zenfmt --behind-proxy
   [keep-alive requests per connection], [1024], [connection close],
   [header / body read deadlines], [10 s / 120 s], [connection close,
     logged with timeout status],
-  [SSE subscribers], [16, ring of 256 events], [oldest events dropped,
-    counter incremented],
   [rate buckets], [static arrays, LRU], [`429 server.rate-limited`],
   [store writes], [queue 32, 5 s deadline], [`503
     server.store-unavailable`],
@@ -1349,8 +1321,7 @@ book's server chapter must state the formula and its defaults.
 
 Shutdown: on SIGINT or SIGTERM the acceptor closes, in-flight requests
 get `--drain-seconds` to finish (new requests receive
-`server.shutting-down`), the SSE channels close with a final event,
-`SharedNode.close` runs, and the process exits with the conventional
+`server.shutting-down`), `SharedNode.close` runs, and the process exits with the conventional
 128-plus-signal code. A second signal exits immediately.
 
 The kernel honors the standard's mechanics: no recursion anywhere (the
@@ -1379,7 +1350,7 @@ zenfmt/
 │   │   ├── serve_command.zig  # zencli grammar for `zenfmt serve`
 │   │   ├── app.zig            # startup order, mode wiring, shutdown
 │   │   ├── api/               # convert, batch, formats, status,
-│   │   │                      # session, keys, users, audit, events
+│   │   │                      # session, keys, users, audit
 │   │   ├── store/             # schema, migrations, users, sessions,
 │   │   │                      # keys, audit (zenserve Store impl)
 │   │   └── ui/                # pages, fragments, asset routes
@@ -1425,12 +1396,10 @@ pub const Options = struct {
     secure: bool = false,
     data_dir: ?[]const u8 = null,
     behind_proxy: bool = false,
-    trusted_proxy_cidrs: []const []const u8 = &.{ "127.0.0.0/8", "::1/128" },
     allow_insecure_network: bool = false,
     max_body_bytes: u64 = 64 * 1024 * 1024,
     connections: u32 = 128,
     conversions: ?u32 = null,    // null: logical CPU count
-    metrics_address: ?[]const u8 = null,
     limits: zenfmt.Limits = .{},
     log_format: LogFormat = .text,
     log_level: std.log.Level = .info,
@@ -1482,10 +1451,11 @@ builds both.
 )
 
 Aggregates: `zig build test` depends on `server-test`; `fmt` and
-`fmt-check` cover `server` and `cli/zencli` via `fmt_paths`; the release
-gate adds `server-browser-test` and a recorded `benchmark-server` run. Local
-developer runs record missing Tika or Docling explicitly. Release runs require
-both competitors and fail when either pinned environment is absent.
+`fmt-check` cover `server` and `cli/zencli` via `fmt_paths`. The release gate
+adds `server-browser-test`, validates the provenance of checked in benchmark
+baselines, and does not execute a benchmark. A new reference benchmark run
+requires both pinned competitors. Local development runs record an unavailable
+Tika or Docling environment explicitly.
 
 == Integration obligations
 
@@ -1526,13 +1496,12 @@ documentation files for humans, but deleting those files after extraction
 must not affect execution.
 
 The release suite copies each built executable into a fresh empty temporary
-directory with a minimal `PATH`. For the default build it checks version
-output, one direct conversion, open mode health, one API conversion, and every
-embedded interface asset. It then bootstraps secure mode in a new data
-directory, restarts against that directory, and logs in. For the
-`-Dserver=false` build it checks version output and conversion, confirms that
-`serve` is absent from help, and scans dynamic dependencies against the
-platform allowlist. No test may refer to the checkout after the copy.
+directory with a minimal `PATH`. For the default build it checks version and
+revision identity, one direct conversion, open mode health, one API conversion,
+and every embedded interface asset. It then bootstraps secure mode in a new
+data directory, restarts against that directory, and logs in. CI also builds
+the `-Dserver=false` configuration on Linux, macOS, and Windows. No runtime
+check may refer to the checkout after the executable is copied.
 
 = Security Considerations
 
@@ -1591,14 +1560,11 @@ The standard library provides no TLS server, and linking OpenSSL into the
 core process contradicts the dependency goal, so in-process TLS is
 explicitly out of scope. The supported deployments are loopback only (the
 default bind), a private network with `--secure`, or a TLS-terminating reverse
-proxy with `--behind-proxy`. Forwarded fields are ignored unless that flag is
-present and the immediate socket peer matches a `--trusted-proxy` CIDR.
-Loopback is the only trusted network by default. The server rejects an
-unspecified all-address CIDR. It accepts one standardized `Forwarded` field,
-rejects duplicate or malformed fields, and never falls back to an
-`X-Forwarded-For` chain. The trusted value influences peer attribution and
-rate limiting only. It never changes authorization. Proxy mode marks cookies
-`Secure`. Binding a non-loopback address in secure mode without
+proxy with `--behind-proxy`. Release 0.3.0 ignores every forwarded origin and
+peer header, including `Forwarded` and `X-Forwarded-For`. The immediate socket
+peer remains authoritative for logs and rate limits. The proxy flag is an
+operator assertion that TLS terminates in front of zenfmt, and it marks
+cookies `Secure`. Binding a non-loopback address in secure mode without
 `--behind-proxy` requires the explicit `--allow-insecure-network` flag,
 whose startup warning report names the exposure: credentials and tokens
 crossing the network in clear text. The deployment chapter ships nginx
@@ -1641,22 +1607,16 @@ removes the OpenSSL surface from the build entirely.
 
 - zencli: grammar tables, parse edge cases, help snapshots, exit codes;
   the conversion CLI's existing tests gate the extraction bit-for-bit.
-- zenserve: router matching and compile-time collision rejection,
-  middleware order, principal resolution, rate buckets, Argon2id
-  round-trips, token digesting, metric exposition format, log field
-  escaping and truncation, and SSE ring semantics. All these tests are
-  networkless.
-- ui module (native, no browser): golden tests that feed an event
-  sequence and assert the resulting command list and rendered HTML;
-  HTML-builder escaping against hostile report and manifest strings;
-  route state machines; command-protocol round-trips against the glue's
-  schema fixtures; theme resolution for all stored preference and system
-  scheme combinations; malformed preference fallback; last administrator
-  action states; one-time password disposal after dialog close.
-- server: envelope serialization against golden files, report-code
-  provocation for every `server.*` code, the store layer against a
-  temporary zaxonlite directory, migration forward and refuse-newer,
-  bootstrap exactly-once.
+- zenserve tests router matching, principal roles, bounded rate buckets,
+  Argon2id round trips, token parsing and digesting, metric exposition, log
+  escaping and truncation, multipart limits, and the reusable event ring.
+  These tests are networkless.
+- The native ui tests cover event to command rendering, HTML escaping,
+  capability parsing, failure panels, route state, theme resolution, and
+  malformed theme preference fallback.
+- Server tests cover envelope serialization, report catalog invariants,
+  the store against a temporary directory, migration refusal for a newer
+  schema, restart, and exactly once bootstrap.
 
 == End-to-end (loopback)
 
@@ -1665,38 +1625,27 @@ with `std.http.Client`:
 
 - conversion parity: for the corpus sample, byte-identical artifact and
   manifest versus a direct engine call on the same release;
-- content negotiation, chunked streaming, NDJSON batch ordering and
-  flush-per-part, SSE replay-then-live including the dropped counter;
-- the full role matrix: every route × (anonymous, user, administrator,
-  disabled user, must-change-password user) in both modes. This matrix is small enough
-  to enumerate exhaustively, which is why two roles is a goal;
-- lifecycle: login, key create/use/revoke, password change revoking
-  sessions, last-administrator refusal, restart against a populated
-  store, bootstrap against an empty one;
-- adversarial: oversized heads and bodies, declared-length lies, CR/LF
-  in header values, malformed multipart, slow header trickle hitting the
-  deadline, connection-slot exhaustion returning `server.busy` promptly,
-  CSRF-missing rejection, cookie attribute assertions;
-- shutdown: drain completes in-flight conversions, refuses new ones, and
-  the store closes cleanly (verified by immediate reopen).
+- content negotiation, chunked conversion, and NDJSON batch ordering;
+- anonymous, user, administrator, and one-time password authorization at
+  representative public, conversion, session, and administration routes;
+- login, API key creation and use, password change, last administrator
+  refusal, restart, and bootstrap against an empty store;
+- oversized heads and bodies, malformed request lines, multipart limits,
+  CSRF rejection, and clean rebinding after shutdown.
 
 == Interface and release gates
 
 The browser smoke test drives the real interface headlessly: convert a
 fixture through the wasm module, assert the report panel text, exercise
 login, create a user, change its role, reset its password, disable it, and
-delete it in secure mode. It verifies search and pagination state, keyboard
-operation, dialog focus return, live status announcements, and the last
-administrator guard. The test runs once with each explicit theme and twice in
-system mode with opposite emulated color schemes. It asserts live system
-scheme changes, persistence after reload, corrupt storage fallback, contrast,
-and absence of a wrong theme first paint. It also runs the accessibility
-checks the site tests already use and confirms the `<noscript>` page with
-JavaScript disabled. Release
-requires:
+delete it in secure mode. It verifies local search state, one-time secret
+dialogs, status announcements, and the last administrator guidance. It
+also tests explicit theme persistence, System mode, report rendering, and the
+`<noscript>` page. Release requires:
 all suites green under `zig build test`; `fmt-check` clean; the
 docs-drift gate green with the server chapter present; the
-`-Dserver=false` build green; the benchmark recorded; and every
+`-Dserver=false` build green; every native release target passing the
+empty-directory CLI and server smoke test; and every
 acceptance example in this record executing unchanged.
 
 = Benchmark Specification
@@ -1796,41 +1745,38 @@ bytes and ends only after it has read and validated the complete response.
 Connections use the same keep alive policy. Output is consumed rather than
 aborted, so backpressure and response bytes remain part of the service cost.
 
-The required server profiles are:
+The 0.3.0 server runner records these profiles:
 
 - Startup readiness measures process start through the first successful
   readiness probe. It reports five independent starts and their median.
-- Sequential warm latency sends one discarded warmup per corpus file followed
-  by at least five measured requests on one keep alive connection.
-- Concurrent throughput runs the complete verified corpus at concurrency 1,
-  2, 4, 8, and the server's configured conversion limit. It reports documents
-  per second, bytes per second, latency median, latency p95, and rejection
-  count. The runner never retries a rejected request inside the timed region.
-- Saturation holds request concurrency above the configured conversion limit
-  for a bounded interval and records refusal latency, status codes, completed
-  work, and recovery after load stops.
-- Memory and CPU record the whole service process tree. For Tika this includes
-  the JVM and parse workers. For zenfmt this includes the server process.
-  Memory is the peak resident total, not only the parent process.
+- Sequential warm latency first warms both services, then sends one discarded
+  request and eight measured requests per corpus file on one keep alive
+  client. It reports the median and p95.
+- Concurrent throughput uses concurrency 1, 2, 4, and 8. Each level sends a
+  fixed 24 requests divided across its workers using one small document both
+  services accept. It reports documents per second. This is a short throughput
+  sample, not a saturation or capacity study.
+- Memory samples the resident size of each parent and its direct parser
+  children after file and throughput profiles. It reports the largest sampled
+  total. The 0.3.0 runner does not record CPU, byte throughput, rejection
+  latency, deeper descendants, or recovery after overload.
 
-Both servers use equivalent input byte and concurrency caps where each product
-offers them. Differences that cannot be matched, including JVM heap policy,
-Tika child process isolation, parser coverage, and diagnostic payload size,
-remain explicit dimensions in the report. The benchmark publishes two views:
-product defaults and matched resource caps. It never tunes one server while
-leaving the other at an undocumented default.
+The runner uses the documented product defaults plus the flags recorded in
+the source. It does not claim matched JVM and native resource caps. JVM heap
+policy, Tika child process isolation, parser coverage, and diagnostic payload
+size therefore remain limitations when reading the comparison. A later record
+may add saturation and matched-cap profiles after their schemas and controls
+are implemented.
 
 == Correctness before timing
 
-A response qualifies as successful only when its status is successful, its
-body is nonempty valid UTF-8 Markdown, and it passes the tool neutral fixture
-facts already used by the ZDS 0015 quality gate. Those facts cover normalized
-text and present structures such as headings, lists, tables, links, code, and
-sheet or slide boundaries. The gate does not require byte equality between
-products. It does require byte equality between the server and a direct
-same revision zenfmt call. A correctness failure stays in raw results, does
-not enter performance aggregates, and fails the release benchmark after the
-diagnostic files are written.
+A response qualifies for the 0.3.0 server timing when its status is successful
+and its body is nonempty. The runner does not require UTF-8 because Tika emits
+ISO-8859-1 for some accepted documents. It does not yet run the tool neutral
+fixture oracle or compare zenfmt server bytes with a direct conversion. Those
+quality and parity checks remain in the native and browser lenses. This is a
+limitation of the server lens and the site must describe it rather than imply
+that useful output was proven by the timing gate.
 
 Coverage, quality, latency, throughput, and memory are separate outputs. The
 report must not collapse them into a universal score or declare one product a
@@ -1839,21 +1785,28 @@ whether a larger or smaller value is better.
 
 == Result artifacts and gates
 
-`benchmarks/results/server.json` stores raw server samples and provenance.
+`benchmarks/results/server.json` stores the version and revision, Tika
+version, startup medians, sampled resident peaks, file medians and p95 values,
+and throughput samples.
 `benchmarks/results/latest.json` stores the extended native lens with Docling.
 `benchmarks/results/results.md`, the book benchmark chapter, and the site
-dashboard are generated views of those files. The server JSON schema includes
-individual process identities so process tree accounting can be audited.
+dashboard are generated views of those files. The initial schema does not
+record command lines, archive digests, machine identity, or individual raw
+samples, so the result is a reference from one machine rather than a fully
+reproducible laboratory record.
 
 A local development run may proceed with an unavailable competitor and must
-write an explicit `not_benchmarked` record with the reason. A publishable or
-release run fails unless pinned Tika and Docling environments are present,
-their digests match, every required profile completes, and the result revision
-matches the release candidate. The designated host has no discrete GPU and is
-the same modest machine used for the existing zenfmt reference results. The
-result records its physical core count, memory capacity, and absence of model
-assets. CI validates checked in schemas and provenance on ordinary changes. It
-performs the expensive reference run only on that host.
+write an explicit `not_benchmarked` record with the reason. A newly recorded
+publishable result requires the pinned Tika and Docling environments, every
+implemented profile, and the measured revision. A release may
+carry an earlier baseline when no benchmark was requested. Its files retain
+their original version and revision, and the release site shows `Benchmark
+pending for this release` instead of relabeling old measurements. The
+designated host has no discrete GPU and is the same modest machine used for
+the existing zenfmt reference results. The runner itself does not yet record
+physical core count, memory capacity, or the absence of model assets. CI
+validates checked in identities on ordinary changes. It does not perform the
+expensive reference run.
 
 = Operational Considerations
 
@@ -1869,13 +1822,11 @@ Upgrades are stop, replace binary, start; migrations run forward
 automatically and never backward, and the refuse-newer-schema rule makes
 a rollback with an upgraded store a clear error instead of corruption.
 
-The monitoring runbook in the book's server chapter maps each
-alert-worthy signal to a metric: error rate
-(`zenfmt_http_requests_total{status_class="5xx"}`), saturation
-(`zenfmt_http_rejected_total{reason="busy"}` and
-`zenfmt_conversions_active` against its cap), store health
-(`zenfmt_store_errors_total`), and authentication pressure
-(`zenfmt_auth_failures_total`).
+The monitoring runbook in the book's server chapter maps the shipped signals
+to metrics. These signals cover error rate through
+`zenfmt_http_requests_total`, saturation through
+`zenfmt_http_rejected_total` and `zenfmt_conversions_active`, and
+authentication pressure through `zenfmt_auth_failures_total`.
 
 = Delivery Plan
 
@@ -1900,7 +1851,7 @@ first paint and persistence check, and the ui module's size budget holds.
 
 zaxonlite integration (open → migrate → bootstrap → adopt), the auth
 core wired to the store, sessions, keys, users, audit, CSRF, rate
-buckets, the account and admin pages, the SSE events channel; the role
+buckets, and the account and admin pages. The role
 matrix and lifecycle suites. The users page, manage dialog, one-time
 credential dialog, narrow layout, and complete administration browser flow
 are required. Exit: secure mode passes every gate in this record's testing
@@ -1909,9 +1860,11 @@ section.
 == Phase 4: polish and release
 
 NDJSON batch, `--behind-proxy` semantics with the proxy fragments, the native
-Docling comparison, the server benchmark and its Tika comparison, the book's server chapter, the
-docs-drift extension, the `-Dserver=false` build wiring, release-gate
-integration, and promotion of this record toward `committed`.
+Docling comparison, the server benchmark and its Tika comparison, the book's
+server chapter, the docs-drift extension, the `-Dserver=false` build wiring,
+and release-gate integration. The implementation commit moves this record to
+`committed`. Publication of new benchmark measurements remains a separate,
+explicitly pending data update.
 
 = Alternatives Considered
 
@@ -2027,12 +1980,12 @@ dependency at runtime. The server embeds release bytes built by the
 ordinary graph; the development loop is `zig build serve`, which
 rebuilds the embedded artifacts like any other dependency. Rejected.
 
-== WebSockets for the event channel
+== A live administration event channel
 
-`std.http.Server` supports the upgrade, but SSE is sufficient for
-one-directional event flow, reconnects natively via `Last-Event-ID`,
-and needs no framing code. WebSockets add capability the surface does
-not use. Rejected for the first release.
+WebSockets and Server Sent Events both add a long lived channel that the
+first release does not need. Status and audit pages fetch bounded snapshots.
+A later record may add a live channel after an operational requirement
+justifies its connection budget and authorization surface. Deferred.
 
 == Storing conversion history
 
@@ -2055,18 +2008,18 @@ workload demands it.
 The discussion phase settled the record's open questions as follows
 (2026-08-10):
 
-+ The default port stays `8998`. Adjacency to Tika's `9998` keeps
+- The default port stays `8998`. Adjacency to Tika's `9998` keeps
   migration legible while side-by-side operation (including the loopback
   benchmark) needs no remapping.
-+ The reverse-proxy fragments are verified through a manual checklist in
+- The reverse-proxy fragments are verified through a manual checklist in
   the deployment guide; CI stays container-free.
-+ `--metrics-address` ships in the first release, as specified in the
-  observability and CLI sections above.
-+ No backup endpoint ships in the first release; operators back up
+- Health, readiness, and metrics remain on the main listener in the first
+  release. A separate operational listener requires a future record.
+- No backup endpoint ships in the first release. Operators back up
   through zaxonlite's own tooling against the data directory. A future
   endpoint would want `SharedNode` to expose the streaming backup handle
   that today exists only on `Node`.
-+ The first release's interface is English. Reports render verbatim
+- The first release's interface is English. Reports render verbatim
   through the shared renderer, so a future engine localization story
   requires no interface rework.
 

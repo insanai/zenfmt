@@ -40,12 +40,12 @@ fn createUser(ctx: *Context) HandlerError!void {
     const body = (try ctx.readBodyAlloc(&transfer, 64 * 1024)) orelse return;
     const request = std.json.parseFromSliceLeaky(CreateRequest, ctx.arena, body, .{
         .ignore_unknown_fields = true,
-    }) catch return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{});
-    if (request.name.len == 0) {
-        return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{});
+    }) catch return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
+    if (!validUserName(request.name)) {
+        return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
     }
     const role = parseRole(request.role) orelse
-        return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{});
+        return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
 
     var password: [24]u8 = undefined;
     generatePassword(ctx.io, &password);
@@ -54,7 +54,7 @@ fn createUser(ctx: *Context) HandlerError!void {
         return error.OutOfMemory;
     const now = std.Io.Clock.now(.real, ctx.io).toSeconds();
     store.createUser(request.name, role, phc, true, now) catch |err| switch (err) {
-        error.Conflict => return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{}),
+        error.Conflict => return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{}),
         else => return app_mod.respondEntry(ctx, server_reports.store_unavailable, &.{}),
     };
     store.audit(.@"user.create", ctx.principal.name, request.name, "{}", now);
@@ -75,7 +75,7 @@ pub fn patchUser(ctx: *Context) HandlerError!void {
     const body = (try ctx.readBodyAlloc(&transfer, 64 * 1024)) orelse return;
     const request = std.json.parseFromSliceLeaky(PatchRequest, ctx.arena, body, .{
         .ignore_unknown_fields = true,
-    }) catch return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{});
+    }) catch return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
 
     const target = (store.userByName(ctx.arena, name) catch
         return app_mod.respondEntry(ctx, server_reports.store_unavailable, &.{})) orelse
@@ -84,7 +84,7 @@ pub fn patchUser(ctx: *Context) HandlerError!void {
 
     if (request.role) |role_text| {
         const role = parseRole(role_text) orelse
-            return app_mod.respondEntry(ctx, server_reports.invalid_credentials, &.{});
+            return app_mod.respondEntry(ctx, server_reports.invalid_request, &.{});
         if (target.role == .administrator and role != .administrator and
             try lastAdministrator(store))
         {
@@ -177,4 +177,13 @@ fn generatePassword(io: std.Io, out: *[24]u8) void {
     var raw: [24]u8 = undefined;
     io.random(&raw);
     for (out, raw) |*slot, byte| slot.* = alphabet[byte % alphabet.len];
+}
+
+fn validUserName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 64) return false;
+    for (name) |byte| switch (byte) {
+        'a'...'z', 'A'...'Z', '0'...'9', '.', '_', '-' => {},
+        else => return false,
+    };
+    return true;
 }

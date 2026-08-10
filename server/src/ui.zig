@@ -175,7 +175,7 @@ test "the embedded stylesheet matches the manifest digest" {
         hex[i * 2 + 1] = alphabet[byte & 0xf];
     }
     try testing.expectEqualStrings(
-        "47cd982f46d31034f114e5c6c43a30dcec6e27e1dbb692c2f99038f83086629a",
+        "3366788f1976e8060c5265354411022ed073d77ebe374edf303cb8c3becccf20",
         &hex,
     );
 }

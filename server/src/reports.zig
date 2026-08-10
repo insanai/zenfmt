@@ -53,12 +53,14 @@ pub const unsupported_media: Entry = .{
         .severity = .err,
         .code = "server.unsupported-media",
         .title = "I CANNOT ACCEPT THIS REQUEST SHAPE",
-        .problem = "The request carries a content type or multipart shape this route does not accept.",
+        .problem = "The request carries a content type or multipart shape " ++
+            "this route does not accept.",
         .consequence = "Nothing was converted.",
         .exit_class = .usage,
         .directions = &.{direction(
             "Send the document directly",
-            "Send the document bytes as the request body, or as a single `file` part of a multipart/form-data request.",
+            "Send the document bytes as the request body, or as a single " ++
+                "`file` part of a multipart/form-data request.",
         )},
     },
 };
@@ -85,12 +87,33 @@ pub const invalid_query: Entry = .{
         .severity = .err,
         .code = "server.invalid-query",
         .title = "I CANNOT UNDERSTAND A QUERY PARAMETER",
-        .problem = "A query parameter carries a value the route does not recognize.",
+        .problem = "A query parameter carries a value the route does not " ++
+            "recognize.",
         .consequence = "Nothing was converted.",
         .exit_class = .usage,
         .directions = &.{direction(
             "Check the parameter",
-            "`?to=` and `?from=` take format identifiers from /api/v1/formats; `?strict=` takes content, structure, or exact.",
+            "`?to=` and `?from=` take format identifiers from " ++
+                "/api/v1/formats; `?strict=` takes content, structure, " ++
+                "or exact.",
+        )},
+    },
+};
+
+pub const invalid_request: Entry = .{
+    .status = 400,
+    .report = .{
+        .severity = .err,
+        .code = "server.invalid-request",
+        .title = "I CANNOT UNDERSTAND THIS REQUEST",
+        .problem = "The request body is malformed or contains a value this " ++
+            "route does not accept.",
+        .consequence = "No account or credential was changed.",
+        .exit_class = .usage,
+        .directions = &.{direction(
+            "Check the request",
+            "Send valid JSON and use the documented field names, account " ++
+                "names, roles, and lengths.",
         )},
     },
 };
@@ -138,7 +161,8 @@ pub const unauthorized: Entry = .{
         .exit_class = .usage,
         .directions = &.{direction(
             "Authenticate",
-            "Log in for a session cookie, or send an API key as `Authorization: Bearer zfk_<id>.<secret>`.",
+            "Log in for a session cookie, or send an API key as " ++
+                "`Authorization: Bearer zfk_<id>.<secret>`.",
         )},
     },
 };
@@ -165,7 +189,8 @@ pub const forbidden: Entry = .{
         .severity = .err,
         .code = "server.forbidden",
         .title = "THIS ROUTE NEEDS MORE THAN YOUR ROLE",
-        .problem = "The caller's role is below the route's requirement, or an ownership rule was violated.",
+        .problem = "The caller's role is below the route's requirement, or " ++
+            "an ownership rule was violated.",
         .consequence = "Nothing happened.",
         .exit_class = .usage,
         .directions = &.{direction(
@@ -181,7 +206,8 @@ pub const password_change_required: Entry = .{
         .severity = .err,
         .code = "server.password-change-required",
         .title = "THE ONE-TIME PASSWORD MUST BE CHANGED FIRST",
-        .problem = "The account carries a one-time password, so only the password-change route is permitted.",
+        .problem = "The account carries a one-time password, so only the " ++
+            "password-change route is permitted.",
         .consequence = "Nothing else happened.",
         .exit_class = .usage,
         .directions = &.{direction(
@@ -309,12 +335,14 @@ pub const open_network_bind: zenfmt.Report = .{
     .severity = .warning,
     .code = "server.open-network-bind",
     .title = "OPEN MODE IS REACHABLE FROM THE NETWORK",
-    .problem = "Open mode is bound to a non-loopback address, so every network peer can convert documents anonymously.",
+    .problem = "Open mode is bound to a non-loopback address, so every " ++
+        "network peer can convert documents anonymously.",
     .consequence = "The server still starts.",
     .exit_class = .conversion,
     .directions = &.{direction(
         "Restrict access",
-        "Run with --secure --data-dir PATH for accounts, or bind 127.0.0.1 behind a firewall or reverse proxy.",
+        "Run with --secure --data-dir PATH for accounts, or bind 127.0.0.1 " ++
+            "behind a firewall or reverse proxy.",
     )},
 };
 
@@ -324,12 +352,13 @@ const testing = std.testing;
 
 test "every entry carries the server prefix and a direction" {
     inline for (.{
-        head_too_large,     body_too_large,           unsupported_media,
-        missing_input,      invalid_query,            unknown_route,
-        method_not_allowed, unauthorized,             invalid_credentials,
-        forbidden,          password_change_required, last_administrator,
-        rate_limited,       busy,                     limit_override_forbidden,
-        store_unavailable,  shutting_down,            out_of_memory,
+        head_too_large,           body_too_large,     unsupported_media,
+        missing_input,            invalid_query,      invalid_request,
+        unknown_route,            method_not_allowed, unauthorized,
+        invalid_credentials,      forbidden,          password_change_required,
+        last_administrator,       rate_limited,       busy,
+        limit_override_forbidden, store_unavailable,  shutting_down,
+        out_of_memory,
     }) |entry| {
         try testing.expect(std.mem.startsWith(u8, entry.report.code, "server."));
         try testing.expect(entry.status >= 400 and entry.status <= 599);

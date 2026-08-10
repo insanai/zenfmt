@@ -49,6 +49,7 @@ const Harness = struct {
         status: u16,
         body: []const u8,
         set_cookie: ?[]const u8 = null,
+        retry_after: ?[]const u8 = null,
     };
 
     /// One request over a fresh connection; everything allocates from the
@@ -87,10 +88,13 @@ const Harness = struct {
         }
         var response = try req.receiveHead(&redirect_buf);
         var set_cookie: ?[]const u8 = null;
+        var retry_after: ?[]const u8 = null;
         var headers = response.head.iterateHeaders();
         while (headers.next()) |header| {
             if (std.ascii.eqlIgnoreCase(header.name, "set-cookie")) {
                 set_cookie = try arena.dupe(u8, header.value);
+            } else if (std.ascii.eqlIgnoreCase(header.name, "retry-after")) {
+                retry_after = try arena.dupe(u8, header.value);
             }
         }
         var transfer_buf: [4096]u8 = undefined;
@@ -100,6 +104,7 @@ const Harness = struct {
             .status = @intFromEnum(response.head.status),
             .body = response_body,
             .set_cookie = set_cookie,
+            .retry_after = retry_after,
         };
     }
 };
@@ -126,6 +131,106 @@ fn firstReportCode(arena: std.mem.Allocator, body: []const u8) ![]const u8 {
     const parsed = try std.json.parseFromSliceLeaky(std.json.Value, arena, body, .{});
     const reports = parsed.object.get("reports").?.array;
     return reports.items[0].object.get("code").?.string;
+}
+
+fn expectStatus(
+    harness: *Harness,
+    arena: std.mem.Allocator,
+    expected: u16,
+    method: std.http.Method,
+    target: []const u8,
+    body: ?[]const u8,
+    headers: []const std.http.Header,
+) !void {
+    const response = try harness.request(arena, method, target, body, headers);
+    try testing.expectEqual(expected, response.status);
+}
+
+const Session = struct {
+    cookie: []const u8,
+    csrf: []const u8,
+};
+
+fn loginSession(
+    harness: *Harness,
+    arena: std.mem.Allocator,
+    name: []const u8,
+    password: []const u8,
+) !Session {
+    const body = try std.json.Stringify.valueAlloc(arena, .{
+        .name = name,
+        .password = password,
+    }, .{});
+    const response = try harness.request(
+        arena,
+        .POST,
+        "/api/v1/session",
+        body,
+        &.{.{ .name = "content-type", .value = "application/json" }},
+    );
+    const parsed = try std.json.parseFromSliceLeaky(
+        std.json.Value,
+        arena,
+        response.body,
+        .{},
+    );
+    return .{
+        .cookie = cookieHeader(response.set_cookie.?),
+        .csrf = parsed.object.get("csrf").?.string,
+    };
+}
+
+fn changePassword(
+    harness: *Harness,
+    arena: std.mem.Allocator,
+    session: Session,
+    password: []const u8,
+) !void {
+    const body = try std.json.Stringify.valueAlloc(arena, .{
+        .new_password = password,
+    }, .{});
+    const response = try harness.request(
+        arena,
+        .POST,
+        "/api/v1/session/password",
+        body,
+        &.{
+            .{ .name = "cookie", .value = session.cookie },
+            .{ .name = "x-zenfmt-csrf", .value = session.csrf },
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    );
+    try testing.expectEqual(@as(u16, 204), response.status);
+}
+
+fn expectPasswordCsrf(
+    harness: *Harness,
+    arena: std.mem.Allocator,
+    session: Session,
+) !void {
+    try expectStatus(
+        harness,
+        arena,
+        403,
+        .POST,
+        "/api/v1/session/password",
+        "{\"new_password\":\"a-better-secret\"}",
+        &.{
+            .{ .name = "cookie", .value = session.cookie },
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    );
+    try changePassword(harness, arena, session, "a-better-secret");
+}
+
+fn readyAdministrator(
+    harness: *Harness,
+    arena: std.mem.Allocator,
+    bootstrap_password: []const u8,
+) !Session {
+    const bootstrap = try loginSession(harness, arena, "admin", bootstrap_password);
+    try changePassword(harness, arena, bootstrap, "admin-strong-pass");
+    return loginSession(harness, arena, "admin", "admin-strong-pass");
 }
 
 test "open mode converts and matches the direct engine call byte for byte" {
@@ -463,7 +568,9 @@ test "secure mode bootstraps, gates the one-time password, and authenticates" {
     const h = secure.harness;
 
     // The operational plane stays open; the conversion API needs a login.
-    try testing.expectEqual(@as(u16, 200), (try h.request(arena, .GET, "/healthz", null, &.{})).status);
+    try expectStatus(h, arena, 200, .GET, "/healthz", null, &.{});
+    try expectStatus(h, arena, 200, .GET, "/", null, &.{});
+    try expectStatus(h, arena, 200, .GET, "/login", null, &.{});
     const anon = try h.request(arena, .POST, "/api/v1/convert", "x", &.{});
     try testing.expectEqual(@as(u16, 401), anon.status);
     // The admin plane's users route needs administrator, not just a login.
@@ -497,18 +604,7 @@ test "secure mode bootstraps, gates the one-time password, and authenticates" {
     );
 
     // Change the password (CSRF required).
-    const no_csrf = try h.request(arena, .POST, "/api/v1/session/password", "{\"new_password\":\"a-better-secret\"}", &.{
-        .{ .name = "cookie", .value = cookie },
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    try testing.expectEqual(@as(u16, 403), no_csrf.status); // missing CSRF
-
-    const changed = try h.request(arena, .POST, "/api/v1/session/password", "{\"new_password\":\"a-better-secret\"}", &.{
-        .{ .name = "cookie", .value = cookie },
-        .{ .name = "x-zenfmt-csrf", .value = csrf },
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    try testing.expectEqual(@as(u16, 204), changed.status);
+    try expectPasswordCsrf(h, arena, .{ .cookie = cookie, .csrf = csrf });
     // The change keeps the current session but clears the one-time gate;
     // every other session of the account was revoked.
     const after = try h.request(arena, .GET, "/api/v1/session", null, &.{
@@ -517,6 +613,40 @@ test "secure mode bootstraps, gates the one-time password, and authenticates" {
     try testing.expectEqual(@as(u16, 200), after.status);
     const after_json = try std.json.parseFromSliceLeaky(std.json.Value, arena, after.body, .{});
     try testing.expect(!after_json.object.get("must_change_password").?.bool);
+}
+
+test "secure login rate limit answers with a retry hint" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var secure = try SecureHarness.start();
+    defer secure.stop();
+
+    var attempt: usize = 0;
+    while (attempt < 10) : (attempt += 1) {
+        const response = try secure.harness.request(
+            arena,
+            .POST,
+            "/api/v1/session",
+            "{\"name\":\"missing\",\"password\":\"wrong\"}",
+            &.{.{ .name = "content-type", .value = "application/json" }},
+        );
+        try testing.expectEqual(@as(u16, 401), response.status);
+    }
+    const limited = try secure.harness.request(
+        arena,
+        .POST,
+        "/api/v1/session",
+        "{\"name\":\"missing\",\"password\":\"wrong\"}",
+        &.{.{ .name = "content-type", .value = "application/json" }},
+    );
+    try testing.expectEqual(@as(u16, 429), limited.status);
+    try testing.expect(limited.retry_after != null);
+    try testing.expectEqualStrings(
+        "server.rate-limited",
+        try firstReportCode(arena, limited.body),
+    );
 }
 
 test "the role matrix: user cannot reach the admin plane" {
@@ -528,63 +658,48 @@ test "the role matrix: user cannot reach the admin plane" {
     defer secure.stop();
     const h = secure.harness;
 
-    // Log in and change the admin password so the account is usable.
-    const login_body = try std.fmt.allocPrint(
-        arena,
-        "{{\"name\":\"admin\",\"password\":\"{s}\"}}",
-        .{&secure.password},
-    );
-    const login = try h.request(arena, .POST, "/api/v1/session", login_body, &.{
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const admin_cookie = cookieHeader(login.set_cookie.?);
-    const login_json = try std.json.parseFromSliceLeaky(std.json.Value, arena, login.body, .{});
-    const admin_csrf = login_json.object.get("csrf").?.string;
-    _ = try h.request(arena, .POST, "/api/v1/session/password", "{\"new_password\":\"admin-strong-pass\"}", &.{
-        .{ .name = "cookie", .value = admin_cookie },
-        .{ .name = "x-zenfmt-csrf", .value = admin_csrf },
-        .{ .name = "content-type", .value = "application/json" },
-    });
-
-    // Re-login as the now-usable administrator.
-    const relogin = try h.request(arena, .POST, "/api/v1/session", "{\"name\":\"admin\",\"password\":\"admin-strong-pass\"}", &.{
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const cookie = cookieHeader(relogin.set_cookie.?);
-    const csrf = (try std.json.parseFromSliceLeaky(std.json.Value, arena, relogin.body, .{}))
-        .object.get("csrf").?.string;
+    const admin = try readyAdministrator(h, arena, &secure.password);
+    const cookie = admin.cookie;
+    const csrf = admin.csrf;
 
     // The administrator creates a plain user.
-    const create = try h.request(arena, .POST, "/api/v1/users", "{\"name\":\"analyst\",\"role\":\"user\"}", &.{
-        .{ .name = "cookie", .value = cookie },
-        .{ .name = "x-zenfmt-csrf", .value = csrf },
-        .{ .name = "content-type", .value = "application/json" },
-    });
+    const create = try h.request(
+        arena,
+        .POST,
+        "/api/v1/users",
+        "{\"name\":\"analyst\",\"role\":\"user\"}",
+        &.{
+            .{ .name = "cookie", .value = cookie },
+            .{ .name = "x-zenfmt-csrf", .value = csrf },
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    );
     try testing.expectEqual(@as(u16, 200), create.status);
     const created = try std.json.parseFromSliceLeaky(std.json.Value, arena, create.body, .{});
     const analyst_password = created.object.get("password").?.string;
 
+    const invalid_name = try h.request(
+        arena,
+        .POST,
+        "/api/v1/users",
+        "{\"name\":\"unsafe/name\",\"role\":\"user\"}",
+        &.{
+            .{ .name = "cookie", .value = cookie },
+            .{ .name = "x-zenfmt-csrf", .value = csrf },
+            .{ .name = "content-type", .value = "application/json" },
+        },
+    );
+    try testing.expectEqual(@as(u16, 400), invalid_name.status);
+
     // The user logs in, changes their one-time password, and is refused
     // the admin plane.
-    const user_login = try h.request(arena, .POST, "/api/v1/session", try std.fmt.allocPrint(arena, "{{\"name\":\"analyst\",\"password\":\"{s}\"}}", .{analyst_password}), &.{
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const user_cookie = cookieHeader(user_login.set_cookie.?);
-    const user_csrf = (try std.json.parseFromSliceLeaky(std.json.Value, arena, user_login.body, .{}))
-        .object.get("csrf").?.string;
-    _ = try h.request(arena, .POST, "/api/v1/session/password", "{\"new_password\":\"analyst-strong-pass\"}", &.{
-        .{ .name = "cookie", .value = user_cookie },
-        .{ .name = "x-zenfmt-csrf", .value = user_csrf },
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const user2 = try h.request(arena, .POST, "/api/v1/session", "{\"name\":\"analyst\",\"password\":\"analyst-strong-pass\"}", &.{
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const user2_cookie = cookieHeader(user2.set_cookie.?);
+    const first_user = try loginSession(h, arena, "analyst", analyst_password);
+    try changePassword(h, arena, first_user, "analyst-strong-pass");
+    const user = try loginSession(h, arena, "analyst", "analyst-strong-pass");
 
     // The user may convert but not list users.
     const forbidden = try h.request(arena, .GET, "/api/v1/users", null, &.{
-        .{ .name = "cookie", .value = user2_cookie },
+        .{ .name = "cookie", .value = user.cookie },
     });
     try testing.expectEqual(@as(u16, 403), forbidden.status);
 
@@ -610,24 +725,9 @@ test "an API key authenticates the conversion route" {
     defer secure.stop();
     const h = secure.harness;
 
-    // Bootstrap login + password change to a usable administrator.
-    const login = try h.request(arena, .POST, "/api/v1/session", try std.fmt.allocPrint(arena, "{{\"name\":\"admin\",\"password\":\"{s}\"}}", .{&secure.password}), &.{
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const cookie0 = cookieHeader(login.set_cookie.?);
-    const csrf0 = (try std.json.parseFromSliceLeaky(std.json.Value, arena, login.body, .{}))
-        .object.get("csrf").?.string;
-    _ = try h.request(arena, .POST, "/api/v1/session/password", "{\"new_password\":\"admin-strong-pass\"}", &.{
-        .{ .name = "cookie", .value = cookie0 },
-        .{ .name = "x-zenfmt-csrf", .value = csrf0 },
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const relogin = try h.request(arena, .POST, "/api/v1/session", "{\"name\":\"admin\",\"password\":\"admin-strong-pass\"}", &.{
-        .{ .name = "content-type", .value = "application/json" },
-    });
-    const cookie = cookieHeader(relogin.set_cookie.?);
-    const csrf = (try std.json.parseFromSliceLeaky(std.json.Value, arena, relogin.body, .{}))
-        .object.get("csrf").?.string;
+    const admin = try readyAdministrator(h, arena, &secure.password);
+    const cookie = admin.cookie;
+    const csrf = admin.csrf;
 
     // Create an API key; the secret appears exactly once.
     const key = try h.request(arena, .POST, "/api/v1/keys", "{\"label\":\"ci\"}", &.{

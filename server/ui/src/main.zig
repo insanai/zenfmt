@@ -14,15 +14,31 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const render = @import("render.zig");
+pub const Commands = @import("commands.zig").Commands;
 
 /// The command protocol version; the glue refuses a mismatch at load.
 pub const abi_version: u32 = 1;
 
 pub const Theme = enum { system, light, dark };
 pub const Scheme = enum { light, dark };
+pub const Mode = enum { unknown, open, secure };
+pub const Role = enum { anonymous, user, administrator };
 
 pub const fetch_formats_id: u32 = 1;
 pub const fetch_convert_id: u32 = 2;
+pub const fetch_session_id: u32 = 3;
+pub const fetch_login_id: u32 = 4;
+pub const fetch_password_id: u32 = 5;
+pub const fetch_users_id: u32 = 6;
+pub const fetch_create_user_id: u32 = 7;
+pub const fetch_patch_user_id: u32 = 8;
+pub const fetch_delete_user_id: u32 = 9;
+pub const fetch_audit_id: u32 = 10;
+pub const fetch_status_id: u32 = 11;
+pub const fetch_keys_id: u32 = 12;
+pub const fetch_create_key_id: u32 = 13;
+pub const fetch_revoke_key_id: u32 = 14;
+pub const fetch_logout_id: u32 = 15;
 
 pub const max_file_name = 256;
 pub const max_artifact_preview = 256 * 1024;
@@ -37,10 +53,38 @@ pub const Result = struct {
     reports_html: []const u8,
 };
 
+pub const UserSummary = struct {
+    name: []const u8,
+    role: []const u8,
+    disabled: bool,
+    must_change_password: bool,
+    created_at: i64,
+};
+
+pub const AuditRecord = struct {
+    at: i64,
+    actor: []const u8,
+    action: []const u8,
+    subject: []const u8,
+};
+
+pub const KeySummary = struct {
+    id: []const u8,
+    label: []const u8,
+    disabled: bool,
+    created_at: i64,
+};
+
 /// The whole interface state; one instance lives for the page's lifetime.
 pub const State = struct {
     gpa: std.mem.Allocator,
     path: []const u8 = "/",
+    mode: Mode = .unknown,
+    authenticated: bool = false,
+    session_name: []const u8 = "",
+    role: Role = .anonymous,
+    csrf: []const u8 = "",
+    must_change_password: bool = false,
     stored_theme: Theme = .system,
     system_scheme: Scheme = .light,
     file_name_buf: [max_file_name]u8 = undefined,
@@ -48,10 +92,21 @@ pub const State = struct {
     file_size: u64 = 0,
     busy: bool = false,
     writers: []const []const u8 = &.{},
+    formats_loaded: bool = false,
     selected_to: []const u8 = "markdown",
     selected_strict: []const u8 = "off",
     result: ?Result = null,
     failure_html: ?[]const u8 = null,
+    users: []const UserSummary = &.{},
+    audit: []const AuditRecord = &.{},
+    keys: []const KeySummary = &.{},
+    selected_user: []const u8 = "",
+    user_query: []const u8 = "",
+    user_role_filter: []const u8 = "all",
+    user_status_filter: []const u8 = "all",
+    one_time_secret: []const u8 = "",
+    one_time_subject: []const u8 = "",
+    notice: []const u8 = "",
 
     pub fn fileName(state: *const State) ?[]const u8 {
         if (state.file_name_len == 0) return null;
@@ -64,6 +119,10 @@ pub const State = struct {
             .light => .light,
             .dark => .dark,
         };
+    }
+
+    pub fn isAdministrator(state: *const State) bool {
+        return state.role == .administrator;
     }
 };
 
@@ -83,111 +142,6 @@ const Event = struct {
     message: ?[]const u8 = null,
 };
 
-/// The command list builder: commands accumulate as JSON array elements.
-pub const Commands = struct {
-    out: std.Io.Writer.Allocating,
-    count: usize = 0,
-
-    pub fn init(arena: std.mem.Allocator) Commands {
-        return .{ .out = .init(arena) };
-    }
-
-    fn begin(commands: *Commands, cmd: []const u8) !void {
-        try commands.out.writer.writeAll(if (commands.count == 0) "[" else ",");
-        commands.count += 1;
-        try commands.out.writer.print("{{\"cmd\":\"{s}\"", .{cmd});
-    }
-
-    fn stringField(commands: *Commands, name: []const u8, value: []const u8) !void {
-        try commands.out.writer.print(",\"{s}\":", .{name});
-        try writeJsonString(&commands.out.writer, value);
-    }
-
-    fn end(commands: *Commands) !void {
-        try commands.out.writer.writeAll("}");
-    }
-
-    pub fn patch(commands: *Commands, id: []const u8, html: []const u8) !void {
-        try commands.begin("patch");
-        try commands.stringField("id", id);
-        try commands.stringField("html", html);
-        try commands.end();
-    }
-
-    pub fn title(commands: *Commands, text: []const u8) !void {
-        try commands.begin("title");
-        try commands.stringField("text", text);
-        try commands.end();
-    }
-
-    pub fn themeApply(commands: *Commands, scheme: Scheme) !void {
-        try commands.begin("theme_apply");
-        try commands.stringField("theme", @tagName(scheme));
-        try commands.end();
-    }
-
-    pub fn preferenceStore(commands: *Commands, theme: Theme) !void {
-        try commands.begin("preference_store");
-        try commands.stringField("theme", @tagName(theme));
-        try commands.end();
-    }
-
-    pub fn focus(commands: *Commands, id: []const u8) !void {
-        try commands.begin("focus");
-        try commands.stringField("id", id);
-        try commands.end();
-    }
-
-    pub fn fetch(
-        commands: *Commands,
-        id: u32,
-        method: []const u8,
-        path: []const u8,
-        body: []const u8,
-    ) !void {
-        try commands.begin("fetch");
-        try commands.out.writer.print(",\"id\":{d}", .{id});
-        try commands.stringField("method", method);
-        try commands.stringField("path", path);
-        try commands.stringField("accept", "application/json");
-        try commands.stringField("body", body);
-        try commands.end();
-    }
-
-    pub fn download(
-        commands: *Commands,
-        name: []const u8,
-        media: []const u8,
-        text: []const u8,
-    ) !void {
-        try commands.begin("download");
-        try commands.stringField("name", name);
-        try commands.stringField("media", media);
-        try commands.stringField("text", text);
-        try commands.end();
-    }
-
-    pub fn finish(commands: *Commands) ![]const u8 {
-        if (commands.count == 0) return "[]";
-        try commands.out.writer.writeAll("]");
-        return commands.out.written();
-    }
-};
-
-fn writeJsonString(writer: *std.Io.Writer, text: []const u8) !void {
-    try writer.writeByte('"');
-    for (text) |byte| switch (byte) {
-        '"' => try writer.writeAll("\\\""),
-        '\\' => try writer.writeAll("\\\\"),
-        '\n' => try writer.writeAll("\\n"),
-        '\r' => try writer.writeAll("\\r"),
-        '\t' => try writer.writeAll("\\t"),
-        0x00...0x08, 0x0b, 0x0c, 0x0e...0x1f => try writer.print("\\u{x:0>4}", .{byte}),
-        else => try writer.writeByte(byte),
-    };
-    try writer.writeByte('"');
-}
-
 /// Handles one event and returns the serialized command list, allocated
 /// from `arena`. This is the seam the native golden tests drive.
 pub fn handleEvent(
@@ -205,6 +159,7 @@ pub fn handleEvent(
     } else if (std.mem.eql(u8, event.event, "route_change")) {
         try rememberPath(state, event.path orelse "/");
         try renderPage(arena, state, &commands);
+        try fetchPageData(state, &commands);
     } else if (std.mem.eql(u8, event.event, "color_scheme_change")) {
         state.system_scheme = parseScheme(event.scheme orelse "light");
         if (state.stored_theme == .system) {
@@ -220,6 +175,7 @@ pub fn handleEvent(
         try handleFetchDone(arena, state, event, &commands);
     } else if (std.mem.eql(u8, event.event, "fetch_error")) {
         state.busy = false;
+        if (event.id == fetch_formats_id) state.formats_loaded = true;
         state.failure_html = try render.transportFailure(
             state.gpa,
             event.message orelse "the request failed",
@@ -241,9 +197,11 @@ fn handleInit(
     try commands.title("zenfmt");
     try commands.themeApply(state.effectiveScheme());
     try renderPage(arena, state, commands);
-    // The interface is a client of the public API: capability discovery
-    // comes from the same route every other client uses.
-    try commands.fetch(fetch_formats_id, "GET", "/api/v1/formats", "none");
+    // A 404 means open mode because the session route is secure-only. A 401
+    // means secure mode without a session. A 200 response supplies the
+    // in-memory CSRF token and role. This keeps the shell public without
+    // adding a private bootstrap endpoint.
+    try commands.fetch(fetch_session_id, "GET", "/api/v1/session", "none");
 }
 
 fn handleFile(state: *State, event: Event) !void {
@@ -262,6 +220,21 @@ fn handleAction(
     commands: *Commands,
 ) !void {
     const name = event.name orelse return;
+    if (try handleConversionAction(arena, state, event, commands, name)) return;
+    if (try handleSessionAction(arena, state, event, commands, name)) return;
+    if (try handleUserViewAction(arena, state, event, commands, name)) return;
+    if (try handleUserMutationAction(arena, state, event, commands, name)) return;
+    if (try handleDeleteUserAction(arena, state, event, commands, name)) return;
+    _ = try handleKeyAction(arena, state, event, commands, name);
+}
+
+fn handleConversionAction(
+    arena: std.mem.Allocator,
+    state: *State,
+    event: Event,
+    commands: *Commands,
+    name: []const u8,
+) !bool {
     if (std.mem.eql(u8, name, "theme_system")) {
         try applyTheme(arena, state, .system, commands);
     } else if (std.mem.eql(u8, name, "theme_light")) {
@@ -276,7 +249,7 @@ fn handleAction(
                 "pick or drop a document first",
             );
             try renderPage(arena, state, commands);
-            return;
+            return true;
         }
         state.busy = true;
         state.failure_html = null;
@@ -287,15 +260,217 @@ fn handleAction(
             .{
                 state.selected_to,
                 if (std.mem.eql(u8, state.selected_strict, "off")) "" else "&strict=",
-                if (std.mem.eql(u8, state.selected_strict, "off")) "" else state.selected_strict,
+                if (std.mem.eql(u8, state.selected_strict, "off"))
+                    ""
+                else
+                    state.selected_strict,
             },
         );
-        try commands.fetch(fetch_convert_id, "POST", path, "file");
+        try commands.fetchFile(fetch_convert_id, path, state.csrf);
     } else if (std.mem.eql(u8, name, "download")) {
         if (state.result) |result| {
             try commands.download(result.artifact_name, "text/markdown", result.artifact);
         }
+    } else return false;
+    return true;
+}
+
+fn handleSessionAction(
+    arena: std.mem.Allocator,
+    state: *State,
+    event: Event,
+    commands: *Commands,
+    name: []const u8,
+) !bool {
+    if (std.mem.eql(u8, name, "login")) {
+        const fields = event.fields orelse return true;
+        const user = fieldString(fields, "name") orelse "";
+        const password = fieldString(fields, "password") orelse "";
+        const body = try std.json.Stringify.valueAlloc(arena, .{
+            .name = user,
+            .password = password,
+        }, .{});
+        state.busy = true;
+        state.failure_html = null;
+        try renderPage(arena, state, commands);
+        try commands.fetchJson(fetch_login_id, "POST", "/api/v1/session", body, "");
+    } else if (std.mem.eql(u8, name, "change_password")) {
+        const fields = event.fields orelse return true;
+        const password = fieldString(fields, "new_password") orelse "";
+        const body = try std.json.Stringify.valueAlloc(arena, .{
+            .new_password = password,
+        }, .{});
+        try commands.fetchJson(
+            fetch_password_id,
+            "POST",
+            "/api/v1/session/password",
+            body,
+            state.csrf,
+        );
+    } else if (std.mem.eql(u8, name, "logout")) {
+        try commands.fetchJson(
+            fetch_logout_id,
+            "DELETE",
+            "/api/v1/session",
+            "",
+            state.csrf,
+        );
+    } else if (std.mem.startsWith(u8, name, "nav:")) {
+        const path = name["nav:".len..];
+        if (!pathAllowed(state, path)) return true;
+        try rememberPath(state, path);
+        try commands.navigate(path);
+        try renderPage(arena, state, commands);
+        try fetchPageData(state, commands);
+    } else return false;
+    return true;
+}
+
+fn handleUserViewAction(
+    arena: std.mem.Allocator,
+    state: *State,
+    event: Event,
+    commands: *Commands,
+    name: []const u8,
+) !bool {
+    if (std.mem.eql(u8, name, "create_user_dialog")) {
+        state.selected_user = "";
+        try renderPage(arena, state, commands);
+        try commands.dialogOpen("user-dialog");
+    } else if (std.mem.eql(u8, name, "filter_users")) {
+        const fields = event.fields orelse return true;
+        state.user_query = try state.gpa.dupe(u8, fieldString(fields, "user_query") orelse "");
+        state.user_role_filter = try state.gpa.dupe(
+            u8,
+            fieldString(fields, "user_role_filter") orelse "all",
+        );
+        state.user_status_filter = try state.gpa.dupe(
+            u8,
+            fieldString(fields, "user_status_filter") orelse "all",
+        );
+        try renderPage(arena, state, commands);
+    } else if (std.mem.startsWith(u8, name, "manage_user:")) {
+        state.selected_user = try state.gpa.dupe(u8, name["manage_user:".len..]);
+        try renderPage(arena, state, commands);
+        try commands.dialogOpen("user-dialog");
+    } else if (std.mem.eql(u8, name, "close_user_dialog")) {
+        try commands.dialogClose("user-dialog");
+    } else return false;
+    return true;
+}
+
+fn handleUserMutationAction(
+    arena: std.mem.Allocator,
+    state: *State,
+    event: Event,
+    commands: *Commands,
+    name: []const u8,
+) !bool {
+    if (std.mem.eql(u8, name, "create_user")) {
+        const fields = event.fields orelse return true;
+        const user = fieldString(fields, "user_name") orelse "";
+        const role = fieldString(fields, "user_role") orelse "user";
+        const body = try std.json.Stringify.valueAlloc(
+            arena,
+            .{ .name = user, .role = role },
+            .{},
+        );
+        try commands.fetchJson(
+            fetch_create_user_id,
+            "POST",
+            "/api/v1/users",
+            body,
+            state.csrf,
+        );
+    } else if (std.mem.eql(u8, name, "save_user")) {
+        if (state.selected_user.len == 0) return true;
+        const fields = event.fields orelse return true;
+        const role = fieldString(fields, "manage_role") orelse "user";
+        const disabled_text = fieldString(fields, "manage_disabled") orelse "false";
+        const body = try std.json.Stringify.valueAlloc(arena, .{
+            .role = role,
+            .disabled = std.mem.eql(u8, disabled_text, "true"),
+        }, .{});
+        const path = try userPath(arena, state.selected_user);
+        try commands.fetchJson(fetch_patch_user_id, "PATCH", path, body, state.csrf);
+    } else if (std.mem.eql(u8, name, "reset_user")) {
+        if (state.selected_user.len == 0) return true;
+        const path = try userPath(arena, state.selected_user);
+        try commands.fetchJson(
+            fetch_patch_user_id,
+            "PATCH",
+            path,
+            "{\"reset_password\":true}",
+            state.csrf,
+        );
+    } else return false;
+    return true;
+}
+
+fn handleDeleteUserAction(
+    arena: std.mem.Allocator,
+    state: *State,
+    event: Event,
+    commands: *Commands,
+    name: []const u8,
+) !bool {
+    if (!std.mem.eql(u8, name, "delete_user")) return false;
+    if (state.selected_user.len == 0) return true;
+    const fields = event.fields orelse return true;
+    const confirmation = fieldString(fields, "delete_confirm") orelse "";
+    if (!std.mem.eql(u8, confirmation, state.selected_user)) {
+        state.failure_html = try render.transportFailure(
+            state.gpa,
+            "Type the exact account name before deleting it.",
+        );
+        try renderPage(arena, state, commands);
+        try commands.dialogOpen("user-dialog");
+        return true;
     }
+    const path = try userPath(arena, state.selected_user);
+    try commands.fetchJson(fetch_delete_user_id, "DELETE", path, "", state.csrf);
+    return true;
+}
+
+fn handleKeyAction(
+    arena: std.mem.Allocator,
+    state: *State,
+    event: Event,
+    commands: *Commands,
+    name: []const u8,
+) !bool {
+    if (std.mem.eql(u8, name, "close_secret")) {
+        state.one_time_secret = "";
+        state.one_time_subject = "";
+        try commands.dialogClose("secret-dialog");
+        try renderPage(arena, state, commands);
+    } else if (std.mem.eql(u8, name, "copy_secret")) {
+        if (state.one_time_secret.len > 0) try commands.clipboard(state.one_time_secret);
+    } else if (std.mem.eql(u8, name, "create_key")) {
+        const fields = event.fields orelse return true;
+        const label = fieldString(fields, "key_label") orelse "api key";
+        const body = try std.json.Stringify.valueAlloc(
+            arena,
+            .{ .label = label },
+            .{},
+        );
+        try commands.fetchJson(
+            fetch_create_key_id,
+            "POST",
+            "/api/v1/keys",
+            body,
+            state.csrf,
+        );
+    } else if (std.mem.startsWith(u8, name, "revoke_key:")) {
+        const id = name["revoke_key:".len..];
+        const path = try std.fmt.allocPrint(arena, "/api/v1/keys/{s}", .{id});
+        try commands.fetchJson(fetch_revoke_key_id, "DELETE", path, "", state.csrf);
+    } else return false;
+    return true;
+}
+
+fn userPath(arena: std.mem.Allocator, name: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(arena, "/api/v1/users/{s}", .{name});
 }
 
 fn applyTheme(
@@ -330,28 +505,410 @@ fn handleFetchDone(
     commands: *Commands,
 ) !void {
     const id = event.id orelse return;
+    const status = event.status orelse 0;
     const body = event.body orelse "";
     switch (id) {
+        fetch_session_id => try handleSessionProbe(arena, state, status, body, commands),
+        fetch_login_id => try handleLoginDone(arena, state, status, body, commands),
+        fetch_password_id => try handlePasswordDone(arena, state, status, body, commands),
+        fetch_logout_id => try handleLogoutDone(arena, state, commands),
         fetch_formats_id => {
             state.writers = render.parseWriters(state.gpa, body) catch state.writers;
+            state.formats_loaded = true;
             try renderPage(arena, state, commands);
         },
-        fetch_convert_id => {
-            state.busy = false;
-            const outcome = render.parseEnvelope(state.gpa, body) catch {
-                state.failure_html = try render.transportFailure(
-                    state.gpa,
-                    "the server's answer could not be read",
-                );
-                try renderPage(arena, state, commands);
-                return;
-            };
-            state.result = outcome.result;
-            state.failure_html = outcome.failure_html;
+        fetch_convert_id => try handleConvertDone(arena, state, body, commands),
+        fetch_users_id => try handleUsersDone(arena, state, body, commands),
+        fetch_create_user_id => try handleCreateUserDone(
+            arena,
+            state,
+            status,
+            body,
+            commands,
+        ),
+        fetch_patch_user_id => try handlePatchUserDone(
+            arena,
+            state,
+            status,
+            body,
+            commands,
+        ),
+        fetch_delete_user_id => try handleDeleteUserDone(
+            arena,
+            state,
+            status,
+            body,
+            commands,
+        ),
+        fetch_audit_id => {
+            state.audit = render.parseAudit(state.gpa, body) catch &.{};
             try renderPage(arena, state, commands);
         },
+        fetch_status_id => {
+            state.notice = try render.statusSummary(state.gpa, body);
+            try renderPage(arena, state, commands);
+        },
+        fetch_keys_id => try handleKeysDone(arena, state, body, commands),
+        fetch_create_key_id => try handleCreateKeyDone(
+            arena,
+            state,
+            status,
+            body,
+            commands,
+        ),
+        fetch_revoke_key_id => try handleRevokeKeyDone(
+            arena,
+            state,
+            status,
+            body,
+            commands,
+        ),
         else => {},
     }
+}
+
+fn handleSessionProbe(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    state.busy = false;
+    if (status == 404) {
+        state.mode = .open;
+        state.authenticated = true;
+        state.role = .user;
+        if (!std.mem.eql(u8, state.path, "/")) {
+            try rememberPath(state, "/");
+            try commands.navigate("/");
+        }
+        try renderPage(arena, state, commands);
+        try commands.fetch(fetch_formats_id, "GET", "/api/v1/formats", "none");
+        return;
+    }
+    state.mode = .secure;
+    if (status != 200 or !parseSession(state, body)) {
+        state.authenticated = false;
+        state.role = .anonymous;
+        state.csrf = "";
+        if (!std.mem.eql(u8, state.path, "/login")) {
+            try rememberPath(state, "/login");
+            try commands.navigate("/login");
+        }
+        try renderPage(arena, state, commands);
+        return;
+    }
+    try routeAuthenticatedSession(state, commands);
+    try renderPage(arena, state, commands);
+    try fetchPageData(state, commands);
+}
+
+fn routeAuthenticatedSession(state: *State, commands: *Commands) !void {
+    if (state.must_change_password) {
+        try rememberPath(state, "/account");
+        try commands.navigate("/account");
+    } else if (!pathAllowed(state, state.path) or
+        std.mem.eql(u8, state.path, "/login"))
+    {
+        try rememberPath(state, "/");
+        try commands.navigate("/");
+    }
+}
+
+fn handleLoginDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    state.busy = false;
+    if (status != 200 or !parseSession(state, body)) {
+        state.failure_html = try render.envelopeFailure(
+            state.gpa,
+            body,
+            "Login failed.",
+        );
+        try renderPage(arena, state, commands);
+        return;
+    }
+    state.mode = .secure;
+    const next = if (state.must_change_password) "/account" else "/";
+    try rememberPath(state, next);
+    try commands.navigate(next);
+    try renderPage(arena, state, commands);
+    try fetchPageData(state, commands);
+}
+
+fn handlePasswordDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    if (status == 204) {
+        state.must_change_password = false;
+        state.notice = "Password changed. Other sessions were revoked.";
+        try renderPage(arena, state, commands);
+        try commands.fetch(fetch_session_id, "GET", "/api/v1/session", "none");
+    } else {
+        state.failure_html = try render.envelopeFailure(
+            state.gpa,
+            body,
+            "Password change failed.",
+        );
+        try renderPage(arena, state, commands);
+    }
+}
+
+fn handleLogoutDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    commands: *Commands,
+) !void {
+    state.authenticated = false;
+    state.role = .anonymous;
+    state.csrf = "";
+    try rememberPath(state, "/login");
+    try commands.navigate("/login");
+    try renderPage(arena, state, commands);
+}
+
+fn handleConvertDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    state.busy = false;
+    const outcome = render.parseEnvelope(state.gpa, body) catch {
+        state.failure_html = try render.transportFailure(
+            state.gpa,
+            "the server's answer could not be read",
+        );
+        try renderPage(arena, state, commands);
+        return;
+    };
+    state.result = outcome.result;
+    state.failure_html = outcome.failure_html;
+    try renderPage(arena, state, commands);
+}
+
+fn handleUsersDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    state.users = render.parseUsers(state.gpa, body) catch &.{};
+    try renderPage(arena, state, commands);
+    if (state.one_time_secret.len > 0) {
+        try commands.dialogOpen("secret-dialog");
+    }
+}
+
+fn handleCreateUserDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    if (status == 200) {
+        try rememberOneTimeSecret(state, body);
+        state.notice = "User created.";
+        try commands.dialogClose("user-dialog");
+        try commands.fetch(fetch_users_id, "GET", "/api/v1/users", "none");
+        try renderPage(arena, state, commands);
+        try commands.dialogOpen("secret-dialog");
+    } else {
+        state.failure_html = try render.envelopeFailure(
+            state.gpa,
+            body,
+            "User creation failed.",
+        );
+        try renderPage(arena, state, commands);
+    }
+}
+
+fn handlePatchUserDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    if (status == 200) {
+        try rememberOneTimeSecret(state, body);
+        state.notice = "A new one-time password was created.";
+        try commands.dialogClose("user-dialog");
+        try commands.fetch(fetch_users_id, "GET", "/api/v1/users", "none");
+        try renderPage(arena, state, commands);
+        try commands.dialogOpen("secret-dialog");
+    } else if (status == 204) {
+        state.notice = "User updated.";
+        try commands.dialogClose("user-dialog");
+        try commands.fetch(fetch_users_id, "GET", "/api/v1/users", "none");
+    } else {
+        state.failure_html = try render.envelopeFailure(
+            state.gpa,
+            body,
+            "User update failed.",
+        );
+        try renderPage(arena, state, commands);
+    }
+}
+
+fn handleDeleteUserDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    if (status == 204) {
+        state.notice = "User deleted.";
+        state.selected_user = "";
+        try commands.dialogClose("user-dialog");
+        try commands.fetch(fetch_users_id, "GET", "/api/v1/users", "none");
+    } else {
+        state.failure_html = try render.envelopeFailure(
+            state.gpa,
+            body,
+            "User deletion failed.",
+        );
+        try renderPage(arena, state, commands);
+    }
+}
+
+fn handleKeysDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    state.keys = render.parseKeys(state.gpa, body) catch &.{};
+    try renderPage(arena, state, commands);
+    if (state.one_time_secret.len > 0) {
+        try commands.dialogOpen("secret-dialog");
+    }
+}
+
+fn handleCreateKeyDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    if (status == 200) {
+        try rememberKeySecret(state, body);
+        try commands.fetch(fetch_keys_id, "GET", "/api/v1/keys", "none");
+        try renderPage(arena, state, commands);
+        try commands.dialogOpen("secret-dialog");
+    } else {
+        state.failure_html = try render.envelopeFailure(
+            state.gpa,
+            body,
+            "API key creation failed.",
+        );
+        try renderPage(arena, state, commands);
+    }
+}
+
+fn handleRevokeKeyDone(
+    arena: std.mem.Allocator,
+    state: *State,
+    status: u16,
+    body: []const u8,
+    commands: *Commands,
+) !void {
+    if (status == 204) {
+        state.notice = "API key revoked.";
+        try commands.fetch(fetch_keys_id, "GET", "/api/v1/keys", "none");
+    } else {
+        state.failure_html = try render.envelopeFailure(
+            state.gpa,
+            body,
+            "API key revocation failed.",
+        );
+        try renderPage(arena, state, commands);
+    }
+}
+
+fn fieldString(fields: std.json.Value, name: []const u8) ?[]const u8 {
+    if (fields != .object) return null;
+    const value = fields.object.get(name) orelse return null;
+    return if (value == .string) value.string else null;
+}
+
+fn pathAllowed(state: *const State, path: []const u8) bool {
+    if (std.mem.eql(u8, path, "/login")) return state.mode != .open;
+    if (std.mem.eql(u8, path, "/")) return state.authenticated;
+    if (std.mem.eql(u8, path, "/account")) return state.authenticated and state.mode == .secure;
+    if (std.mem.startsWith(u8, path, "/admin/")) return state.isAdministrator();
+    return false;
+}
+
+fn fetchPageData(state: *State, commands: *Commands) !void {
+    if (!state.authenticated) return;
+    if (std.mem.eql(u8, state.path, "/")) {
+        try commands.fetch(fetch_formats_id, "GET", "/api/v1/formats", "none");
+    } else if (std.mem.eql(u8, state.path, "/account")) {
+        try commands.fetch(fetch_keys_id, "GET", "/api/v1/keys", "none");
+    } else if (std.mem.eql(u8, state.path, "/admin/users")) {
+        try commands.fetch(fetch_users_id, "GET", "/api/v1/users", "none");
+    } else if (std.mem.eql(u8, state.path, "/admin/audit")) {
+        try commands.fetch(fetch_audit_id, "GET", "/api/v1/audit", "none");
+    } else if (std.mem.eql(u8, state.path, "/admin/status")) {
+        try commands.fetch(fetch_status_id, "GET", "/api/v1/status", "none");
+    }
+}
+
+fn parseSession(state: *State, body: []const u8) bool {
+    const parsed = std.json.parseFromSliceLeaky(
+        std.json.Value,
+        state.gpa,
+        body,
+        .{},
+    ) catch return false;
+    if (parsed != .object) return false;
+    const name = fieldString(parsed, "name") orelse return false;
+    const role_text = fieldString(parsed, "role") orelse return false;
+    const csrf = fieldString(parsed, "csrf") orelse return false;
+    const must_change = parsed.object.get("must_change_password") orelse return false;
+    if (must_change != .bool) return false;
+    state.session_name = state.gpa.dupe(u8, name) catch return false;
+    state.csrf = state.gpa.dupe(u8, csrf) catch return false;
+    state.role = if (std.mem.eql(u8, role_text, "administrator"))
+        .administrator
+    else if (std.mem.eql(u8, role_text, "user"))
+        .user
+    else
+        return false;
+    state.must_change_password = must_change.bool;
+    state.authenticated = true;
+    return true;
+}
+
+fn rememberOneTimeSecret(state: *State, body: []const u8) !void {
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, state.gpa, body, .{});
+    if (parsed != .object) return error.Malformed;
+    const password = fieldString(parsed, "password") orelse return error.Malformed;
+    const name = fieldString(parsed, "name") orelse return error.Malformed;
+    state.one_time_secret = try state.gpa.dupe(u8, password);
+    state.one_time_subject = try state.gpa.dupe(u8, name);
+}
+
+fn rememberKeySecret(state: *State, body: []const u8) !void {
+    const parsed = try std.json.parseFromSliceLeaky(std.json.Value, state.gpa, body, .{});
+    if (parsed != .object) return error.Malformed;
+    const secret = fieldString(parsed, "secret") orelse return error.Malformed;
+    const id = fieldString(parsed, "id") orelse return error.Malformed;
+    state.one_time_secret = try state.gpa.dupe(u8, secret);
+    state.one_time_subject = try state.gpa.dupe(u8, id);
 }
 
 fn renderPage(
@@ -416,173 +973,7 @@ export fn ui_event(ptr: [*]const u8, len: u32) u64 {
     return (@as(u64, @intFromPtr(commands.ptr)) << 32) | commands.len;
 }
 
-// ---------------------------------------------------------------- tests
-
-const testing = std.testing;
-
 test {
     _ = render;
-}
-
-fn testState(arena: std.mem.Allocator) State {
-    return .{ .gpa = arena };
-}
-
-test "init renders the converter and discovers capabilities" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var state = testState(arena);
-
-    const commands = try handleEvent(arena, &state,
-        \\{"event":"init","path":"/","stored_theme":"system","system_scheme":"dark"}
-    );
-    try testing.expect(std.mem.indexOf(u8, commands, "\"cmd\":\"title\"") != null);
-    try testing.expect(std.mem.indexOf(u8, commands, "\"cmd\":\"patch\"") != null);
-    try testing.expect(std.mem.indexOf(u8, commands, "Drop a document") != null);
-    try testing.expect(std.mem.indexOf(u8, commands, "/api/v1/formats") != null);
-    // System preference resolves to the dark scheme.
-    try testing.expect(std.mem.indexOf(u8, commands, "\"theme\":\"dark\"") != null);
-    try testing.expectEqual(Theme.system, state.stored_theme);
-}
-
-test "an explicit theme choice persists and applies" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var state = testState(arena);
-    _ = try handleEvent(arena, &state,
-        \\{"event":"init","path":"/","stored_theme":"system","system_scheme":"light"}
-    );
-
-    const commands = try handleEvent(arena, &state,
-        \\{"event":"action","name":"theme_dark","fields":{}}
-    );
-    try testing.expect(std.mem.indexOf(
-        u8,
-        commands,
-        "\"cmd\":\"preference_store\",\"theme\":\"dark\"",
-    ) != null);
-    try testing.expect(std.mem.indexOf(
-        u8,
-        commands,
-        "\"cmd\":\"theme_apply\",\"theme\":\"dark\"",
-    ) != null);
-    try testing.expectEqual(Theme.dark, state.stored_theme);
-
-    // Back to system: follows the reported scheme again.
-    const back = try handleEvent(arena, &state,
-        \\{"event":"action","name":"theme_system","fields":{}}
-    );
-    try testing.expect(std.mem.indexOf(
-        u8,
-        back,
-        "\"cmd\":\"theme_apply\",\"theme\":\"light\"",
-    ) != null);
-}
-
-test "a system scheme change re-applies only under the system preference" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var state = testState(arena);
-    _ = try handleEvent(arena, &state,
-        \\{"event":"init","path":"/","stored_theme":"system","system_scheme":"light"}
-    );
-
-    const commands = try handleEvent(arena, &state,
-        \\{"event":"color_scheme_change","scheme":"dark"}
-    );
-    try testing.expect(std.mem.indexOf(u8, commands, "\"theme\":\"dark\"") != null);
-
-    _ = try handleEvent(arena, &state,
-        \\{"event":"action","name":"theme_light","fields":{}}
-    );
-    const pinned = try handleEvent(arena, &state,
-        \\{"event":"color_scheme_change","scheme":"light"}
-    );
-    try testing.expect(std.mem.indexOf(u8, pinned, "theme_apply") == null);
-}
-
-test "convert without a file explains itself; with a file it fetches" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var state = testState(arena);
-    _ = try handleEvent(arena, &state,
-        \\{"event":"init","path":"/","stored_theme":"system","system_scheme":"light"}
-    );
-
-    const refused = try handleEvent(arena, &state,
-        \\{"event":"action","name":"convert","fields":{"to":"markdown","strict":"off"}}
-    );
-    try testing.expect(std.mem.indexOf(u8, refused, "pick or drop a document") != null);
-    try testing.expect(std.mem.indexOf(u8, refused, "\"cmd\":\"fetch\"") == null);
-
-    _ = try handleEvent(arena, &state,
-        \\{"event":"file","name":"report.docx","size":1234}
-    );
-    const converted = try handleEvent(arena, &state,
-        \\{"event":"action","name":"convert","fields":{"to":"markdown","strict":"exact"}}
-    );
-    try testing.expect(std.mem.indexOf(
-        u8,
-        converted,
-        "/api/v1/convert?to=markdown&strict=exact",
-    ) != null);
-    try testing.expect(std.mem.indexOf(u8, converted, "\"body\":\"file\"") != null);
-    try testing.expect(state.busy);
-}
-
-test "a success envelope becomes the result card; reports render verbatim" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var state = testState(arena);
-    _ = try handleEvent(arena, &state,
-        \\{"event":"init","path":"/","stored_theme":"system","system_scheme":"light"}
-    );
-    _ = try handleEvent(arena, &state,
-        \\{"event":"file","name":"report.docx","size":1234}
-    );
-    _ = try handleEvent(arena, &state,
-        \\{"event":"action","name":"convert","fields":{"to":"markdown","strict":"off"}}
-    );
-
-    const envelope =
-        \\{"event":"fetch_done","id":2,"status":200,"body":"{\"status\":\"success\",\"artifact\":\"# Hi\",\"artifact_name\":\"report.md\",\"reports\":[{\"severity\":\"warning\",\"code\":\"docx.comment-dropped\",\"title\":\"A COMMENT WAS DROPPED\",\"problem\":\"The comment has no Markdown form.\",\"consequence\":\"The comment is gone.\",\"directions\":[{\"title\":\"What you can do\",\"explanation\":\"Nothing; comments have no home in Markdown.\"}]}],\"exit_class\":\"conversion\"}"}
-    ;
-    const commands = try handleEvent(arena, &state, envelope);
-    try testing.expect(!state.busy);
-    try testing.expect(state.result != null);
-    try testing.expectEqualStrings("report.md", state.result.?.artifact_name);
-    try testing.expect(std.mem.indexOf(u8, commands, "report.md") != null);
-    try testing.expect(std.mem.indexOf(u8, commands, "docx.comment-dropped") != null);
-    try testing.expect(std.mem.indexOf(u8, commands, "A COMMENT WAS DROPPED") != null);
-
-    const download = try handleEvent(arena, &state,
-        \\{"event":"action","name":"download","fields":{}}
-    );
-    try testing.expect(std.mem.indexOf(u8, download, "\"cmd\":\"download\"") != null);
-}
-
-test "hostile strings in the envelope are escaped by construction" {
-    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-    var state = testState(arena);
-    _ = try handleEvent(arena, &state,
-        \\{"event":"init","path":"/","stored_theme":"system","system_scheme":"light"}
-    );
-    _ = try handleEvent(arena, &state,
-        \\{"event":"file","name":"x.docx","size":1}
-    );
-    _ = try handleEvent(arena, &state,
-        \\{"event":"action","name":"convert","fields":{}}
-    );
-    const commands = try handleEvent(arena, &state,
-        \\{"event":"fetch_done","id":2,"status":400,"body":"{\"status\":\"failed\",\"reports\":[{\"severity\":\"error\",\"code\":\"server.invalid-query\",\"title\":\"<script>alert(1)</script>\",\"problem\":\"<img src=x>\",\"consequence\":\"c\",\"directions\":[]}],\"exit_class\":\"usage\"}"}
-    );
-    try testing.expect(std.mem.indexOf(u8, commands, "<script>") == null);
-    try testing.expect(std.mem.indexOf(u8, commands, "&lt;script&gt;") != null);
+    _ = @import("main_test.zig");
 }

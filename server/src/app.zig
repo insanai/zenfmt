@@ -8,6 +8,7 @@
 //! with the conventional 128-plus-signal code.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Io = std.Io;
 const zenfmt = @import("zenfmt");
@@ -39,11 +40,21 @@ const ModeRoute = struct {
     secure_only: bool = false,
 };
 
-fn open(method: std.http.Method, path: []const u8, role: zenserve.Role, handler: anytype) ModeRoute {
+fn open(
+    method: std.http.Method,
+    path: []const u8,
+    role: zenserve.Role,
+    handler: anytype,
+) ModeRoute {
     return .{ .route = .{ .method = method, .path = path, .role = role, .handler = handler } };
 }
 
-fn secured(method: std.http.Method, path: []const u8, role: zenserve.Role, handler: anytype) ModeRoute {
+fn secured(
+    method: std.http.Method,
+    path: []const u8,
+    role: zenserve.Role,
+    handler: anytype,
+) ModeRoute {
     return .{
         .route = .{ .method = method, .path = path, .role = role, .handler = handler },
         .secure_only = true,
@@ -58,7 +69,15 @@ const mode_routes = [_]ModeRoute{
     open(.GET, "/healthz", .anonymous, healthzHandler),
     open(.GET, "/readyz", .anonymous, readyzHandler),
     open(.GET, "/metrics", .anonymous, metricsHandler),
-    open(.GET, "/", .user, ui.shellHandler),
+    // The shell itself is public. In secure mode the wasm application probes
+    // the session endpoint and renders the login page when no session exists;
+    // all data and mutations remain protected by the API role matrix.
+    open(.GET, "/", .anonymous, ui.shellHandler),
+    open(.GET, "/login", .anonymous, ui.shellHandler),
+    open(.GET, "/account", .anonymous, ui.shellHandler),
+    open(.GET, "/admin/users", .anonymous, ui.shellHandler),
+    open(.GET, "/admin/audit", .anonymous, ui.shellHandler),
+    open(.GET, "/admin/status", .anonymous, ui.shellHandler),
     open(.GET, "/assets/{name}", .anonymous, ui.assetHandler),
     // Secure-only: sessions, keys, users, audit.
     secured(.POST, "/api/v1/session", .anonymous, secure.login),
@@ -105,6 +124,9 @@ pub const App = struct {
     stderr_buffer: [4096]u8,
     conversions_cap: u32,
     conversions_active: std.atomic.Value(u32) = .init(0),
+    passwords_active: std.atomic.Value(u32) = .init(0),
+    login_rates: zenserve.ratelimit.Buckets(1024) = .init,
+    conversion_rates: zenserve.ratelimit.Buckets(2048) = .init,
     started_at: Io.Clock.Timestamp,
     assets: ui.Assets,
     /// The account store; present only in secure mode.
@@ -141,7 +163,11 @@ pub const App = struct {
 
         const path = zenserve.router.pathOf(ctx.request.head.target);
         const route_label = routeLabel(path);
-        dispatch(app, ctx, path) catch |err| recover(app, ctx, err);
+        const admitted = rateAllowed(app, ctx, path) catch |err| {
+            recover(app, ctx, err);
+            return;
+        };
+        if (admitted) dispatch(app, ctx, path) catch |err| recover(app, ctx, err);
         if (!ctx.responded) return;
 
         const finished = Io.Clock.Timestamp.now(app.io, .awake);
@@ -162,7 +188,13 @@ pub const App = struct {
             .{ .name = "method", .value = .{ .string = @tagName(ctx.request.head.method) } },
             .{ .name = "route", .value = .{ .string = @tagName(route_label) } },
             .{ .name = "status", .value = .{ .unsigned = status } },
-            .{ .name = "duration_ms", .value = .{ .unsigned = @intCast(@divTrunc(nanos, std.time.ns_per_ms)) } },
+            .{
+                .name = "duration_ms",
+                .value = .{ .unsigned = @intCast(@divTrunc(
+                    nanos,
+                    std.time.ns_per_ms,
+                )) },
+            },
             .{ .name = "principal", .value = .{ .string = ctx.principal.name } },
         });
     }
@@ -239,6 +271,51 @@ pub const App = struct {
         }
     }
 };
+
+fn rateAllowed(app: *App, ctx: *Context, path: []const u8) HandlerError!bool {
+    const method = ctx.request.head.method;
+    const login = app.options.secure and method == .POST and
+        std.mem.eql(u8, path, "/api/v1/session");
+    const conversion = app.options.secure and
+        (method == .POST or method == .PUT) and
+        (std.mem.eql(u8, path, "/api/v1/convert") or
+            std.mem.eql(u8, path, "/api/v1/convert/batch"));
+    if (!login and !conversion) return true;
+
+    const now_ms = Io.Clock.Timestamp.now(app.io, .awake).raw.toMilliseconds();
+    const key = rateKey(ctx);
+    const decision = if (login)
+        app.login_rates.allow(app.io, key, .{
+            .capacity = 10,
+            .refill_milli_per_second = 167,
+        }, now_ms)
+    else
+        app.conversion_rates.allow(app.io, key, .{
+            .capacity = 60,
+            .refill_milli_per_second = 1000,
+        }, now_ms);
+    if (decision.allowed) return true;
+
+    app.metrics.counter("zenfmt_http_rejected_total", .{ .reason = .rate }).inc();
+    var retry_buf: [12]u8 = undefined;
+    const retry = std.fmt.bufPrint(
+        &retry_buf,
+        "{d}",
+        .{decision.retry_after_seconds},
+    ) catch unreachable;
+    try respondEntry(ctx, server_reports.rate_limited, &.{
+        .{ .name = "retry-after", .value = retry },
+    });
+    return false;
+}
+
+fn rateKey(ctx: *const Context) u64 {
+    if (ctx.principal.user_id != 0) return @bitCast(ctx.principal.user_id);
+    return switch (ctx.peer) {
+        .ip4 => |ip4| std.hash.Wyhash.hash(0x7a656e666d7434, &ip4.bytes),
+        .ip6 => |ip6| std.hash.Wyhash.hash(0x7a656e666d7436, &ip6.bytes),
+    };
+}
 
 fn routeLabel(path: []const u8) app_metrics.RouteName {
     if (std.mem.eql(u8, path, "/api/v1/convert")) return .convert;
@@ -320,79 +397,16 @@ pub const Instance = struct {
         io: Io,
         options: root.Options,
     ) !Instance {
-        const app = try gpa.create(App);
-        errdefer gpa.destroy(app);
-        app.* = .{
-            .gpa = gpa,
-            .io = io,
-            .options = options,
-            .kernel = undefined,
-            .health = .init,
-            .http_ready = undefined,
-            .logger = undefined,
-            .stderr_writer = undefined,
-            .stderr_buffer = undefined,
-            .conversions_cap = options.conversions orelse
-                @intCast(@max(1, std.Thread.getCpuCount() catch 1)),
-            .started_at = Io.Clock.Timestamp.now(io, .awake),
-            .assets = try ui.Assets.init(gpa),
-        };
-        errdefer app.assets.deinit(gpa);
-        app.stderr_writer = Io.File.stderr().writerStreaming(io, &app.stderr_buffer);
-        app.logger = .{
-            .format = options.log_format,
-            .level = switch (options.log_level) {
-                .err => .err,
-                .warn => .warn,
-                .info => .info,
-                .debug => .debug,
-            },
-            .out = &app.stderr_writer.interface,
-        };
-        app.http_ready = app.health.register("http");
-
-        // Secure mode: durability first, then open → migrate → bootstrap →
-        // adopt, all before the listener binds.
-        last_bootstrap = null;
-        if (options.secure) {
-            const store_ready = app.health.register("store");
-            zaxonlite.durability.setSyncMode(.full);
-            var bootstrap: ?store_mod.Bootstrap = null;
-            app.store = try store_mod.Store.open(gpa, io, options.data_dir.?, &bootstrap);
-            last_bootstrap = bootstrap;
-            app.store.?.audit(
-                .@"server.start",
-                "system",
-                "server",
-                "{}",
-                std.Io.Clock.now(.real, io).toSeconds(),
-            );
-            app.store.?.pruneAudit(std.Io.Clock.now(.real, io).toSeconds());
-            store_ready.store(true, .release);
+        if (options.secure and !isLoopback(options.address) and
+            !options.behind_proxy and !options.allow_insecure_network)
+        {
+            return error.InsecureNetwork;
         }
+        const app = try createApp(gpa, io, options);
+        errdefer destroyApp(app);
+        last_bootstrap = try openSecureStore(app);
         errdefer if (app.store) |*store| store.close();
-
-        app.kernel = .{
-            .gpa = gpa,
-            .io = io,
-            .app = app,
-            .options = .{
-                .address = options.address,
-                .port = options.port,
-                .connections = options.connections,
-                .drain_seconds = options.drain_seconds,
-                .max_body_bytes = options.max_body_bytes,
-            },
-        };
-        try app.kernel.start();
-        app.http_ready.store(true, .release);
-        app.logger.emit(io, .info, "server.start", &.{
-            .{ .name = "version", .value = .{ .string = build_info.version } },
-            .{ .name = "revision", .value = .{ .string = build_info.revision } },
-            .{ .name = "mode", .value = .{ .string = if (options.secure) "secure" else "open" } },
-            .{ .name = "address", .value = .{ .string = options.address } },
-            .{ .name = "port", .value = .{ .unsigned = app.kernel.boundPort() } },
-        });
+        try startKernel(app);
         return .{ .app = app };
     }
 
@@ -421,24 +435,143 @@ pub const Instance = struct {
     }
 };
 
-var signal_received: std.atomic.Value(u8) = .init(0);
-
-fn onSignal(sig: std.posix.SIG) callconv(.c) void {
-    const value: u8 = @intCast(@intFromEnum(sig));
-    const previous = signal_received.swap(value, .monotonic);
-    // A second signal skips the drain entirely.
-    if (previous != 0) std.process.exit(128 +| previous);
-}
-
-fn installSignalHandlers() void {
-    const action: std.posix.Sigaction = .{
-        .handler = .{ .handler = onSignal },
-        .mask = std.posix.sigemptyset(),
-        .flags = 0,
+fn createApp(gpa: std.mem.Allocator, io: Io, options: root.Options) !*App {
+    const app = try gpa.create(App);
+    errdefer gpa.destroy(app);
+    app.* = .{
+        .gpa = gpa,
+        .io = io,
+        .options = options,
+        .kernel = undefined,
+        .health = .init,
+        .http_ready = undefined,
+        .logger = undefined,
+        .stderr_writer = undefined,
+        .stderr_buffer = undefined,
+        .conversions_cap = options.conversions orelse
+            @intCast(@max(1, std.Thread.getCpuCount() catch 1)),
+        .started_at = Io.Clock.Timestamp.now(io, .awake),
+        .assets = try ui.Assets.init(gpa),
     };
-    std.posix.sigaction(.INT, &action, null);
-    std.posix.sigaction(.TERM, &action, null);
+    errdefer app.assets.deinit(gpa);
+    app.stderr_writer = Io.File.stderr().writerStreaming(io, &app.stderr_buffer);
+    app.logger = .{
+        .format = options.log_format,
+        .level = switch (options.log_level) {
+            .err => .err,
+            .warn => .warn,
+            .info => .info,
+            .debug => .debug,
+        },
+        .out = &app.stderr_writer.interface,
+    };
+    app.http_ready = app.health.register("http");
+    return app;
 }
+
+fn destroyApp(app: *App) void {
+    app.assets.deinit(app.gpa);
+    app.gpa.destroy(app);
+}
+
+fn openSecureStore(app: *App) !?store_mod.Bootstrap {
+    if (!app.options.secure) return null;
+    const store_ready = app.health.register("store");
+    zaxonlite.durability.setSyncMode(.full);
+    var bootstrap: ?store_mod.Bootstrap = null;
+    app.store = try store_mod.Store.open(
+        app.gpa,
+        app.io,
+        app.options.data_dir.?,
+        &bootstrap,
+    );
+    app.store.?.audit(
+        .@"server.start",
+        "system",
+        "server",
+        "{}",
+        std.Io.Clock.now(.real, app.io).toSeconds(),
+    );
+    app.store.?.pruneAudit(std.Io.Clock.now(.real, app.io).toSeconds());
+    store_ready.store(true, .release);
+    return bootstrap;
+}
+
+fn startKernel(app: *App) !void {
+    const options = app.options;
+    app.kernel = .{
+        .gpa = app.gpa,
+        .io = app.io,
+        .app = app,
+        .options = .{
+            .address = options.address,
+            .port = options.port,
+            .connections = options.connections,
+            .drain_seconds = options.drain_seconds,
+            .max_body_bytes = options.max_body_bytes,
+        },
+    };
+    try app.kernel.start();
+    app.http_ready.store(true, .release);
+    app.logger.emit(app.io, .info, "server.start", &.{
+        .{ .name = "version", .value = .{ .string = build_info.version } },
+        .{ .name = "revision", .value = .{ .string = build_info.revision } },
+        .{
+            .name = "mode",
+            .value = .{ .string = if (options.secure) "secure" else "open" },
+        },
+        .{ .name = "address", .value = .{ .string = options.address } },
+        .{ .name = "port", .value = .{ .unsigned = app.kernel.boundPort() } },
+    });
+}
+
+var requested_exit_code: std.atomic.Value(u8) = .init(0);
+
+fn requestStop(exit_code: u8) void {
+    const previous = requested_exit_code.swap(exit_code, .monotonic);
+    // A second signal skips the drain entirely.
+    if (previous != 0) std.process.exit(previous);
+}
+
+const PlatformSignals = if (builtin.os.tag == .windows) struct {
+    const windows = std.os.windows;
+    const Handler = *const fn (u32) callconv(.winapi) windows.BOOL;
+
+    extern "kernel32" fn SetConsoleCtrlHandler(
+        handler: ?Handler,
+        add: windows.BOOL,
+    ) callconv(.winapi) windows.BOOL;
+
+    fn handler(kind: u32) callconv(.winapi) windows.BOOL {
+        // CTRL_C_EVENT, CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT,
+        // and CTRL_SHUTDOWN_EVENT all request the same bounded drain.
+        switch (kind) {
+            0, 1, 2, 5, 6 => {
+                requestStop(130);
+                return windows.BOOL.TRUE;
+            },
+            else => return .FALSE,
+        }
+    }
+
+    fn install() void {
+        _ = SetConsoleCtrlHandler(handler, windows.BOOL.TRUE);
+    }
+} else struct {
+    fn handler(sig: std.posix.SIG) callconv(.c) void {
+        requestStop(128 +| @as(u8, @intCast(@intFromEnum(sig))));
+    }
+
+    fn install() void {
+        const action: std.posix.Sigaction = .{
+            .handler = .{ .handler = handler },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+        std.posix.sigaction(.INT, &action, null);
+        std.posix.sigaction(.TERM, &action, null);
+    }
+};
 
 /// The process entry: start, announce, wait for a signal, drain, exit.
 pub fn run(
@@ -447,8 +580,9 @@ pub fn run(
     options: root.Options,
     err_out: *Io.Writer,
 ) u8 {
-    // Open mode on a non-loopback bind is loud (ZDS 0016). Secure mode's
-    // own cleartext-network warning is deferred to the proxy work.
+    // Open mode on a non-loopback bind is loud. Secure mode refuses that
+    // posture unless TLS termination or an explicit cleartext acknowledgement
+    // was selected by the operator.
     if (!options.secure and !isLoopback(options.address)) {
         zenfmt.report.renderText(
             &.{server_reports.open_network_bind},
@@ -485,14 +619,15 @@ pub fn run(
         ) catch {};
         err_out.flush() catch {};
     }
-    installSignalHandlers();
+    requested_exit_code.store(0, .monotonic);
+    PlatformSignals.install();
 
-    while (signal_received.load(.monotonic) == 0) {
+    while (requested_exit_code.load(.monotonic) == 0) {
         io.sleep(.fromMilliseconds(200), .awake) catch break;
     }
-    const sig = signal_received.load(.monotonic);
+    const exit_code = requested_exit_code.load(.monotonic);
     instance.stop();
-    return 128 +| sig;
+    return exit_code;
 }
 
 fn isLoopback(address: []const u8) bool {
@@ -515,5 +650,5 @@ test "route labels map the table" {
 }
 
 test "the route count is pinned" {
-    try testing.expectEqual(@as(usize, 21), route_count);
+    try testing.expectEqual(@as(usize, 26), route_count);
 }
