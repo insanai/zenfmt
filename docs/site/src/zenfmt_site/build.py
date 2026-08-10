@@ -283,9 +283,19 @@ def build(
     # Records keep their published .html addresses.
     record_entries = []
     records_dir = inputs.zds_site / "zds"
+    zds_figures = content_map["zds_figures"]
     for source in sorted(records_dir.glob("*.html")):
         route = f"zds/{source.name}"
-        page = builder.emit_typst(source, route, source.stem)
+        if source.stem not in zds_figures:
+            raise ContractError(
+                f"the content map has no figure count for ZDS {source.stem!r}"
+            )
+        page = builder.emit_typst(
+            source,
+            route,
+            source.stem,
+            expect_figures=zds_figures[source.stem],
+        )
         record_entries.append(
             {"route": route, "title": page.title, "summary": page.description}
         )

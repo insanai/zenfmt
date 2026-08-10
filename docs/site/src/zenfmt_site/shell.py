@@ -79,7 +79,7 @@ def render(page: Page, *, version: str) -> str:
     link = _linker(page)
     head = [
         "<!doctype html>",
-        '<html lang="en">',
+        '<html lang="en" class="theme-system">',
         "<head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -90,10 +90,8 @@ def render(page: Page, *, version: str) -> str:
         f"<title>{_escape(page.title)}</title>",
         f'<meta name="description" content="{_escape(page.description)}">',
         f'<meta name="generator" content="zenfmt {_escape(version)}">',
-        # Applied before first paint so a stored dark preference does not
-        # flash light first. Inline script is not an option under this policy,
-        # so the choice is a class the stylesheet reads, set by main.js as
-        # early as the parser reaches it.
+        # The shell starts in System mode so the stylesheet can follow the
+        # operating system before JavaScript applies a stored preference.
         '<meta name="color-scheme" content="light dark">',
     ]
     for sheet in page.stylesheets:
@@ -155,8 +153,9 @@ def _header(page: Page, link) -> str:
         'placeholder="Search Book and ZDS" autocomplete="off" data-search-input>'
         '<label class="theme-label" for="theme-select">Theme</label>'
         '<select id="theme-select" class="theme-select" data-theme-select>'
+        '<option value="system" selected>System</option>'
         '<option value="light">Light</option><option value="dark">Dark</option>'
-        '<option value="system">System</option></select>'
+        "</select>"
         "</div>"
         '<div class="search-results" data-search-results hidden></div>'
         "</header>"

@@ -136,11 +136,10 @@ class _Parser(HTMLParser):
                 self.doc.description = mapping.get("content") or ""
             return
 
-        if tag == "svg":
+        if tag == "svg" and self._svg_depth == 0:
+            self._svg_buffer = []
+        if tag == "svg" or self._svg_depth:
             self._svg_depth += 1
-            if self._svg_depth == 1:
-                self._svg_buffer = []
-        if self._svg_depth:
             self._svg_buffer.append(self._render(tag, mapping, close=False))
             return
 
@@ -305,16 +304,33 @@ class _Parser(HTMLParser):
         self._svg_alt = None
 
 
-_DIMENSION = re.compile(r'\b(width|height)="([^"]+)"')
+_SVG_OPENING = re.compile(r"^<svg\b([^>]*)>")
+_DIMENSION = re.compile(r'(?<![-\w])(width|height)="([^"]+)"')
+_LENGTH = re.compile(r"([0-9]+(?:\.[0-9]+)?)(pt|px)?")
 
 
 def _dimensions(svg: str) -> tuple[str, str]:
     """Carries the drawing's own size onto the image element, so the page
     does not reflow when a lazily loaded diagram arrives."""
-    found = dict(_DIMENSION.findall(svg[:400]))
-    width = f' width="{found["width"]}"' if "width" in found else ""
-    height = f' height="{found["height"]}"' if "height" in found else ""
+    opening = _SVG_OPENING.match(svg)
+    if not opening:
+        return "", ""
+    found = dict(_DIMENSION.findall(opening.group(1)))
+    width = _html_dimension("width", found.get("width"))
+    height = _html_dimension("height", found.get("height"))
     return width, height
+
+
+def _html_dimension(name: str, value: str | None) -> str:
+    """Converts an SVG length into a valid integer HTML image dimension."""
+    if value is None:
+        return ""
+    match = _LENGTH.fullmatch(value)
+    if not match:
+        return ""
+    scale = 4 / 3 if match.group(2) == "pt" else 1
+    pixels = round(float(match.group(1)) * scale)
+    return f' {name}="{pixels}"' if pixels > 0 else ""
 
 
 def _escape_attr(value: str) -> str:

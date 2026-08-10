@@ -33,15 +33,15 @@ function storedTheme() {
   }
 }
 
-// Light wins when nothing is stored, even if the system prefers dark. That is
-// a deliberate product choice recorded in ZDS 0015, not an oversight.
-let theme = storedTheme() ?? 'light';
+// With no stored preference, follow the operating system. The page shell
+// carries the same class so this is also the no-script and first-paint default.
+let theme = storedTheme() ?? 'system';
 applyTheme(theme);
 
 const themeSelect = document.querySelector('[data-theme-select]');
 if (themeSelect) themeSelect.value = theme;
 themeSelect?.addEventListener('change', () => {
-  theme = THEMES.includes(themeSelect.value) ? themeSelect.value : 'light';
+  theme = THEMES.includes(themeSelect.value) ? themeSelect.value : 'system';
   applyTheme(theme);
   try {
     localStorage.setItem(THEME_KEY, theme);

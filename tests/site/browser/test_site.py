@@ -58,7 +58,8 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     context = browser.new_context()
     page = context.new_page()
     page.goto(site_url)
-    expect(page.locator("html")).to_have_class("theme-light")
+    expect(page.locator("html")).to_have_class("theme-system")
+    expect(page.get_by_label("Theme")).to_have_value("system")
 
     page.get_by_label("Theme").select_option("dark")
     expect(page.locator("html")).to_have_class("theme-dark")
@@ -83,6 +84,27 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     expect(page.locator(".docs-nav")).to_contain_text("The zenfmt book")
     expect(page.locator(".page-toc")).to_contain_text("On this page")
     expect(page.get_by_role("link", name="Download this PDF")).to_be_visible()
+    context.close()
+
+
+def test_system_theme_and_zds_diagrams_render(browser: Browser, site_url: str) -> None:
+    context = browser.new_context(color_scheme="dark")
+    page = context.new_page()
+    page.goto(f"{site_url}zds/0001-zds-process.html")
+
+    expect(page.locator("html")).to_have_class("theme-system")
+    assert page.evaluate("matchMedia('(prefers-color-scheme: dark)').matches")
+
+    diagrams = page.locator("figure img")
+    expect(diagrams).to_have_count(3)
+    diagrams.first.scroll_into_view_if_needed()
+    expect(diagrams.first).to_be_visible()
+    dimensions = diagrams.first.evaluate(
+        "async node => { await node.decode(); return "
+        "{natural: node.naturalWidth, rendered: node.getBoundingClientRect().width}; }"
+    )
+    assert dimensions["natural"] > 100
+    assert dimensions["rendered"] > 100
     context.close()
 
 

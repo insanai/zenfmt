@@ -107,6 +107,7 @@ class TestFigures:
         assert "<svg" not in doc.body
         assert "<img" in doc.body
         assert 'alt="A pipeline from reader to writer"' in doc.body
+        assert doc.figures[0].svg.endswith("</svg>")
         # The drawing's own size travels onto the image so a lazily loaded
         # diagram does not reflow the page when it arrives.
         assert 'width="100"' in doc.body
@@ -117,6 +118,17 @@ class TestFigures:
         # alt text is unreadable rather than merely undescribed.
         with pytest.raises(ContractError, match="no alternative text"):
             parse(wrap("<figure><svg><path d='M0 0'/></svg></figure>"), page_id="p")
+
+    def test_stroke_width_cannot_replace_the_diagram_width(self):
+        body = (
+            '<figure data-alt="A visible diagram">'
+            '<svg width="150pt" height="75pt">'
+            '<path stroke-width="0.8" d="M0 0"/></svg></figure>'
+        )
+        doc = parse(wrap(body), page_id="p")
+        assert 'width="200"' in doc.body
+        assert 'height="100"' in doc.body
+        assert 'width="0.8"' not in doc.body
 
 
 class TestBuilderOutput:

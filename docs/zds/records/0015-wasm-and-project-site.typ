@@ -277,9 +277,9 @@ AnyDoc and a restrained editorial layout from Notion, without borrowing their
 voice or identity. It remains keyboard accessible, privacy preserving, and
 free of a server runtime. It presents the converter first, an auditable
 benchmark dashboard second, and clear routes into the zenfmt book, Zen
-Discussion records, downloads, and GitHub. The default theme is light; the
-visitor can choose light, dark, or system and the preference stays on that
-device.
+Discussion records, downloads, and GitHub. The default theme follows the
+operating system. The visitor can choose light, dark, or system, and the
+preference stays on that device.
 
 The book and every ZDS remain authored in Typst. Their shared sources produce
 archival PDFs and a new multi-page HTML documentation site with the navigation
@@ -535,13 +535,11 @@ The normative design tokens are semantic rather than page-specific:
 - all bundled font licenses ship with the site and release; no font, icon,
   script, stylesheet, or analytics asset is fetched from a third party.
 
-Light is the initial theme even when the operating system prefers dark. The
-selector offers `Light`, `Dark`, and `System`. A visitor's explicit choice is
-stored only in `localStorage`; absent a stored value, `Light` wins. The choice
-is applied before first paint to avoid a theme flash. `System` follows
-`prefers-color-scheme` until the visitor selects another value. Native form
-controls, `color-scheme`, `forced-colors`, print styles, and syntax colors must
-agree with the active theme.
+System is the initial theme. The selector offers `System`, `Light`, and `Dark`.
+A visitor's explicit choice is stored only in `localStorage`. When there is no
+stored value, the site follows `prefers-color-scheme`. Native form controls,
+`color-scheme`, `forced-colors`, print styles, and syntax colors must agree
+with the active theme.
 
 = Design Overview
 
@@ -1937,7 +1935,7 @@ Post-deploy smoke tests use the public Pages URL and verify:
 - `application/wasm` or the adapter's documented safe fallback behavior;
 - a real example conversion and native-known artifact digest;
 - no outbound conversion request;
-- theme persistence and no-theme default light;
+- theme persistence and the System default when no theme is stored;
 - help links from a successful conversion and a forced error;
 - direct downloads for WASM, every CLI target, Python, and source;
 - standalone/archive/deployed WASM digest identity;

@@ -80,6 +80,24 @@
       "summary": "The REST and streaming API, open and secure modes, and deployment."
     }
   ],
+  "zds_figures": {
+    "0001-zds-process": 3,
+    "0002-zenfmt-architecture": 2,
+    "0003-docx-reader": 0,
+    "0004-rtf-reader": 0,
+    "0005-xlsx-reader": 0,
+    "0006-odt-reader": 0,
+    "0007-pptx-reader": 0,
+    "0008-ods-reader": 0,
+    "0009-odp-reader": 0,
+    "0010-epub-reader": 0,
+    "0011-pdf-reader": 0,
+    "0012-legacy-office-readers": 0,
+    "0013-layered-document-ir": 4,
+    "0014-python-library": 0,
+    "0015-wasm-and-project-site": 5,
+    "0016-server": 0
+  },
   "routes": {
     "home": "",
     "benchmark": "benchmark/",
