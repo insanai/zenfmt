@@ -29,7 +29,11 @@ const Query = struct {
 pub fn handle(ctx: *Context) HandlerError!void {
     const app = ctx.appAs(app_mod.App);
 
-    const query = parseQuery(ctx) catch return; // responded inside
+    const query = parseQuery(ctx) catch |err| switch (err) {
+        error.Responded => return,
+        error.WriteFailed => return error.WriteFailed,
+        error.OutOfMemory => return error.OutOfMemory,
+    };
     // Header facts are captured before any body read: the parsed head is
     // only valid until the body starts consuming the connection buffer.
     const facts = headFacts(ctx) catch return error.OutOfMemory;
@@ -108,7 +112,11 @@ pub fn handle(ctx: *Context) HandlerError!void {
 /// next part begins, so a client sees progress without polling.
 pub fn handleBatch(ctx: *Context) HandlerError!void {
     const app = ctx.appAs(app_mod.App);
-    const query = parseQuery(ctx) catch return;
+    const query = parseQuery(ctx) catch |err| switch (err) {
+        error.Responded => return,
+        error.WriteFailed => return error.WriteFailed,
+        error.OutOfMemory => return error.OutOfMemory,
+    };
 
     const content_type = ctx.request.head.content_type orelse "";
     if (!std.ascii.startsWithIgnoreCase(content_type, "multipart/form-data")) {
@@ -350,16 +358,19 @@ fn derivedArtifactName(
 }
 
 /// Parses `?to=&from=&strict=&limit=`; responds and fails on a bad value.
-fn parseQuery(ctx: *Context) error{ Responded, WriteFailed }!Query {
+/// The `to` and `from` values are duped into the arena because they slice
+/// the request head buffer, which the body read overwrites before the
+/// engine sees them.
+fn parseQuery(ctx: *Context) error{ Responded, WriteFailed, OutOfMemory }!Query {
     var query: Query = .{};
     var iterator = zenserve.router.QueryIterator.init(
         zenserve.router.queryOf(ctx.request.head.target),
     );
     while (iterator.next()) |pair| {
         if (std.mem.eql(u8, pair.name, "to")) {
-            query.to = pair.value;
+            query.to = try ctx.arena.dupe(u8, pair.value);
         } else if (std.mem.eql(u8, pair.name, "from")) {
-            query.from = pair.value;
+            query.from = try ctx.arena.dupe(u8, pair.value);
         } else if (std.mem.eql(u8, pair.name, "strict")) {
             query.strict = zenfmt.Strictness.parse(pair.value) orelse {
                 try respondEntry(ctx, reports.invalid_query, &.{});
