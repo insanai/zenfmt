@@ -308,7 +308,7 @@ def build(
 
     builder.emit(pages.homepage(capabilities, benchmark, baselines))
     builder.emit(pages.download_page(capabilities, version))
-    builder.emit(pages.benchmark_page(benchmark, baselines))
+    builder.emit(pages.benchmark_page(benchmark, baselines, version))
     builder.emit(pages.security_page())
     builder.emit(pages.not_found_page(base))
     builder.finish_search()

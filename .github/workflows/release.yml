@@ -48,7 +48,9 @@ jobs:
         run: |
           set -eux
           for result in benchmarks/results/site.json \
-            benchmarks/results/latest.json benchmarks/results/server.json; do
+            benchmarks/results/latest.json benchmarks/results/python.json \
+            benchmarks/results/server.json benchmarks/results/stages.json \
+            benchmarks/results/wasm.json; do
             benchmark_revision="$(python3 -c \
               'import json,sys; print(json.load(open(sys.argv[1]))["git_revision"])' \
               "$result")"

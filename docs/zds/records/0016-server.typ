@@ -1796,12 +1796,13 @@ samples, so the result is a reference from one machine rather than a fully
 reproducible laboratory record.
 
 A local development run may proceed with an unavailable competitor and must
-write an explicit `not_benchmarked` record with the reason. A newly recorded
-publishable result requires the pinned Tika and Docling environments, every
-implemented profile, and the measured revision. A release may
-carry an earlier baseline when no benchmark was requested. Its files retain
-their original version and revision, and the release site shows `Benchmark
-pending for this release` instead of relabeling old measurements. The
+write an explicit `not_benchmarked` record with the reason. A complete release
+aggregate requires the pinned Tika and Docling environments, every implemented
+profile, and the measured revision. Each lens keeps its own version and
+revision. If one lens completes while another does not, the site may publish
+the completed current lens beside an earlier reference lens. It must identify
+each lens independently and state that the full release benchmark is
+incomplete. It must never relabel an earlier measurement as a current one. The
 designated host has no discrete GPU and is the same modest machine used for
 the existing zenfmt reference results. The runner itself does not yet record
 physical core count, memory capacity, or the absence of model assets. CI
@@ -1863,8 +1864,9 @@ NDJSON batch, `--behind-proxy` semantics with the proxy fragments, the native
 Docling comparison, the server benchmark and its Tika comparison, the book's
 server chapter, the docs-drift extension, the `-Dserver=false` build wiring,
 and release-gate integration. The implementation commit moves this record to
-`committed`. Publication of new benchmark measurements remains a separate,
-explicitly pending data update.
+`committed`. Each benchmark lens remains a separate measured artifact. A
+completed server result may therefore be published without presenting an
+incomplete native comparison as a current result.
 
 = Alternatives Considered
 

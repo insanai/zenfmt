@@ -111,7 +111,7 @@ def homepage(capabilities: dict, benchmark: dict | None, baselines: dict) -> Pag
   </ul>
 </section>
 
-{_benchmark_summary(benchmark, baselines)}
+{_benchmark_summary(benchmark, baselines, capabilities["version"])}
 
 <noscript>
   <p class="notice">
@@ -164,16 +164,16 @@ zenfmt serve --secure --data-dir ./zenfmt-data</code></pre>
 """
 
 
-def _benchmark_summary(benchmark: dict | None, baselines: dict) -> str:
-    """The homepage may show only figures that came from a result file for
-    this same release. With none, it says so rather than showing a number
-    whose provenance it cannot state."""
+def _benchmark_summary(
+    benchmark: dict | None, baselines: dict, current_version: str
+) -> str:
+    """Show the aggregate when complete, otherwise identify each raw lens."""
     if not benchmark:
         return (
             '<section class="benchmark-summary">'
             "<h2>The conversion benchmark</h2>"
-            "<p>Benchmark pending for this release.</p>"
-            f"{_baseline_summary(baselines)}"
+            "<p>The full release benchmark is incomplete.</p>"
+            f"{_baseline_summary(baselines, current_version)}"
             '<p><a href="{LINK:benchmark/}">Method and raw data</a></p>'
             "</section>"
         )
@@ -247,7 +247,7 @@ def _native_comparison(native: dict, tool: str) -> dict:
     }
 
 
-def _baseline_summary(baselines: dict) -> str:
+def _baseline_summary(baselines: dict, current_version: str) -> str:
     native = baselines.get("native") or {}
     server = baselines.get("server") or {}
     if not native and not server:
@@ -255,26 +255,31 @@ def _baseline_summary(baselines: dict) -> str:
     docling = _native_comparison(native, "docling")
     startup = server.get("startup", {})
     throughput = (server.get("throughput") or [{}])[0]
-    version = native.get("version") or server.get("version") or "earlier"
-    revision = native.get("git_revision") or server.get("git_revision") or "unknown"
+    native_version = native.get("version", "earlier")
+    server_version = server.get("version", "earlier")
+    native_state = "Recorded" if native_version == current_version else "Earlier"
+    server_state = "Recorded" if server_version == current_version else "Earlier"
     return (
         '<div class="reference-baseline">'
-        f'<p class="eyebrow">Earlier {_escape(version)} reference run</p>'
-        "<p>These measurements come from one modest machine and remain under "
-        "their original version. They are context while the current release "
-        "benchmark is pending, not a measurement of 0.3.0.</p>"
+        "<p>Each result below keeps its own version. The native and server "
+        "lenses completed for this release. The browser aggregate remains "
+        "incomplete.</p>"
         '<div class="metric-grid">'
-        '<div class="metric"><span>Docling parser only</span>'
+        '<div class="metric"><span>'
+        f"{native_state} {_escape(native_version)} Docling parser only</span>"
         f"<strong>{docling['converted']}/{docling['total']}</strong>"
         f"<small>{_escape(_ratio(docling['wall_ratio']))} on {docling['shared_files']} shared files</small></div>"
-        '<div class="metric"><span>Server startup</span>'
+        f'<div class="metric"><span>{server_state} {_escape(server_version)} server startup</span>'
         f"<strong>{_escape(_paired_seconds(startup))}</strong>"
         "<small>zenfmt / Tika Server</small></div>"
-        '<div class="metric"><span>Throughput at 1 client</span>'
+        f'<div class="metric"><span>{server_state} {_escape(server_version)} throughput at 1 client</span>'
         f"<strong>{_escape(throughput.get('zenfmt_docs_per_s', 'pending'))} / {_escape(throughput.get('tika_docs_per_s', 'pending'))}</strong>"
         "<small>zenfmt / Tika documents per second</small></div>"
         "</div>"
-        f"<p><small>Recorded at <code>{_escape(revision)}</code>.</small></p>"
+        "<p><small>Native revision "
+        f"<code>{_escape(native.get('git_revision', 'unknown'))}</code>. Server "
+        f"revision <code>{_escape(server.get('git_revision', 'unknown'))}</code>."
+        "</small></p>"
         "</div>"
     )
 
@@ -560,33 +565,25 @@ def _server_result_rows(server: dict) -> tuple[str, str]:
     return server_rows, throughput_rows
 
 
-def _recorded_benchmark_details(baselines: dict, current_version: str | None) -> str:
-    native = baselines.get("native") or {}
-    server = baselines.get("server") or {}
-    if not native and not server:
+def _lens_identity(data: dict, current_version: str, label: str) -> str:
+    version = data.get("version", "unknown")
+    revision = data.get("git_revision", "unknown")
+    state = "Current release" if version == current_version else "Earlier reference"
+    return (
+        f"{state} {label}: zenfmt {_escape(version)} at "
+        f"<code>{_escape(revision)}</code>. These values describe one modest "
+        "reference machine."
+    )
+
+
+def _native_recorded_details(native: dict, current_version: str) -> str:
+    if not native:
         return ""
     native_rows, comparison_rows = _native_result_tables(native)
-    server_rows, throughput_rows = _server_result_rows(server)
-    version = native.get("version") or server.get("version") or "earlier"
-    revision = native.get("git_revision") or server.get("git_revision") or "unknown"
-    startup = server.get("startup", {})
-    rss = server.get("peak_rss_mb", {})
-    current = version == current_version
-    heading = "Recorded benchmark results" if current else "Recorded reference baseline"
-    identity = (
-        f"These values are zenfmt {_escape(version)} at "
-        f"<code>{_escape(revision)}</code>. They describe one modest "
-        "reference machine."
-        if current
-        else f"These values remain identified as zenfmt {_escape(version)} at "
-        f"<code>{_escape(revision)}</code>. They describe one modest reference "
-        "machine. They are not relabeled as 0.3.0 results."
-    )
     return f"""
-<section class="reference-baseline">
-<h2>{heading}</h2>
-<p class="notice">{identity}</p>
+<div class="recorded-lens">
 <h3>Native converter lens</h3>
+<p class="notice">{_lens_identity(native, current_version, "native lens")}</p>
 <p>Docling uses parser-only backends. OCR, VLM, ASR, layout models, table
 models, enrichment, and accelerators are disabled. Unsupported files remain
 visible rather than switching to an AI pipeline.</p>
@@ -596,7 +593,20 @@ visible rather than switching to an AI pipeline.</p>
 shared successful files. It is context, not a quality score.</p>
 <table><thead><tr><th>Comparison</th><th>Shared files</th><th>Wall ratio</th></tr></thead>
 <tbody>{comparison_rows}</tbody></table>
+</div>
+"""
+
+
+def _server_recorded_details(server: dict, current_version: str) -> str:
+    if not server:
+        return ""
+    server_rows, throughput_rows = _server_result_rows(server)
+    startup = server.get("startup", {})
+    rss = server.get("peak_rss_mb", {})
+    return f"""
+<div class="recorded-lens">
 <h3>Long-running server lens</h3>
+<p class="notice">{_lens_identity(server, current_version, "server lens")}</p>
 <div class="metric-grid">
 <div class="metric"><span>Startup</span><strong>{_escape(_paired_seconds(startup))}</strong><small>zenfmt / Tika Server</small></div>
 <div class="metric"><span>Peak RSS</span><strong>{_escape(rss.get("zenfmt", "pending"))} / {_escape(rss.get("tika", "pending"))} MiB</strong><small>parent and direct parser children</small></div>
@@ -607,17 +617,34 @@ shared successful files. It is context, not a quality score.</p>
 <h3>Server throughput</h3>
 <table><thead><tr><th>Concurrent clients</th><th>zenfmt documents/s</th><th>Tika documents/s</th></tr></thead>
 <tbody>{throughput_rows}</tbody></table>
+</div>
+"""
+
+
+def _recorded_benchmark_details(baselines: dict, current_version: str) -> str:
+    native = baselines.get("native") or {}
+    server = baselines.get("server") or {}
+    if not native and not server:
+        return ""
+    return f"""
+<section class="reference-baseline">
+<h2>Recorded benchmark lenses</h2>
+<p>Each lens retains its own version and revision. Values from different
+releases are shown for context but are not combined into one result.</p>
+{_native_recorded_details(native, current_version)}
+{_server_recorded_details(server, current_version)}
 </section>
 """
 
 
-def benchmark_page(benchmark: dict | None, baselines: dict) -> Page:
+def benchmark_page(
+    benchmark: dict | None, baselines: dict, current_version: str
+) -> Page:
     """The benchmark dashboard.
 
-    It shows figures only from a result file belonging to this release. With
-    none, it says the benchmark is pending rather than showing older numbers
-    under a newer heading — a stale figure reads as a measurement of the thing
-    being released, which is worse than no figure at all.
+    A complete aggregate gets the release heading. Independently recorded
+    lenses retain their own version and revision so partial runs stay useful
+    without presenting an older measurement as current.
     """
     if benchmark:
         aggregates = benchmark.get("aggregates", {})
@@ -670,12 +697,11 @@ Docling parser only, AnyDoc, Pandoc, and the zenfmt wheel.</p>
 """
     else:
         state = (
-            '<p class="notice">Benchmark pending for this release.</p>'
+            '<p class="notice">The full benchmark is incomplete for this release.</p>'
             "<p>"
-            "  No result file recorded against this version was found, so no "
-            "  figures are shown. The alternative — displaying the previous "
-            "  release's numbers under this one's heading — would read as a "
-            "  measurement of something that was never measured."
+            "  Completed lenses are shown below with their own identities. "
+            "  Older lenses remain reference values and are not presented as "
+            "  measurements of the current release."
             "</p>"
         )
 
@@ -685,7 +711,7 @@ Docling parser only, AnyDoc, Pandoc, and the zenfmt wheel.</p>
 {
         _recorded_benchmark_details(
             baselines,
-            benchmark.get("zenfmt_version") if benchmark else None,
+            current_version,
         )
     }
 
