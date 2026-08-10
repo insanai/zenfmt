@@ -467,7 +467,7 @@ workload appropriate for the modest machines zenfmt targets.
 
 The log axis is doing real work, because the tools live on different
 decades. Most zenfmt bars sit in the single digits to low tens of
-milliseconds; the 33 KiB DOCX converts in about nine. That time is
+milliseconds; the 33 KiB DOCX converts in about seven. That time is
 dominated by actual parsing, which is why the 2.5 MB `deck.ppt` costs no
 more than a small spreadsheet: the reader touches the text atoms it
 projects and skips the rest. The compiled competitors' bars start near
@@ -477,13 +477,14 @@ Docling sits a whole decade higher still: even on the files it converts,
 a fresh interpreter imports its scientific stack before the first byte is
 read, so its floor is measured in seconds, not milliseconds.
 
-zenfmt's one outlier is `data.csv`, 25,000 rows that take it about two
-seconds — its slowest file by far, and slower here than anydoc. The cost
-is deliberate: zenfmt measures every column across every row so it can
-emit width-aligned GFM table pipes, an O(rows × columns) pass that anydoc
-skips by emitting ragged ones. On large structured inputs the ordering
-flips back hard — pandoc climbs past two seconds on the EPUB book and the
-850 KiB HTML page, where zenfmt stays near a tenth of a second.
+zenfmt's heaviest file is `data.csv`: 25,000 rows at about ninety
+milliseconds, its slowest by a small margin. The cost is deliberate —
+zenfmt measures every column across every row so it can emit width-aligned
+GFM table pipes, an O(rows × columns) pass that anydoc skips by emitting
+ragged ones — yet even here zenfmt finishes ahead of anydoc. On large
+structured inputs the ordering is not close: pandoc climbs to about two
+seconds on the EPUB book and the 850 KiB HTML page, where zenfmt stays
+well under a tenth of a second.
 
 == Memory
 
@@ -506,8 +507,8 @@ flips back hard — pandoc climbs past two seconds on the EPUB book and the
 Memory tells the architecture story more plainly than latency does.
 zenfmt's peak sits a small constant above the input size. There is one
 arena per conversion, flat struct-of-arrays storage, and no DOM. pandoc
-builds a full tree in a garbage-collected heap: 100 MB for a 33 KiB DOCX,
-and 426 MB for the HTML page. anydoc pays a flat 47 MB for its runtime
+builds a full tree in a garbage-collected heap: over 100 MB for a 33 KiB
+DOCX, and more than 400 MB for the HTML page. anydoc pays a flat 48 MB
 before documents enter the picture. On the shared files the
 geometric-mean gap is an order of magnitude. It widens exactly on the
 inputs where memory matters.
@@ -518,7 +519,7 @@ One more picture makes the distribution visible. Take each file both
 zenfmt and anydoc convert. Divide anydoc's median wall time by zenfmt's.
 Sort. The result is not one lucky file carrying an average. All 14 shared
 files land on the winning side of parity; `data.csv` is the closest at
-1.1x. The spread tells you the rest: small files are dominated by the
+1.5x. The spread tells you the rest: small files are dominated by the
 competitor's startup, and large files are dominated by parsing.
 
 #chart_figure(
