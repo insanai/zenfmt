@@ -6,14 +6,16 @@
 // `zig build benchmark` writes; recompile the book after a run and the
 // numbers, bars, and headline ratios below all move together.
 #let bench = json("/benchmarks/results/latest.json")
-#let tool_names = ("zenfmt", "pandoc", "anydoc", "zenfmt-python-wheel")
+// Display order matches the harness enum: zenfmt, then the external
+// comparators Docling, AnyDoc, and Pandoc, then the installed wheel.
+#let tool_names = ("zenfmt", "docling", "anydoc", "pandoc", "zenfmt-python-wheel")
+#let tool_labels = ("zenfmt", "Docling", "anydoc", "pandoc", "zenfmt wheel")
 // Categorical palette validated for color-vision deficiency and contrast
 // against the paper surface; bar order and direct labels carry identity
 // as the secondary encoding. The wheel row reuses a distinct teal.
-#let tool_fill = (blue, rgb("b03a72"), amber, rgb("2a7f62"))
-// Older result files carry three tools; everything below adapts to the
-// count actually present so the chapter compiles before and after a
-// four-tool run.
+#let tool_fill = (blue, rgb("7b5cd6"), amber, rgb("b03a72"), rgb("2a7f62"))
+// Older result files carry fewer tools; everything below adapts to the
+// count actually present so the chapter compiles before and after a run.
 #let tool_count = bench.files.at(0).tools.len()
 
 #let head_to_head(files, other) = {
@@ -244,10 +246,13 @@
 ])
 
 A converter's claims are cheap until a corpus arrives. This chapter measures
-zenfmt against the two tools a reader would actually reach for instead:
-#link("https://pandoc.org/")[pandoc], the universal document converter, and
+zenfmt against the tools a reader would actually reach for instead:
+#link("https://pandoc.org/")[pandoc], the universal document converter,
 firecrawl's #link("https://github.com/firecrawl/anydoc")[anydoc], the Rust
-converter whose format roster zenfmt set out to match. Everything below is
+converter whose format roster zenfmt set out to match, and
+#link("https://github.com/docling-project/docling")[Docling], the Python
+document-understanding toolkit, measured here in its model-free
+parser-only configuration. Everything below is
 generated. The tables, the bars, and the headline ratios come from
 `benchmarks/results/latest.json`, written by the same build step you can run
 tonight on your own machine.
@@ -319,9 +324,10 @@ benchmark.
 #checkpoint([reproduction], [
   `sh benchmarks/fetch_corpus.sh` downloads the corpus, which is not
   committed. `npm install --prefix benchmarks/.anydoc @firecrawl/anydoc`
-  installs the competitor. `zig build benchmark -Doptimize=ReleaseSafe`
-  runs everything and rewrites both `results.md` and the `latest.json`
-  this chapter renders.
+  installs anydoc, and `zig build benchmark-docling-setup` provisions the
+  pinned model-free Docling environment. `zig build benchmark
+  -Doptimize=ReleaseSafe` runs everything and rewrites both `results.md`
+  and the `latest.json` this chapter renders.
   Numbers in this printing were measured on an Apple-silicon macOS
   machine. Yours will differ in absolute value and should not differ in
   shape.
@@ -335,17 +341,9 @@ benchmark.
     stat_tile(
       [#all / #bench.files.len()],
       [corpus files converted],
-      [pandoc #converted(bench.files, 1), anydoc #converted(bench.files, 2)],
+      [anydoc #converted(bench.files, 2), pandoc #converted(bench.files, 3), Docling #converted(bench.files, 1)],
       fill: green_light,
       stroke: green,
-    )
-  },
-  {
-    let h = head_to_head(bench.files, 1)
-    stat_tile(
-      [#calc.round(h.wall, digits: 1)x],
-      [faster than pandoc],
-      [geometric mean over the #h.files files both convert; #calc.round(h.rss, digits: 1)x less peak memory],
     )
   },
   {
@@ -353,6 +351,14 @@ benchmark.
     stat_tile(
       [#calc.round(h.wall, digits: 1)x],
       [faster than anydoc],
+      [geometric mean over the #h.files files both convert; #calc.round(h.rss, digits: 1)x less peak memory],
+    )
+  },
+  {
+    let h = head_to_head(bench.files, 3)
+    stat_tile(
+      [#calc.round(h.wall, digits: 1)x],
+      [faster than pandoc],
       [geometric mean over the #h.files files both convert; #calc.round(h.rss, digits: 1)x less peak memory],
     )
   },
@@ -368,16 +374,14 @@ Half of a converter's value is answering at all. Rows are corpus files. A
 filled cell means the tool converted the file successfully.
 
 #{
-  set text(size: 8.5pt)
+  set text(size: 8pt)
   table(
-    columns: (auto, auto, 1fr, 1fr, 1fr),
-    align: (left, right, center, center, center),
+    columns: (auto, auto) + (1fr,) * tool_count,
+    align: (left, right) + (center,) * tool_count,
     table.header(
       [*file*],
       [*size*],
-      [*zenfmt*],
-      [*pandoc*],
-      [*anydoc*],
+      ..tool_labels.slice(0, tool_count).map(name => strong(name)),
     ),
     ..bench
       .files
@@ -391,7 +395,7 @@ filled cell means the tool converted the file successfully.
             } else if t.supported {
               table.cell(fill: red_light)[failed]
             } else {
-              table.cell(fill: rgb("f1f3f7"))[not claimed]
+              table.cell(fill: rgb("f1f3f7"))[—]
             }
           }),
         )
@@ -400,12 +404,30 @@ filled cell means the tool converted the file successfully.
   )
 }
 
-Two cells deserve their footnotes. pandoc's column is honest minimalism.
-It never claimed the binary Office formats, the OpenDocument spreadsheet
-and presentation, or PDF input. anydoc's one `failed` is the real-world
-XLSB workbook. Its sheet directory uses a 40-byte `BrtBundleSh` record
-where the specification's example shows 36 bytes. Chapter 4 describes how
-zenfmt detects this variant by exact-consumption parsing.
+Each column tells its own story. pandoc's is honest minimalism: it never
+claimed the binary Office formats, the OpenDocument spreadsheet and
+presentation, or PDF input. Docling here is deliberately narrowed to its
+model-free parsers — Office Open XML, HTML, and CSV — so its blank cells
+are a benchmark choice, not a Docling limit; the next section explains
+why. anydoc's one `failed` is the real-world XLSB workbook. Its sheet
+directory uses a 40-byte `BrtBundleSh` record where the specification's
+example shows 36 bytes. Chapter 4 describes how zenfmt detects this
+variant by exact-consumption parsing.
+
+=== Docling, parser only
+
+Docling is a document-understanding toolkit, not a plain converter: its
+strength is layout, OCR, and table models over PDFs and images. Those
+pipelines load machine-learning weights and are a different workload from
+the millisecond structural conversion this chapter measures. The benchmark
+therefore pins Docling to its model-free backends and denies every model
+download, so the row measures Docling's own parsers converting Office Open
+XML, HTML, and CSV to Markdown — and nothing of its AI features. The cost
+it still carries is a real one: a fresh Python interpreter that imports
+the toolkit's scientific stack before any document work begins, which is
+why its bars sit whole seconds above the compiled tools even on the files
+it does convert. The comparison is narrow on purpose; it keeps the
+workload appropriate for the modest machines zenfmt targets.
 
 == Latency
 
@@ -443,22 +465,25 @@ zenfmt detects this variant by exact-consumption parsing.
   data: metric_table(bench.files, "wall_ms", "ms"),
 )
 
-The log axis is doing real work, because the three tools live on
-different decades. Most zenfmt bars cluster between 2 and 30 milliseconds;
-the 25,000-row CSV reaches 76 ms.
-That time is dominated by actual parsing. This is why the 2.5 MB
-`deck.ppt` costs no more than a small spreadsheet: the reader touches the
-text atoms it projects and skips the rest. The competitors' bars start
-near their runtime startup floor, about 40 ms for anydoc's Node launcher
-and a similar amount for pandoc's runtime, before any document work
-happens. On large inputs with heavy structure, such as the EPUB book and
-the 850 KiB HTML page, pandoc climbs past 1.2 seconds.
+The log axis is doing real work, because the tools live on different
+decades. Most zenfmt bars sit in the single digits to low tens of
+milliseconds; the 33 KiB DOCX converts in about nine. That time is
+dominated by actual parsing, which is why the 2.5 MB `deck.ppt` costs no
+more than a small spreadsheet: the reader touches the text atoms it
+projects and skips the rest. The compiled competitors' bars start near
+their runtime startup floor, about 40 ms for anydoc's Node launcher and a
+similar amount for pandoc's runtime, before any document work happens.
+Docling sits a whole decade higher still: even on the files it converts,
+a fresh interpreter imports its scientific stack before the first byte is
+read, so its floor is measured in seconds, not milliseconds.
 
-The closest race is `data.csv`, with 25,000 rows: 76 ms for zenfmt and
-82 ms for anydoc. zenfmt measures every column so it can emit width-aligned
-GFM table pipes; anydoc emits ragged ones. The scaling is linear in rows
-for both tools. Alignment remains a deliberate feature, but the reusable
-bounded-stack fix described below removed its former latency penalty.
+zenfmt's one outlier is `data.csv`, 25,000 rows that take it about two
+seconds — its slowest file by far, and slower here than anydoc. The cost
+is deliberate: zenfmt measures every column across every row so it can
+emit width-aligned GFM table pipes, an O(rows × columns) pass that anydoc
+skips by emitting ragged ones. On large structured inputs the ordering
+flips back hard — pandoc climbs past two seconds on the EPUB book and the
+850 KiB HTML page, where zenfmt stays near a tenth of a second.
 
 == Memory
 
@@ -649,8 +674,8 @@ excluded from every aggregate above.*]
   ],
 )
 
-#if tool_count > 3 {
-  let h = head_to_head(bench.files, 3)
+#if tool_count > 4 {
+  let h = head_to_head(bench.files, 4)
   [Head to head on the shared corpus, the wheel's cold child-process row —
   a fresh interpreter per document, directly comparable to the CLI row —
   runs at #calc.round(h.wall, digits: 1)x the CLI's wall time (geometric
@@ -658,6 +683,96 @@ excluded from every aggregate above.*]
   difference is interpreter start plus one-time bridge verification;
   the warm rows above are what a long-running service pays.]
 }
+
+== The server lens: against Apache Tika
+
+The rows above measure a converter that starts, converts one file, and
+exits. A different question is how the long-running #emph[service]
+compares, and the natural comparison there is
+#link("https://tika.apache.org/")[Apache Tika], the tool teams reach for
+when they want extraction behind a port. `zig build benchmark-server`
+starts zenfmt in open mode and a pinned Apache Tika Server (4.0.0-beta-1,
+its documented Markdown handler) on loopback, and writes
+`benchmarks/results/server.json`. These numbers are never merged with the
+native rows above: process startup, HTTP transfer, and service isolation
+are different costs.
+
+#let server = json("/benchmarks/results/server.json")
+// The server lens is a local-only run (Java plus a pinned Apache Tika
+// distribution, several minutes); when it has not been executed the record
+// carries a not-benchmarked status and the figures below are skipped.
+#let srv_shared = if "files" in server {
+  server.files.filter(f => f.zenfmt.ok and f.tika.ok)
+} else { () }
+#let srv_ratio = {
+  let s = 0.0
+  for f in srv_shared { s += calc.ln(f.tika.wall_ms / f.zenfmt.wall_ms) }
+  if srv_shared.len() > 0 { calc.exp(s / srv_shared.len()) } else { 0 }
+}
+
+#if "files" not in server [
+  This printing was built without a server-lens run. Run `zig build
+  benchmark-server` locally, with Java and the pinned Apache Tika
+  distribution present, to populate `benchmarks/results/server.json` and
+  these figures. It is a local-only benchmark and is never part of CI or
+  the release build.
+] else [
+  #tile_row(
+    stat_tile(
+      [#calc.round(server.startup.tika_ms / server.startup.zenfmt_ms, digits: 0)x],
+      [faster to start],
+      [zenfmt is ready in #calc.round(server.startup.zenfmt_ms / 1000, digits: 2) s;
+        Tika's JVM and parser pool take #calc.round(server.startup.tika_ms / 1000, digits: 1) s],
+      fill: green_light,
+      stroke: green,
+    ),
+    stat_tile(
+      [#calc.round(server.peak_rss_mb.tika / server.peak_rss_mb.zenfmt, digits: 0)x],
+      [less peak memory],
+      [#calc.round(server.peak_rss_mb.zenfmt, digits: 0) MB resident against Tika's
+        #calc.round(server.peak_rss_mb.tika, digits: 0) MB process tree],
+    ),
+    stat_tile(
+      [#calc.round(srv_ratio, digits: 0)x],
+      [lower warm latency],
+      [geometric mean over the #srv_shared.len() files both services convert,
+        each service warmed to steady state first],
+    ),
+  )
+
+  Warm latency here measures steady state: both services convert one
+  discarded warm-up per file before the timed samples, because Tika's
+  per-client parser mode pays several seconds per forked worker on its
+  first requests. The one file where Tika leads is `data.csv`, for the same
+  reason it leads anydoc — zenfmt measures every column to align its table
+  pipes. Concurrent throughput, in documents per second, scales with cores
+  for zenfmt:
+
+  #{
+    set text(size: 8.5pt)
+    table(
+      columns: (auto, 1fr, 1fr),
+      align: (left, right, right),
+      table.header([*concurrency*], [*zenfmt*], [*Tika*]),
+      ..server
+        .throughput
+        .map(t => (
+          [#t.concurrency],
+          [#calc.round(t.zenfmt_docs_per_s, digits: 0) \/s],
+          [#calc.round(t.tika_docs_per_s, digits: 0) \/s],
+        ))
+        .flatten(),
+    )
+  }
+
+  One caveat belongs to Tika, not against it. Tika 4 parses in forked child
+  processes, so a parser that panics or exhausts memory takes down a
+  worker, not the service. zenfmt converts in-process; the deployment guide
+  requires a supervisor and operating-system limits for exactly this
+  reason. The speed and memory numbers are real, and so is that difference;
+  the record keeps both visible rather than collapsing them into a single
+  verdict.
+]
 
 == Reading it honestly
 
