@@ -2,17 +2,17 @@
   "aggregates": {
     "browser": {
       "artifact": {
-        "artifact_sha256": "ea5baedb270e0affa899ab5e8e1f589c64b936cb6d604f4b69fcdd265f4f0f1d",
-        "gzip_bytes": 562110,
+        "artifact_sha256": "5dad75771a2c10900b931c4f2c040687915c7354a298a3aa2b9a2057dab91d89",
+        "gzip_bytes": 562111,
         "name": "zenfmt",
         "optimization": "ReleaseSafe",
-        "raw_bytes": 1730161,
+        "raw_bytes": 1730097,
         "target": "wasm32-freestanding"
       },
       "cold": {
-        "compile_ms": 4.399999976158142,
-        "fetch_ms": 6.100000023841858,
-        "first_ready_ms": 17.399999976158142,
+        "compile_ms": 4,
+        "fetch_ms": 6.799999952316284,
+        "first_ready_ms": 17.699999928474426,
         "instantiate_ms": 6.899999976158142
       },
       "competitors": [
@@ -34,7 +34,7 @@
           "total": 16
         }
       ],
-      "median_ms": 8.03125
+      "median_ms": 8.549999997019768
     },
     "headline": {
       "summary": "On this 16-file corpus, zenfmt converted 16 files, Docling (parser only) converted 5, AnyDoc converted 14, and Pandoc converted 6. The method, shared-file timings, machine details, and raw samples are available below."
@@ -42,28 +42,28 @@
     "native": {
       "comparisons": {
         "anydoc": {
-          "cpu_ratio": 7.910449483430743,
-          "rss_ratio": 10.158796910084327,
+          "cpu_ratio": 7.882434598954847,
+          "rss_ratio": 10.164288179660668,
           "shared_files": 14,
-          "wall_ratio": 6.95450342476437
+          "wall_ratio": 6.951365924304237
         },
         "docling": {
-          "cpu_ratio": 206.44044239112705,
-          "rss_ratio": 47.513851655604114,
+          "cpu_ratio": 209.1104428066889,
+          "rss_ratio": 47.613012281781614,
           "shared_files": 5,
-          "wall_ratio": 192.1384124521363
+          "wall_ratio": 195.8997624009719
         },
         "pandoc": {
-          "cpu_ratio": 16.12557257281677,
-          "rss_ratio": 16.563131652867742,
+          "cpu_ratio": 16.557500798836124,
+          "rss_ratio": 16.600754838108436,
           "shared_files": 6,
-          "wall_ratio": 17.121047899297427
+          "wall_ratio": 18.11249883314104
         },
         "zenfmt-python-wheel": {
-          "cpu_ratio": 10.895578320286903,
-          "rss_ratio": 6.692283018602535,
+          "cpu_ratio": 10.97601758279881,
+          "rss_ratio": 6.701895782422088,
           "shared_files": 16,
-          "wall_ratio": 9.739138441845508
+          "wall_ratio": 9.833313196509282
         }
       },
       "coverage": [
@@ -106,13 +106,13 @@
           "size": 18810,
           "tika": {
             "ok": true,
-            "p95_ms": 115.55,
-            "wall_ms": 21.0
+            "p95_ms": 129.86,
+            "wall_ms": 18.97
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 0.83,
-            "wall_ms": 0.79
+            "p95_ms": 0.86,
+            "wall_ms": 0.77
           }
         },
         {
@@ -120,13 +120,13 @@
           "size": 558547,
           "tika": {
             "ok": true,
-            "p95_ms": 913.49,
-            "wall_ms": 865.23
+            "p95_ms": 905.28,
+            "wall_ms": 861.1
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 38.91,
-            "wall_ms": 38.27
+            "p95_ms": 38.18,
+            "wall_ms": 38.11
           }
         },
         {
@@ -134,13 +134,13 @@
           "size": 633352,
           "tika": {
             "ok": true,
-            "p95_ms": 501.79,
-            "wall_ms": 115.04
+            "p95_ms": 489.8,
+            "wall_ms": 121.94
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 50.73,
-            "wall_ms": 50.5
+            "p95_ms": 50.86,
+            "wall_ms": 50.77
           }
         },
         {
@@ -148,13 +148,13 @@
           "size": 2579456,
           "tika": {
             "ok": true,
-            "p95_ms": 1925.57,
-            "wall_ms": 1695.33
+            "p95_ms": 1941.54,
+            "wall_ms": 1763.76
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 5.43,
-            "wall_ms": 5.27
+            "p95_ms": 5.72,
+            "wall_ms": 5.61
           }
         },
         {
@@ -162,13 +162,13 @@
           "size": 9161,
           "tika": {
             "ok": true,
-            "p95_ms": 23.77,
-            "wall_ms": 15.29
+            "p95_ms": 20.66,
+            "wall_ms": 11.53
           },
           "zenfmt": {
             "ok": true,
             "p95_ms": 0.45,
-            "wall_ms": 0.44
+            "wall_ms": 0.42
           }
         },
         {
@@ -176,12 +176,12 @@
           "size": 4259,
           "tika": {
             "ok": true,
-            "p95_ms": 8.69,
-            "wall_ms": 6.83
+            "p95_ms": 9.0,
+            "wall_ms": 7.19
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 0.41,
+            "p95_ms": 0.42,
             "wall_ms": 0.41
           }
         },
@@ -190,13 +190,13 @@
           "size": 32768,
           "tika": {
             "ok": true,
-            "p95_ms": 145.95,
-            "wall_ms": 103.94
+            "p95_ms": 148.69,
+            "wall_ms": 107.62
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 0.41,
-            "wall_ms": 0.36
+            "p95_ms": 0.39,
+            "wall_ms": 0.33
           }
         },
         {
@@ -204,13 +204,13 @@
           "size": 33154,
           "tika": {
             "ok": true,
-            "p95_ms": 16.91,
-            "wall_ms": 8.08
+            "p95_ms": 18.21,
+            "wall_ms": 8.49
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 0.59,
-            "wall_ms": 0.59
+            "p95_ms": 0.64,
+            "wall_ms": 0.58
           }
         },
         {
@@ -218,13 +218,13 @@
           "size": 852578,
           "tika": {
             "ok": true,
-            "p95_ms": 150.99,
-            "wall_ms": 86.18
+            "p95_ms": 159.74,
+            "wall_ms": 104.01
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 33.82,
-            "wall_ms": 33.19
+            "p95_ms": 33.27,
+            "wall_ms": 33.12
           }
         },
         {
@@ -232,13 +232,13 @@
           "size": 34375,
           "tika": {
             "ok": true,
-            "p95_ms": 235.09,
-            "wall_ms": 232.21
+            "p95_ms": 247.82,
+            "wall_ms": 230.29
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 1.82,
-            "wall_ms": 1.79
+            "p95_ms": 1.83,
+            "wall_ms": 1.78
           }
         },
         {
@@ -246,13 +246,13 @@
           "size": 6254,
           "tika": {
             "ok": true,
-            "p95_ms": 13.66,
-            "wall_ms": 12.74
+            "p95_ms": 12.82,
+            "wall_ms": 10.29
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 0.69,
-            "wall_ms": 0.67
+            "p95_ms": 0.73,
+            "wall_ms": 0.7
           }
         },
         {
@@ -260,13 +260,13 @@
           "size": 13246,
           "tika": {
             "ok": true,
-            "p95_ms": 17.06,
-            "wall_ms": 11.58
+            "p95_ms": 15.2,
+            "wall_ms": 13.14
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 1.31,
-            "wall_ms": 1.26
+            "p95_ms": 1.36,
+            "wall_ms": 1.28
           }
         },
         {
@@ -274,13 +274,13 @@
           "size": 477188,
           "tika": {
             "ok": true,
-            "p95_ms": 2928.93,
-            "wall_ms": 2919.0
+            "p95_ms": 2922.18,
+            "wall_ms": 2899.02
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 14.03,
-            "wall_ms": 13.64
+            "p95_ms": 13.78,
+            "wall_ms": 13.6
           }
         },
         {
@@ -288,13 +288,13 @@
           "size": 648274,
           "tika": {
             "ok": true,
-            "p95_ms": 3138.46,
-            "wall_ms": 3095.38
+            "p95_ms": 3160.75,
+            "wall_ms": 3036.66
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 16.47,
-            "wall_ms": 16.41
+            "p95_ms": 16.89,
+            "wall_ms": 16.5
           }
         },
         {
@@ -302,13 +302,13 @@
           "size": 13264,
           "tika": {
             "ok": true,
-            "p95_ms": 32.32,
-            "wall_ms": 10.25
+            "p95_ms": 33.71,
+            "wall_ms": 9.96
           },
           "zenfmt": {
             "ok": true,
             "p95_ms": 0.37,
-            "wall_ms": 0.36
+            "wall_ms": 0.33
           }
         },
         {
@@ -316,50 +316,50 @@
           "size": 13312,
           "tika": {
             "ok": true,
-            "p95_ms": 16.7,
-            "wall_ms": 10.31
+            "p95_ms": 11.34,
+            "wall_ms": 9.56
           },
           "zenfmt": {
             "ok": true,
-            "p95_ms": 0.53,
-            "wall_ms": 0.49
+            "p95_ms": 0.49,
+            "wall_ms": 0.48
           }
         }
       ],
       "peak_rss_mb": {
-        "tika": 2036.0,
-        "zenfmt": 55.6
+        "tika": 1719.2,
+        "zenfmt": 53.1
       },
       "startup": {
-        "tika_ms": 6875.2,
-        "zenfmt_ms": 108.1
+        "tika_ms": 6875.3,
+        "zenfmt_ms": 106.5
       },
       "throughput": [
         {
           "concurrency": 1,
           "tika_docs_per_s": 4.4,
-          "zenfmt_docs_per_s": 555.2
+          "zenfmt_docs_per_s": 545.8
         },
         {
           "concurrency": 2,
           "tika_docs_per_s": 8.3,
-          "zenfmt_docs_per_s": 1070.0
+          "zenfmt_docs_per_s": 1064.1
         },
         {
           "concurrency": 4,
-          "tika_docs_per_s": 14.2,
-          "zenfmt_docs_per_s": 1993.4
+          "tika_docs_per_s": 14.0,
+          "zenfmt_docs_per_s": 2001.2
         },
         {
           "concurrency": 8,
-          "tika_docs_per_s": 14.5,
-          "zenfmt_docs_per_s": 2827.8
+          "tika_docs_per_s": 14.4,
+          "zenfmt_docs_per_s": 2499.9
         }
       ],
       "tika_version": "4.0.0-beta-1"
     }
   },
-  "git_revision": "e45d85979ffac036bd6dc7f40908801317946e95",
+  "git_revision": "d219a1b",
   "schema": 1,
   "sources": {
     "corpus": {
@@ -368,24 +368,24 @@
     },
     "native": {
       "path": "benchmarks/results/latest.json",
-      "sha256": "cceed09d13f8d97238aa910a674d4fc4229b80f4d04d9f8ba6b4acc2ef0679f1"
+      "sha256": "6ec6d6ee10dd2e0ae6cec858a5b5251cb41442dd768cd2b130ac6993a0c92fb1"
     },
     "python": {
       "path": "benchmarks/results/python.json",
-      "sha256": "ecca02f264231e19ebce893d8d71f64a9895eede16d435d33a67223706e17ecf"
+      "sha256": "a79eba5dbb864997d5d57dd3ffda2c5536b3803645b29471628b50abcf5146e7"
     },
     "server": {
       "path": "benchmarks/results/server.json",
-      "sha256": "54d979d7224ca3f790524a91812b60948dec08d4b42d388ee1da0055a8850111"
+      "sha256": "7efb9d3ee2319d5b0dcbb72e9cc76d74b4c34891b9e82efd8f6362ad78dc56c9"
     },
     "stages": {
       "path": "benchmarks/results/stages.json",
-      "sha256": "4553f06219eb2aec3b936c47eb44b45adc08d2da426a2451fb788062a181a9e0"
+      "sha256": "4f360c2e769b57a4d49003801aed79b67c306398c21730614549e33c24bdec0d"
     },
     "wasm": {
       "path": "benchmarks/results/wasm.json",
-      "sha256": "31a134ded53711135ed182e12332a05d0bb116252922fad11f99ccfd08630599"
+      "sha256": "dbe070538d3c559343e322ff29ef6945a9dc799a1b236371b57d3a3f7fd53cc8"
     }
   },
-  "zenfmt_version": "0.3.1"
+  "zenfmt_version": "0.3.2"
 }
