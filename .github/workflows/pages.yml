@@ -44,6 +44,8 @@ jobs:
       - uses: typst-community/setup-typst@v5
         with:
           typst-version: ${{ env.TYPST_VERSION }}
+      - name: Install documentation fonts
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: ${{ env.UV_VERSION }}

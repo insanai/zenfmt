@@ -1023,6 +1023,10 @@ accessible names. Technical exceptions are never presented alone as
     requirements, sizes, checksums, attestations, and immutable release links.],
   [`/zenfmt/security/`], [Browser privacy model, limits, vulnerability
     reporting, and support boundary.],
+  [`/zenfmt/{zh-hans,ja,ko}/`], [Localized converter and project interface for
+    Simplified Chinese, Japanese, and Korean.],
+  [`/zenfmt/{zh-hans,ja,ko}/book/`], [Localized practical book in semantic
+    HTML, with a matching PDF under `/zenfmt/pdf/`.],
 )
 
 All generated URLs are aware of the repository base path and also work under a
@@ -1043,6 +1047,36 @@ refresh and a canonical link — never a claimed redirect.
 Record URLs keep their existing `.html` form so published links stay valid;
 new routes are directory-style. The root's former ZDS index moves to `/zds/`,
 with a clear link from the new homepage rather than an ambiguous redirect loop.
+
+== Language selection and translated books
+
+English is the fallback language. Simplified Chinese, Japanese, and Korean
+have authored Typst books and localized converter, download, benchmark, and
+security pages. Each page declares its BCP 47 language in the HTML `lang`
+attribute. ZDS records remain in English because they preserve the design
+discussion rather than serving as user documentation.
+
+The first visit to the English converter page may choose a localized homepage
+from `navigator.languages`. Generic Chinese, Simplified Chinese, China, and
+Singapore preferences select Simplified Chinese. Traditional Chinese does not
+silently select Simplified Chinese. Japanese and Korean preferences select
+their matching routes. An unrecognized preference keeps English.
+
+A visible language selector is present beside search and theme controls. An
+explicit selection is stored locally and takes precedence over later browser
+detection. Direct visits to a documentation route are not redirected. English
+book chapters map to the localized practical book when a reader changes
+language. ZDS routes remain unchanged when the language preference changes.
+
+Localized books keep commands, API names, report codes, file formats, and
+established terms such as Markdown, WebAssembly, CLI, API, Pandoc, Docling,
+and Tika searchable. Surrounding prose uses common, idiomatic language and the
+same modest claims as the English edition.
+
+Typst does not bundle CJK glyphs. Localized PDF builds therefore name the
+exact Noto Sans CJK SC, JP, and KR families. CI installs the distribution
+package that provides those fonts. English book and ZDS builds continue to
+ignore system fonts and retain their byte reproducibility contract.
 
 == Homepage content order
 
@@ -1619,8 +1653,8 @@ Required properties include:
 - status announcements that do not repeat on every render;
 - logical DOM order matching visual order at all breakpoints;
 - charts paired with data tables and prose summaries;
-- locale-independent machine data and English human copy in 0.2.0, with
-  language declared;
+- locale-independent machine data, authored English, Simplified Chinese,
+  Japanese, and Korean human copy, with language declared;
 - 200% text zoom and 400% page zoom checks without loss of actions or content.
 
 Usability acceptance uses five first-run tasks with no verbal coaching: find a
@@ -1646,6 +1680,7 @@ site/                      authored shell assets and homepage content
   templates/               the shared HTML shell and page templates
   pages/                   body partials and microcopy for generated pages
 docs/book/site.typ         multi-document Typst book bundle entry point
+docs/i18n/                 Simplified Chinese, Japanese, and Korean Typst books
 docs/site/                 uv-managed Python assembler and validators
 tools/wasm_audit.zig       WASM section auditor
 tests/wasm/                Zig parity, ABI, limit, leak, and adversarial tests
@@ -1826,12 +1861,12 @@ the site never claims tested support it does not have.
 - Snapshot representative homepage, book, ZDS, benchmark, error, empty, loading,
   success, dark, and high-contrast states at desktop and mobile widths.
 - Test keyboard order, skip link, drop alternative, theme control, search,
-  disclosures, copy, download, cancel, reset, nav drawer, help ladder, and focus
-  restoration.
+  language selection, browser-language default, disclosures, copy, download,
+  cancel, reset, nav drawer, help ladder, and focus restoration.
 - Run automated WCAG checks in all three theme selections and manually review
   the tasks listed earlier.
 - Validate unique headings/ids, landmarks, labels, alt text, table headers,
-  language, canonical metadata, Open Graph text, and no empty links.
+  BCP 47 language, canonical metadata, Open Graph text, and no empty links.
 - Crawl the final site under both `/` and `/zenfmt/` bases; reject broken
   fragments, case mismatches, absolute-root leaks, and external links not on
   the reviewed allowlist.

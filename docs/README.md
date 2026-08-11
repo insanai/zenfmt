@@ -31,20 +31,29 @@ The process defines itself: it is record 0001. The architecture and
 implementation plan is 0002. If you want to know why something is the way it
 is, the answer is in a record.
 
-**The book.** `book.typ` and `book/` hold the zenfmt manual: a preface and
-nine chapters, plus the page frame, the callouts, and the figure helpers.
+**The book.** `book.typ` and `book/` hold the English zenfmt manual: a preface
+and ten chapters, plus the page frame, the callouts, and the figure helpers.
 `book.typ` builds the archival PDF; `book/site.typ` builds one HTML document
 per chapter. They are two separate Typst invocations on purpose — emitting the
 same chapters twice from one bundle collides the labels the outline, figures,
 and cross-references depend on. The records describe the decisions; the book
 describes the system those decisions produced.
 
-**Determinism.** Every Typst invocation runs with system fonts ignored and an
+**Translated user documentation.** `i18n/zh-Hans/`, `i18n/ja/`, and
+`i18n/ko/` contain authored Typst editions for Simplified Chinese, Japanese,
+and Korean. They follow the English book's practical path and keep commands,
+API names, report codes, and established technical terms searchable. ZDS
+records remain in English because they are the project's design history.
+
+**Determinism.** English and ZDS Typst invocations run with system fonts
+ignored and an
 explicit creation timestamp, so two builds of the same revision produce
 byte-identical output. This is load-bearing rather than tidy: HTML figure
 export embeds glyph outlines, so a font that resolves differently on another
 machine changes the generated *HTML*, not just the PDF — which is why a
-document may name only fonts Typst embeds. Pass
+document may name only fonts Typst embeds. The three CJK books name exact Noto
+Sans CJK families and require those fonts from the operating system because
+Typst does not bundle CJK glyphs. Pass
 `-Dsource-date-epoch=<unix time>` to stamp a specific date. Packages come from
 the `@preview` imports, which name exact versions; the Typst CLI resolves and
 caches them.
@@ -70,7 +79,8 @@ zig build zds -Dzds=2            # ... unpadded also works
 zig build zds -Dzds=zenfmt-architecture   # ... or by slug
 zig build zds-index              # the registry-driven index PDF
 zig build zds-site               # the experimental HTML bundle
-zig build docs                   # all three
+zig build book-translations      # Chinese, Japanese, and Korean PDF + HTML
+zig build docs                   # every record and every book edition
 ```
 
 `-Dzds=` also selects placeholder drafts by slug, so a draft can be proofread

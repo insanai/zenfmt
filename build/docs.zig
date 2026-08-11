@@ -62,12 +62,40 @@ pub fn compile(
     input: []const u8,
     output: []const u8,
 ) *std.Build.Step.Run {
+    return compileImpl(b, opts, root, extra, input, output, true);
+}
+
+/// CJK books name an exact Noto family but allow the operating system font
+/// catalogue because those glyphs are not part of Typst's bundled fonts.
+fn compileLocalized(
+    b: *std.Build,
+    opts: Options,
+    root: []const u8,
+    extra: []const []const u8,
+    input: []const u8,
+    output: []const u8,
+) *std.Build.Step.Run {
+    return compileImpl(b, opts, root, extra, input, output, false);
+}
+
+fn compileImpl(
+    b: *std.Build,
+    opts: Options,
+    root: []const u8,
+    extra: []const []const u8,
+    input: []const u8,
+    output: []const u8,
+    ignore_system_fonts: bool,
+) *std.Build.Step.Run {
     var argv = std.ArrayList([]const u8).empty;
     argv.appendSlice(b.allocator, &.{
-        "typst",                 "compile",
-        "--root",                root,
-        "--ignore-system-fonts", "--creation-timestamp",
-        opts.source_date_epoch,
+        "typst", "compile", "--root", root,
+    }) catch @panic("OOM");
+    if (ignore_system_fonts) {
+        argv.append(b.allocator, "--ignore-system-fonts") catch @panic("OOM");
+    }
+    argv.appendSlice(b.allocator, &.{
+        "--creation-timestamp", opts.source_date_epoch,
     }) catch @panic("OOM");
     argv.appendSlice(b.allocator, extra) catch @panic("OOM");
     argv.appendSlice(b.allocator, &.{ input, output }) catch @panic("OOM");
@@ -89,7 +117,30 @@ pub fn add(
     opts: Options,
 ) *std.Build.Step {
     const make_dir = b.addSystemCommand(&.{ "mkdir", "-p", "docs/build" });
+    const zds_step = addRecords(b, opts, make_dir);
+    const index_step = addIndex(b, opts, make_dir);
+    const site_step = addZdsSite(b, opts);
+    const book_step = addBook(b, opts, make_dir);
+    const book_site_step = addBookSite(b, opts);
+    const translations_step = addTranslations(b, opts, make_dir);
+    const docs_step = b.step("docs", "Build every ZDS artifact plus every book");
+    for ([_]*std.Build.Step{
+        zds_step,
+        index_step,
+        site_step,
+        book_step,
+        book_site_step,
+        translations_step,
+    }) |step| docs_step.dependOn(step);
+    addTool(b, target, optimize, test_step);
+    return docs_step;
+}
 
+fn addRecords(
+    b: *std.Build,
+    opts: Options,
+    make_dir: *std.Build.Step.Run,
+) *std.Build.Step {
     const zds_step = b.step("zds", "Build the Zen Discussion (ZDS) record PDFs");
     const stems = recordStems(b, opts.record_filter);
     if (stems.len == 0) {
@@ -111,7 +162,14 @@ pub fn add(
         run.step.dependOn(&make_dir.step);
         zds_step.dependOn(&run.step);
     }
+    return zds_step;
+}
 
+fn addIndex(
+    b: *std.Build,
+    opts: Options,
+    make_dir: *std.Build.Step.Run,
+) *std.Build.Step {
     const index_step = b.step("zds-index", "Build the ZDS index PDF");
     const index = compile(
         b,
@@ -123,7 +181,10 @@ pub fn add(
     );
     index.step.dependOn(&make_dir.step);
     index_step.dependOn(&index.step);
+    return index_step;
+}
 
+fn addZdsSite(b: *std.Build, opts: Options) *std.Build.Step {
     const site_step = b.step("zds-site", "Build the ZDS HTML bundle");
     const make_site_dir = b.addSystemCommand(&.{ "mkdir", "-p", "docs/build/zds-site" });
     const site = compile(
@@ -136,9 +197,14 @@ pub fn add(
     );
     site.step.dependOn(&make_site_dir.step);
     site_step.dependOn(&site.step);
+    return site_step;
+}
 
-    // The book compiles with the repository as the Typst root: the benchmark
-    // chapter reads the recorded result files under benchmarks/.
+fn addBook(
+    b: *std.Build,
+    opts: Options,
+    make_dir: *std.Build.Step.Run,
+) *std.Build.Step {
     const book_step = b.step("book", "Build the zenfmt book PDF");
     const book = compile(
         b,
@@ -150,12 +216,10 @@ pub fn add(
     );
     book.step.dependOn(&make_dir.step);
     book_step.dependOn(&book.step);
+    return book_step;
+}
 
-    // The book's HTML edition is a second, separate invocation. Emitting the
-    // same chapters as HTML and PDF from one bundle would compile them twice
-    // in a single pass and collide the labels the book's outline, figures,
-    // and cross-references depend on (ZDS 0015, One source, two reading
-    // modes).
+fn addBookSite(b: *std.Build, opts: Options) *std.Build.Step {
     const book_site_step = b.step(
         "book-site",
         "Build the zenfmt book as one HTML document per chapter",
@@ -171,16 +235,52 @@ pub fn add(
     );
     book_site.step.dependOn(&make_book_dir.step);
     book_site_step.dependOn(&book_site.step);
+    return book_site_step;
+}
 
-    const docs_step = b.step("docs", "Build every ZDS artifact plus the book");
-    docs_step.dependOn(zds_step);
-    docs_step.dependOn(index_step);
-    docs_step.dependOn(site_step);
-    docs_step.dependOn(book_step);
-    docs_step.dependOn(book_site_step);
+fn addTranslations(
+    b: *std.Build,
+    opts: Options,
+    make_dir: *std.Build.Step.Run,
+) *std.Build.Step {
+    const translations_step = b.step(
+        "book-translations",
+        "Build the Simplified Chinese, Japanese, and Korean books",
+    );
+    const translations = [_]struct { code: []const u8, directory: []const u8 }{
+        .{ .code = "zh-Hans", .directory = "zh-Hans" },
+        .{ .code = "ja", .directory = "ja" },
+        .{ .code = "ko", .directory = "ko" },
+    };
+    for (translations) |translation| {
+        const pdf = compileLocalized(
+            b,
+            opts,
+            ".",
+            &.{},
+            b.fmt("docs/i18n/{s}/book.typ", .{translation.directory}),
+            b.fmt("docs/build/zenfmt-book-{s}.pdf", .{translation.code}),
+        );
+        pdf.step.dependOn(&make_dir.step);
+        translations_step.dependOn(&pdf.step);
 
-    addTool(b, target, optimize, test_step);
-    return docs_step;
+        const make_translation_dir = b.addSystemCommand(&.{
+            "mkdir",
+            "-p",
+            b.fmt("docs/build/book-site-{s}", .{translation.code}),
+        });
+        const html = compileLocalized(
+            b,
+            opts,
+            ".",
+            &.{ "--features", "html,bundle", "--format", "bundle" },
+            b.fmt("docs/i18n/{s}/site.typ", .{translation.directory}),
+            b.fmt("docs/build/book-site-{s}", .{translation.code}),
+        );
+        html.step.dependOn(&make_translation_dir.step);
+        translations_step.dependOn(&html.step);
+    }
+    return translations_step;
 }
 
 /// Numbered record stems (`NNNN-slug`) discovered in docs/zds/records, or

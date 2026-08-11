@@ -1,5 +1,8 @@
 # zenfmt
 
+English · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) ·
+[한국어](README.ko.md)
+
 A document converter in Zig: read a document in one format, write it in
 another, with one representation in the middle.
 
@@ -103,6 +106,13 @@ specified by [ZDS 0015](docs/zds/records/0015-wasm-and-project-site.typ).
 The browser module has no host imports: document conversion runs in a dedicated
 worker, on the visitor's device, with no upload or network fallback.
 
+The public site and practical book are available in English,
+[Simplified Chinese](https://insanai.github.io/zenfmt/zh-hans/),
+[Japanese](https://insanai.github.io/zenfmt/ja/), and
+[Korean](https://insanai.github.io/zenfmt/ko/). A first visit follows the
+browser language when a translation exists. The visible language selector
+always lets the reader choose explicitly, and that choice is remembered.
+
 ```sh
 zig build wasm          # module, adapter, worker, and declarations
 zig build wasm-check    # ABI, import/export, memory, and size audit
@@ -112,9 +122,11 @@ zig build site-browser-test  # real Chromium conversion and interaction suite
 ```
 
 The versioned WASM bundle, standalone module, native CLI archives, Python
-wheels, book PDF, and complete ZDS PDF set are published together on the
-0.3.2 GitHub release. The site exposes direct target downloads and keeps the
-Book and ZDS in the help path from every conversion state.
+wheels, and book PDF are published together on the 0.3.2 GitHub release.
+Future releases also carry the Simplified Chinese, Japanese, and Korean book
+PDFs. Individual ZDS PDFs remain available from GitHub Pages rather than being
+duplicated as release assets. The site keeps the Book and ZDS in the help path
+from every conversion state.
 
 ## Server
 
@@ -188,6 +200,7 @@ benchmarks/          the conversion benchmark and its corpus fetcher
 tests/               cross-format, round-trip, fuzz, and adversarial suites
 tools/zds.zig        the ZDS numbering workflow (ZDS 0001)
 docs/                design records, and the skeleton of the book
+docs/i18n/           authored Simplified Chinese, Japanese, and Korean books
 ```
 
 Applications embed the same engine the CLI uses: `zenfmt.convert(gpa, io,
@@ -209,6 +222,7 @@ zig build zds -Dzds=2            # one record, by number or slug
 zig build zds-index              # the registry-driven index PDF
 zig build zds-site               # the experimental HTML bundle
 zig build book                   # the zenfmt book (needs benchmark results)
+zig build book-translations      # Chinese, Japanese, and Korean PDF + HTML
 zig build docs                   # records, index, site, and the book
 zig build zds-list               # records, drafts, and consistency warnings
 zig build zds-new -- <slug>      # start a record from the template

@@ -27,6 +27,8 @@
   authors: (),
   keywords: (),
   running_head: none,
+  font: "New Computer Modern",
+  language: "en",
 ) = {
   let head = if running_head == none { title } else { running_head }
   set document(
@@ -53,7 +55,7 @@
       }
     },
   )
-  set text(font: "New Computer Modern", size: 10.3pt, fill: ink, lang: "en")
+  set text(font: font, size: 10.3pt, fill: ink, lang: language)
   set smartquote(enabled: false)
   set par(justify: true, leading: 0.74em, spacing: 0.72em)
   set heading(numbering: "1.1")
