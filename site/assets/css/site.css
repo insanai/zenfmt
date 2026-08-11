@@ -125,7 +125,7 @@ a { color: var(--blue); }
   gap: 0.5rem;
   margin-left: auto;
 }
-.search-label, .theme-label {
+.search-label, .theme-label, .language-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -141,7 +141,7 @@ a { color: var(--blue); }
   background: var(--paper);
   color: var(--ink);
 }
-.theme-select {
+.theme-select, .language-select {
   min-height: 44px;
   padding: 0 0.65rem;
   border: 1px solid var(--rule);
@@ -452,6 +452,8 @@ h1:hover .permalink, h2:hover .permalink, h3:hover .permalink,
   .target-featured { grid-column: auto; }
   .workspace { gap: 1rem; }
   .metric-grid { grid-template-columns: 1fr; }
+  .site-tools { flex-wrap: wrap; }
+  .site-search { flex-basis: 100%; }
 }
 
 /* Book and record content */

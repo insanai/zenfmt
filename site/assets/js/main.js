@@ -11,6 +11,124 @@
 // benefit, since what was asked for is the Markdown itself.
 
 const root = document.documentElement;
+const locale = root.dataset.locale ?? 'en';
+
+const MESSAGES = {
+  en: {
+    searchFailed: 'Search could not be loaded. Browse the Book or ZDS instead.',
+    noMatches: 'No matching Book chapter or design record.',
+    ready: 'Ready. Choose a document.',
+    exampleTitle: '# A first conversion',
+    exampleBody: 'This document was created in your browser.',
+    exampleLocal: 'It never leaves this device.',
+    exampleMarkdown: 'The output remains plain Markdown.',
+    wrapOff: 'Wrap lines: off',
+    wrapOn: 'Wrap lines',
+    copied: 'Copied',
+    copy: 'Copy',
+    copyBlocked: 'Copying was blocked by the browser. Select the text and copy it.',
+    alreadyRunning: 'A conversion is already running. Cancel it before choosing another file.',
+    stays: 'stays on this device',
+    converting: (name) => `Converting ${name}…`,
+    binary: '(this writer produced binary output; use Download)',
+    complete: (ms) => `Ready · converted locally in ${ms} ms`,
+    conversionFailed: 'Conversion failed',
+    noArtifact: 'No artifact was produced.',
+    directions: 'What you can do:',
+    details: 'Details',
+    engineTitle: 'THE BROWSER ENGINE COULD NOT START',
+    engineBody: 'Nothing was converted. The rest of this page still works.',
+    reload: 'Reload the page: A temporary browser failure is the most common cause.',
+    conversionTitle: 'THE CONVERSION COULD NOT BE COMPLETED',
+    retry: 'Reload the page and try again.',
+  },
+  'zh-Hans': {
+    searchFailed: '无法加载搜索。你仍然可以浏览中文文档或英文 ZDS。',
+    noMatches: '没有找到匹配的文档章节或设计记录。',
+    ready: '已就绪，请选择文档。',
+    exampleTitle: '# 第一次转换',
+    exampleBody: '这份文档在浏览器中创建。',
+    exampleLocal: '它不会离开这台设备。',
+    exampleMarkdown: '输出仍是纯 Markdown。',
+    wrapOff: '自动换行：关闭',
+    wrapOn: '自动换行',
+    copied: '已复制',
+    copy: '复制',
+    copyBlocked: '浏览器阻止了复制操作。请选中文本后手动复制。',
+    alreadyRunning: '已有转换正在运行。请先取消，再选择其他文件。',
+    stays: '只留在这台设备上',
+    converting: (name) => `正在转换 ${name}…`,
+    binary: '（这个 writer 生成了二进制结果，请使用“下载”）',
+    complete: (ms) => `已完成 · 在本地用时 ${ms} ms`,
+    conversionFailed: '转换失败',
+    noArtifact: '没有生成 artifact。',
+    directions: '你可以这样处理：',
+    details: '详细信息',
+    engineTitle: '浏览器转换引擎无法启动',
+    engineBody: '没有转换任何内容，页面的其他部分仍可使用。',
+    reload: '请重新加载页面。最常见的原因是临时浏览器故障。',
+    conversionTitle: '无法完成转换',
+    retry: '请重新加载页面后再试一次。',
+  },
+  ja: {
+    searchFailed: '検索を読み込めませんでした。日本語ドキュメントまたは英語 ZDS はそのまま閲覧できます。',
+    noMatches: '一致するドキュメントまたは設計記録がありません。',
+    ready: '準備できました。ドキュメントを選択してください。',
+    exampleTitle: '# 最初の変換',
+    exampleBody: 'このドキュメントはブラウザ内で作成されました。',
+    exampleLocal: 'この端末の外へ送信されません。',
+    exampleMarkdown: '出力は plain Markdown のままです。',
+    wrapOff: '行の折り返し：オフ',
+    wrapOn: '行を折り返す',
+    copied: 'コピーしました',
+    copy: 'コピー',
+    copyBlocked: 'ブラウザがコピーを許可しませんでした。text を選択してコピーしてください。',
+    alreadyRunning: '別の変換を実行中です。cancel してから次の file を選んでください。',
+    stays: 'この端末内だけで処理',
+    converting: (name) => `${name} を変換しています…`,
+    binary: '（この writer は binary を出力しました。ダウンロードしてください）',
+    complete: (ms) => `完了 · browser 内で ${ms} ms`,
+    conversionFailed: '変換に失敗しました',
+    noArtifact: 'artifact は作成されませんでした。',
+    directions: '次にできること：',
+    details: '詳細',
+    engineTitle: 'ブラウザ用エンジンを起動できませんでした',
+    engineBody: '変換は行われていません。page のほかの部分は利用できます。',
+    reload: 'page を再読み込みしてください。一時的な browser error がよくある原因です。',
+    conversionTitle: '変換を完了できませんでした',
+    retry: 'page を再読み込みして、もう一度お試しください。',
+  },
+  ko: {
+    searchFailed: '검색을 불러오지 못했습니다. 한국어 문서나 영어 ZDS는 그대로 볼 수 있습니다.',
+    noMatches: '일치하는 문서 장이나 설계 기록이 없습니다.',
+    ready: '준비되었습니다. 문서를 선택하세요.',
+    exampleTitle: '# 첫 번째 변환',
+    exampleBody: '이 문서는 브라우저에서 만들었습니다.',
+    exampleLocal: '이 기기 밖으로 전송되지 않습니다.',
+    exampleMarkdown: '결과는 plain Markdown으로 유지됩니다.',
+    wrapOff: '줄 바꿈: 끄기',
+    wrapOn: '줄 바꿈',
+    copied: '복사했습니다',
+    copy: '복사',
+    copyBlocked: '브라우저가 복사를 막았습니다. text를 선택해 직접 복사해 주세요.',
+    alreadyRunning: '다른 변환이 실행 중입니다. 먼저 취소한 뒤 새 파일을 선택하세요.',
+    stays: '이 기기에만 보관',
+    converting: (name) => `${name} 변환 중…`,
+    binary: '(이 writer가 binary 결과를 만들었습니다. 다운로드를 사용하세요)',
+    complete: (ms) => `완료 · 기기에서 ${ms} ms`,
+    conversionFailed: '변환 실패',
+    noArtifact: 'artifact를 만들지 못했습니다.',
+    directions: '다음 방법을 시도해 보세요:',
+    details: '세부 정보',
+    engineTitle: '브라우저 엔진을 시작하지 못했습니다',
+    engineBody: '변환하지 못했지만 페이지의 다른 부분은 계속 사용할 수 있습니다.',
+    reload: '페이지를 새로고침하세요. 일시적인 브라우저 오류가 가장 흔한 원인입니다.',
+    conversionTitle: '변환을 완료하지 못했습니다',
+    retry: '페이지를 새로고침한 뒤 다시 시도하세요.',
+  },
+};
+
+const messages = MESSAGES[locale] ?? MESSAGES.en;
 
 // -- theme ------------------------------------------------------------
 
@@ -50,6 +168,49 @@ themeSelect?.addEventListener('change', () => {
   }
 });
 
+// -- language ---------------------------------------------------------
+
+const LANGUAGE_KEY = 'zenfmt-language';
+const languageSelect = document.querySelector('[data-language-select]');
+
+languageSelect?.addEventListener('change', () => {
+  const selected = languageSelect.selectedOptions[0]?.dataset.locale ?? 'en';
+  try {
+    localStorage.setItem(LANGUAGE_KEY, selected);
+  } catch {
+    /* Navigation still works when storage is unavailable. */
+  }
+  window.location.assign(languageSelect.value);
+});
+
+if (locale === 'en' && document.querySelector('[data-drop]')) {
+  redirectFromBrowserLanguage();
+}
+
+function redirectFromBrowserLanguage() {
+  let preferred = null;
+  try {
+    preferred = localStorage.getItem(LANGUAGE_KEY);
+  } catch {
+    /* Browser preference remains usable without storage. */
+  }
+  if (!preferred) {
+    const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
+    preferred = languages.map(languageCode).find(Boolean) ?? 'en';
+  }
+  const option = languageSelect?.querySelector(`option[data-locale="${preferred}"]`);
+  if (preferred !== 'en' && option) window.location.replace(option.value);
+}
+
+function languageCode(value) {
+  const normalized = String(value ?? '').toLowerCase();
+  if (normalized === 'ja' || normalized.startsWith('ja-')) return 'ja';
+  if (normalized === 'ko' || normalized.startsWith('ko-')) return 'ko';
+  if (normalized === 'zh' || normalized.startsWith('zh-cn') ||
+      normalized.startsWith('zh-sg') || normalized.includes('hans')) return 'zh-Hans';
+  return normalized === 'en' || normalized.startsWith('en-') ? 'en' : null;
+}
+
 // -- local documentation search --------------------------------------
 
 const searchInput = document.querySelector('[data-search-input]');
@@ -75,7 +236,7 @@ async function initSearch() {
         return response.json();
       });
     } catch {
-      searchResults.textContent = 'Search could not be loaded. Browse the Book or ZDS instead.';
+      searchResults.textContent = messages.searchFailed;
       searchResults.hidden = false;
       return;
     }
@@ -99,7 +260,7 @@ async function initSearch() {
     }
     if (matches.length === 0) {
       const item = document.createElement('li');
-      item.textContent = 'No matching Book chapter or design record.';
+      item.textContent = messages.noMatches;
       list.append(item);
     }
     searchResults.append(list);
@@ -166,8 +327,8 @@ async function initConverter() {
 
   exampleButton.addEventListener('click', () => {
     const sample = new File([
-      '# A first conversion\n\nThis document was created in your browser.\n\n' +
-      '- It never leaves this device.\n- The output remains plain Markdown.\n',
+      `${messages.exampleTitle}\n\n${messages.exampleBody}\n\n` +
+      `- ${messages.exampleLocal}\n- ${messages.exampleMarkdown}\n`,
     ], 'zenfmt-example.md', { type: 'text/markdown' });
     convertFile(sample);
   });
@@ -176,7 +337,7 @@ async function initConverter() {
     const wrapping = wrapButton.getAttribute('aria-pressed') !== 'false';
     wrapButton.setAttribute('aria-pressed', String(!wrapping));
     output.classList.toggle('output-nowrap', wrapping);
-    wrapButton.textContent = wrapping ? 'Wrap lines: off' : 'Wrap lines';
+    wrapButton.textContent = wrapping ? messages.wrapOff : messages.wrapOn;
   });
 
   cancelButton.addEventListener('click', () => activeController?.abort());
@@ -186,10 +347,10 @@ async function initConverter() {
     try {
       // Only ever after an explicit gesture, and focus is left where it was.
       await navigator.clipboard.writeText(current.text);
-      copyButton.textContent = 'Copied';
-      setTimeout(() => { copyButton.textContent = 'Copy'; }, 2000);
+      copyButton.textContent = messages.copied;
+      setTimeout(() => { copyButton.textContent = messages.copy; }, 2000);
     } catch {
-      say('Copying was blocked by the browser. Select the text and copy it.', 'failed');
+      say(messages.copyBlocked, 'failed');
     }
   });
 
@@ -216,7 +377,7 @@ async function initConverter() {
     fileMeta.hidden = true;
     fileMeta.textContent = '';
     setResultActions(false);
-    say('Ready. Choose a document.', 'ready');
+    say(messages.ready, 'ready');
     input.focus();
   });
 
@@ -228,7 +389,7 @@ async function initConverter() {
     );
     converter = await createWorkerConverter({ moduleUrl, workerUrl });
     window.addEventListener('pagehide', () => converter.dispose(), { once: true });
-    say('Ready. Choose a document.', 'ready');
+    say(messages.ready, 'ready');
   } catch (error) {
     // A failure here changes the converter panel and nothing else.
     say(describe(error), 'failed');
@@ -237,14 +398,14 @@ async function initConverter() {
 
   async function convertFile(file) {
     if (activeController) {
-      say('A conversion is already running. Cancel it before choosing another file.', 'failed');
+      say(messages.alreadyRunning, 'failed');
       input.value = '';
       return;
     }
     activeController = new AbortController();
-    fileMeta.textContent = `${file.name} · ${formatBytes(file.size)} · stays on this device`;
+    fileMeta.textContent = `${file.name} · ${formatBytes(file.size)} · ${messages.stays}`;
     fileMeta.hidden = false;
-    say(`Converting ${file.name}…`, 'converting');
+    say(messages.converting(file.name), 'converting');
     setResultActions(false);
     cancelButton.hidden = false;
     reportsPanel.hidden = true;
@@ -258,20 +419,20 @@ async function initConverter() {
       });
       output.textContent = current.isText
         ? current.text
-        : '(this writer produced binary output; use Download)';
+        : messages.binary;
       renderReports(current.reports);
       setResultActions(true);
-      say(`Ready · converted locally in ${Math.round(current.elapsedMs)} ms`, 'complete');
+      say(messages.complete(Math.round(current.elapsedMs)), 'complete');
     } catch (error) {
       current = null;
       output.textContent = '';
       renderReports(error?.reports?.length ? error.reports : [{
         severity: 'error',
-        title: error?.code ?? 'Conversion failed',
+        title: error?.code ?? messages.conversionFailed,
         code: error?.code ?? 'browser.conversion-failed',
         exit_class: error?.exitClass ?? 'conversion',
         problem: error?.problem ?? describe(error),
-        consequence: error?.consequence ?? 'No artifact was produced.',
+        consequence: error?.consequence ?? messages.noArtifact,
         directions: error?.directions ?? [],
       }]);
       say(describe(error), 'failed');
@@ -314,7 +475,7 @@ async function initConverter() {
 
       if (report.directions?.length) {
         const heading = document.createElement('p');
-        heading.textContent = 'What you can do:';
+        heading.textContent = messages.directions;
         item.append(heading);
         const list = document.createElement('ul');
         for (const direction of report.directions) {
@@ -326,7 +487,7 @@ async function initConverter() {
       }
       const details = document.createElement('details');
       const summary = document.createElement('summary');
-      summary.textContent = 'Details';
+      summary.textContent = messages.details;
       const code = document.createElement('code');
       code.textContent = `${report.code} · ${report.exit_class ?? 'conversion'}`;
       details.append(summary, code);
@@ -346,14 +507,14 @@ function formatBytes(bytes) {
 function describe(error) {
   if (error && typeof error.message === 'string' && error.code) return error.message;
   if (error && typeof error.message === 'string' && error.message) {
-    return 'THE BROWSER ENGINE COULD NOT START\n' +
-      'Nothing was converted. The rest of this page still works.\n' +
-      'What you can do:\n' +
-      '  Reload the page: A temporary browser failure is the most common cause.\n' +
-      `Details: ${error.message}`;
+    return `${messages.engineTitle}\n` +
+      `${messages.engineBody}\n` +
+      `${messages.directions}\n` +
+      `  ${messages.reload}\n` +
+      `${messages.details}: ${error.message}`;
   }
-  return 'THE CONVERSION COULD NOT BE COMPLETED\nNothing was converted.\n' +
-    'What you can do:\n  Reload the page and try again.';
+  return `${messages.conversionTitle}\n${messages.engineBody}\n` +
+    `${messages.directions}\n  ${messages.retry}`;
 }
 
 /// Strips anything that would make a download land somewhere unexpected or

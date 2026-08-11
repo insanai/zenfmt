@@ -116,6 +116,51 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     context.close()
 
 
+def test_browser_language_and_explicit_choice(browser: Browser, site_url: str) -> None:
+    context = browser.new_context(locale="ja-JP")
+    page = context.new_page()
+    page.goto(site_url)
+
+    expect(page).to_have_url(f"{site_url}ja/")
+    expect(page.locator("html")).to_have_attribute("lang", "ja")
+    expect(page.get_by_label("言語")).to_have_value("../ja/")
+    expect(
+        page.get_by_role("heading", name="ドキュメントを Markdown に変換。")
+    ).to_be_visible()
+    expect(page.locator("[data-status]")).to_have_text(
+        "準備できました。ドキュメントを選択してください。"
+    )
+
+    with page.expect_navigation():
+        page.get_by_label("言語").select_option(label="English")
+    expect(page).to_have_url(site_url)
+    expect(page.get_by_label("Language")).to_have_value("./")
+
+    page.reload()
+    expect(page).to_have_url(site_url)
+    expect(page.locator("html")).to_have_attribute("lang", "en")
+    context.close()
+
+
+def test_localized_books_and_pdfs_are_linked(browser: Browser, site_url: str) -> None:
+    context = browser.new_context()
+    page = context.new_page()
+
+    for locale, language, heading, pdf in (
+        ("zh-hans", "zh-Hans", "zenfmt 中文文档", "zenfmt-book-zh-Hans.pdf"),
+        ("ja", "ja", "zenfmt 日本語ドキュメント", "zenfmt-book-ja.pdf"),
+        ("ko", "ko", "zenfmt 한국어 문서", "zenfmt-book-ko.pdf"),
+    ):
+        page.goto(f"{site_url}{locale}/book/")
+        expect(page.locator("html")).to_have_attribute("lang", language)
+        expect(page.locator(".chapter-title")).to_contain_text(heading)
+        expect(page.locator(f'.docs-nav a[href$="{pdf}"]')).to_have_attribute(
+            "href", f"../../pdf/{pdf}"
+        )
+
+    context.close()
+
+
 def test_system_theme_and_zds_diagrams_render(browser: Browser, site_url: str) -> None:
     context = browser.new_context(color_scheme="dark")
     page = context.new_page()
