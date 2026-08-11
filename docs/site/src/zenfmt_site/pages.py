@@ -378,7 +378,7 @@ def not_found_page(base: str) -> Page:
         description="The requested page does not exist on this site.",
         body=body,
         stylesheets=["assets/css/site.css"],
-        scripts=[],
+        scripts=["assets/js/main.js"],
         absolute_base=base,
     )
 

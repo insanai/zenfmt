@@ -57,6 +57,115 @@ NAV = [
     ("security/", "Security"),
 ]
 
+LANGUAGES = (
+    ("en", "English"),
+    ("zh-Hans", "简体中文"),
+    ("ja", "日本語"),
+    ("ko", "한국어"),
+)
+
+SHELL_TEXT = {
+    "en": {
+        "skip": "Skip to content",
+        "nav": ("Convert", "Benchmarks", "Download", "Book", "ZDS", "Security"),
+        "site": "Site",
+        "search": "Search docs",
+        "search_placeholder": "Search Book and ZDS",
+        "theme": "Theme",
+        "system": "System",
+        "light": "Light",
+        "dark": "Dark",
+        "language": "Language",
+        "documentation": "Documentation",
+        "book": "The zenfmt book",
+        "records": "Zen Discussions",
+        "browse": "Browse contents",
+        "design_records": "Design records",
+        "download_pdf": "Download this PDF",
+        "try": "Try in browser",
+        "on_page": "On this page",
+        "footer": "documents convert in your browser; nothing is uploaded.",
+        "privacy": "Security and privacy",
+        "source": "Source",
+    },
+    "zh-Hans": {
+        "skip": "跳到正文",
+        "nav": ("转换", "性能测试", "下载", "文档", "ZDS", "安全"),
+        "site": "网站导航",
+        "search": "搜索文档",
+        "search_placeholder": "搜索文档和 ZDS",
+        "theme": "主题",
+        "system": "跟随系统",
+        "light": "浅色",
+        "dark": "深色",
+        "language": "语言",
+        "documentation": "文档",
+        "book": "zenfmt 中文文档",
+        "records": "Zen Discussions",
+        "browse": "浏览目录",
+        "design_records": "设计记录（英文）",
+        "download_pdf": "下载本语言 PDF",
+        "try": "在浏览器中试用",
+        "on_page": "本页目录",
+        "footer": "文档在浏览器本地转换，不会上传。",
+        "privacy": "安全与隐私",
+        "source": "源代码",
+    },
+    "ja": {
+        "skip": "本文へ移動",
+        "nav": (
+            "変換",
+            "ベンチマーク",
+            "ダウンロード",
+            "ドキュメント",
+            "ZDS",
+            "セキュリティ",
+        ),
+        "site": "サイト",
+        "search": "ドキュメントを検索",
+        "search_placeholder": "ドキュメントと ZDS を検索",
+        "theme": "テーマ",
+        "system": "システム",
+        "light": "ライト",
+        "dark": "ダーク",
+        "language": "言語",
+        "documentation": "ドキュメント",
+        "book": "zenfmt 日本語ドキュメント",
+        "records": "Zen Discussions",
+        "browse": "目次を見る",
+        "design_records": "設計記録（英語）",
+        "download_pdf": "日本語 PDF をダウンロード",
+        "try": "ブラウザで試す",
+        "on_page": "このページの内容",
+        "footer": "ドキュメントはブラウザ内で変換され、アップロードされません。",
+        "privacy": "セキュリティとプライバシー",
+        "source": "ソースコード",
+    },
+    "ko": {
+        "skip": "본문으로 이동",
+        "nav": ("변환", "벤치마크", "다운로드", "문서", "ZDS", "보안"),
+        "site": "사이트",
+        "search": "문서 검색",
+        "search_placeholder": "문서와 ZDS 검색",
+        "theme": "테마",
+        "system": "시스템 설정",
+        "light": "라이트",
+        "dark": "다크",
+        "language": "언어",
+        "documentation": "문서",
+        "book": "zenfmt 한국어 문서",
+        "records": "Zen Discussions",
+        "browse": "목차 보기",
+        "design_records": "설계 기록 (영어)",
+        "download_pdf": "한국어 PDF 다운로드",
+        "try": "브라우저에서 사용해 보기",
+        "on_page": "이 페이지의 내용",
+        "footer": "문서는 브라우저에서 변환되며 업로드되지 않습니다.",
+        "privacy": "보안과 개인정보 보호",
+        "source": "소스 코드",
+    },
+}
+
 
 @dataclass
 class Page:
@@ -72,6 +181,8 @@ class Page:
     adapter_url: str | None = None
     worker_url: str | None = None
     search_url: str | None = None
+    locale: str = "en"
+    language_links: dict[str, str] | None = None
 
 
 def render(page: Page, *, version: str) -> str:
@@ -79,7 +190,8 @@ def render(page: Page, *, version: str) -> str:
     link = _linker(page)
     head = [
         "<!doctype html>",
-        '<html lang="en" class="theme-system">',
+        f'<html lang="{_escape(page.locale)}" class="theme-system" '
+        f'data-locale="{_escape(page.locale)}">',
         "<head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -114,12 +226,12 @@ def render(page: Page, *, version: str) -> str:
 
     body = [
         "<body>",
-        '<a class="skip-link" href="#main">Skip to content</a>',
+        f'<a class="skip-link" href="#main">{_text(page)["skip"]}</a>',
         _header(page, link),
         '<main id="main">',
         _main(page, link),
         "</main>",
-        _footer(link, version),
+        _footer(link, version, page),
         "</body>",
         "</html>",
     ]
@@ -135,8 +247,10 @@ def _linker(page: Page):
 
 
 def _header(page: Page, link) -> str:
+    words = _text(page)
     items = []
-    for route, label in NAV:
+    for (route, _), label in zip(NAV, words["nav"], strict=True):
+        route = _locale_route(page.locale, route)
         current = (
             ' aria-current="page"'
             if routes.normalize(route) == routes.normalize(page.route)
@@ -145,20 +259,27 @@ def _header(page: Page, link) -> str:
         items.append(f'<li><a href="{link(route)}"{current}>{label}</a></li>')
     return (
         '<header class="site-header">'
-        f'<a class="site-mark" href="{link("")}">zenfmt</a>'
-        '<nav aria-label="Site"><ul>' + "".join(items) + "</ul></nav>"
+        f'<a class="site-mark" href="{link(_locale_prefix(page.locale))}">zenfmt</a>'
+        f'<nav aria-label="{words["site"]}"><ul>' + "".join(items) + "</ul></nav>"
         '<div class="site-tools">'
-        '<label class="search-label" for="site-search">Search docs</label>'
+        f'<label class="search-label" for="site-search">{words["search"]}</label>'
         '<input id="site-search" class="site-search" type="search" '
-        'placeholder="Search Book and ZDS" autocomplete="off" data-search-input>'
-        '<label class="theme-label" for="theme-select">Theme</label>'
+        f'placeholder="{words["search_placeholder"]}" autocomplete="off" '
+        "data-search-input>"
+        f'<label class="theme-label" for="theme-select">{words["theme"]}</label>'
         '<select id="theme-select" class="theme-select" data-theme-select>'
-        '<option value="system" selected>System</option>'
-        '<option value="light">Light</option><option value="dark">Dark</option>'
+        f'<option value="system" selected>{words["system"]}</option>'
+        f'<option value="light">{words["light"]}</option>'
+        f'<option value="dark">{words["dark"]}</option>'
         "</select>"
-        "</div>"
-        '<div class="search-results" data-search-results hidden></div>'
-        "</header>"
+        f'<label class="language-label" for="language-select">'
+        f"{words['language']}</label>"
+        '<select id="language-select" class="language-select" data-language-select>'
+        + _language_options(page, link)
+        + "</select>"
+        + "</div>"
+        + '<div class="search-results" data-search-results hidden></div>'
+        + "</header>"
     )
 
 
@@ -172,45 +293,77 @@ def _main(page: Page, link) -> str:
         for level, anchor, label in page.toc
         if level in (2, 3)
     )
-    if page.route.startswith("book/"):
-        collection = "The zenfmt book"
-        collection_link = link("book/")
-        pdf = link("pdf/zenfmt-book.pdf")
+    words = _text(page)
+    locale_prefix = _locale_prefix(page.locale)
+    if page.route.startswith(f"{locale_prefix}book/"):
+        collection = words["book"]
+        collection_link = link(f"{locale_prefix}book/")
+        suffix = "" if page.locale == "en" else f"-{page.locale}"
+        pdf = link(f"pdf/zenfmt-book{suffix}.pdf")
     else:
-        collection = "Zen Discussions"
+        collection = words["records"]
         collection_link = link("zds/")
         stem = page.route.rsplit("/", 1)[-1].removesuffix(".html")
         pdf = link(f"pdf/zds-{stem}.pdf")
 
     return (
         '<div class="docs-layout">'
-        '<aside class="docs-nav" aria-label="Documentation">'
+        f'<aside class="docs-nav" aria-label="{words["documentation"]}">'
         f'<p class="docs-kicker">{_escape(collection)}</p>'
-        f'<p><a href="{collection_link}">Browse contents</a></p>'
-        f'<p><a href="{link("book/")}">Book</a></p>'
-        f'<p><a href="{link("zds/")}">Design records</a></p>'
-        f'<p><a href="{pdf}">Download this PDF</a></p>'
-        f'<p><a href="{link("")}">Try in browser</a></p>'
+        f'<p><a href="{collection_link}">{words["browse"]}</a></p>'
+        f'<p><a href="{link(f"{locale_prefix}book/")}">{words["book"]}</a></p>'
+        f'<p><a href="{link("zds/")}">{words["design_records"]}</a></p>'
+        f'<p><a href="{pdf}">{words["download_pdf"]}</a></p>'
+        f'<p><a href="{link(locale_prefix)}">{words["try"]}</a></p>'
         "</aside>"
         f'<article class="docs-content">{page.body}</article>'
-        '<aside class="page-toc" aria-label="On this page">'
-        '<p class="docs-kicker">On this page</p>'
+        f'<aside class="page-toc" aria-label="{words["on_page"]}">'
+        f'<p class="docs-kicker">{words["on_page"]}</p>'
         f"<ol>{toc}</ol>"
         "</aside>"
         "</div>"
     )
 
 
-def _footer(link, version: str) -> str:
+def _footer(link, version: str, page: Page | None = None) -> str:
+    words = _text(page)
+    locale_prefix = _locale_prefix(page.locale if page else "en")
     return (
         '<footer class="site-footer">'
-        f"<p>zenfmt {_escape(version)} — documents convert in your browser; "
-        "nothing is uploaded.</p>"
-        f'<p><a href="{link("security/")}">Security and privacy</a> · '
-        f'<a href="{link("zds/")}">Design records</a> · '
-        '<a href="https://github.com/insanai/zenfmt">Source</a></p>'
+        f"<p>zenfmt {_escape(version)} · {words['footer']}</p>"
+        f'<p><a href="{link(f"{locale_prefix}security/")}">{words["privacy"]}</a> · '
+        f'<a href="{link("zds/")}">{words["design_records"]}</a> · '
+        f'<a href="https://github.com/insanai/zenfmt">{words["source"]}</a></p>'
         "</footer>"
     )
+
+
+def _text(page: Page | None) -> dict:
+    locale = page.locale if page and page.locale in SHELL_TEXT else "en"
+    return SHELL_TEXT[locale]
+
+
+def _locale_prefix(locale: str) -> str:
+    return "" if locale == "en" else f"{locale.lower()}/"
+
+
+def _locale_route(locale: str, route: str) -> str:
+    if route == "zds/":
+        return route
+    return _locale_prefix(locale) + route
+
+
+def _language_options(page: Page, link) -> str:
+    links = page.language_links or {}
+    options = []
+    for locale, label in LANGUAGES:
+        target = links.get(locale, _locale_prefix(locale))
+        selected = " selected" if locale == page.locale else ""
+        options.append(
+            f'<option value="{link(target)}" data-locale="{locale}"{selected}>'
+            f"{label}</option>"
+        )
+    return "".join(options)
 
 
 def _escape(value: str) -> str:

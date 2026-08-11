@@ -16,7 +16,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import pages, routes
+from . import localized, pages, routes
 from .document import ContractError, parse
 from .shell import Page, render
 
@@ -112,6 +112,8 @@ class Builder:
     # -- pages ----------------------------------------------------------
 
     def emit(self, page: Page) -> None:
+        if page.language_links is None:
+            page.language_links = language_links(page)
         page.stylesheets = [self.assets.get(s, s) for s in page.stylesheets]
         page.scripts = [self.assets.get(s, s) for s in (page.scripts or [])]
         if page.wasm_url is None and "assets/wasm/zenfmt.wasm" in self.assets:
@@ -172,8 +174,13 @@ class Builder:
         page_id: str,
         *,
         expect_figures: int | None = None,
+        locale: str = "en",
     ) -> Page:
-        doc = parse(source.read_text(encoding="utf-8"), page_id=page_id)
+        doc = parse(
+            source.read_text(encoding="utf-8"),
+            page_id=page_id,
+            locale=locale,
+        )
         if expect_figures is not None:
             from .document import assert_figures
 
@@ -201,6 +208,7 @@ class Builder:
             stylesheets=sheets,
             scripts=["assets/js/main.js"],
             toc=doc.headings,
+            locale=locale,
         )
         self.emit(page)
         return page
@@ -216,16 +224,21 @@ def build(
 
     capabilities = pages.load_json(inputs.capabilities)
     content_map = pages.load_json(inputs.content_map)
-    benchmark = _fresh_benchmark(inputs.benchmark, version)
-    baselines = {
-        "native": _recorded_benchmark(inputs.native_benchmark),
-        "server": _recorded_benchmark(inputs.server_benchmark),
-    }
-
     builder = Builder(inputs, out, base=base, version=version)
-
-    # Jekyll would otherwise drop any path beginning with an underscore.
     builder.write_text(".nojekyll", "")
+    _emit_assets(builder, root, inputs, capabilities)
+    _emit_english_book(builder, inputs, content_map)
+    _emit_records(builder, inputs, content_map)
+    _emit_pdfs(builder, inputs)
+    _emit_locales(builder, root, capabilities, version)
+    _emit_english_pages(builder, inputs, capabilities, version, base)
+    builder.finish_search()
+    return builder
+
+
+def _emit_assets(
+    builder: Builder, root: Path, inputs: Inputs, capabilities: dict
+) -> None:
 
     for name in ("css/site.css", "js/main.js", "js/zenfmt.js"):
         source = inputs.site_assets / name
@@ -253,7 +266,8 @@ def build(
         json.dumps(capabilities, sort_keys=True, separators=(",", ":")),
     )
 
-    # Book chapters.
+
+def _emit_english_book(builder: Builder, inputs: Inputs, content_map: dict) -> None:
     book_entries = []
     for chapter in content_map["book"]:
         source = inputs.book_site / chapter["id"] / "index.html"
@@ -280,7 +294,8 @@ def build(
         )
     )
 
-    # Records keep their published .html addresses.
+
+def _emit_records(builder: Builder, inputs: Inputs, content_map: dict) -> None:
     record_entries = []
     records_dir = inputs.zds_site / "zds"
     zds_figures = content_map["zds_figures"]
@@ -308,7 +323,8 @@ def build(
         )
     )
 
-    # PDFs, at the addresses that are already published.
+
+def _emit_pdfs(builder: Builder, inputs: Inputs) -> None:
     pdf_dir = inputs.zds_site / "pdf"
     if pdf_dir.exists():
         for pdf in sorted(pdf_dir.glob("*.pdf")):
@@ -316,14 +332,47 @@ def build(
     if inputs.book_pdf.exists():
         builder.copy_plain(inputs.book_pdf, "pdf/zenfmt-book.pdf")
 
+
+def _emit_locales(
+    builder: Builder, root: Path, capabilities: dict, version: str
+) -> None:
+    for words in localized.LOCALES:
+        source = root / f"docs/build/book-site-{words.code}" / "index.html"
+        if not source.exists():
+            raise ContractError(f"the {words.code} book bundle produced no index.html")
+        builder.emit_typst(
+            source,
+            f"{words.prefix}book/",
+            f"book-{words.code}",
+            locale=words.code,
+        )
+        pdf = root / f"docs/build/zenfmt-book-{words.code}.pdf"
+        if not pdf.exists():
+            raise ContractError(f"the {words.code} book PDF is missing")
+        builder.copy_plain(pdf, f"pdf/zenfmt-book-{words.code}.pdf")
+        builder.emit(localized.homepage(words, capabilities))
+        builder.emit(localized.download_page(words, capabilities, version))
+        builder.emit(localized.benchmark_page(words))
+        builder.emit(localized.security_page(words))
+
+
+def _emit_english_pages(
+    builder: Builder,
+    inputs: Inputs,
+    capabilities: dict,
+    version: str,
+    base: str,
+) -> None:
+    benchmark = _fresh_benchmark(inputs.benchmark, version)
+    baselines = {
+        "native": _recorded_benchmark(inputs.native_benchmark),
+        "server": _recorded_benchmark(inputs.server_benchmark),
+    }
     builder.emit(pages.homepage(capabilities, benchmark, baselines))
     builder.emit(pages.download_page(capabilities, version))
     builder.emit(pages.benchmark_page(benchmark, baselines, version))
     builder.emit(pages.security_page())
     builder.emit(pages.not_found_page(base))
-    builder.finish_search()
-
-    return builder
 
 
 def _fresh_benchmark(path: Path, version: str) -> dict | None:
@@ -349,3 +398,29 @@ def _recorded_benchmark(path: Path) -> dict | None:
     if data.get("status") == "not_benchmarked":
         return None
     return data
+
+
+def language_links(page: Page) -> dict[str, str]:
+    """Equivalent routes for the language chooser.
+
+    Localized books are intentionally one practical volume rather than the
+    English chapter tree, so every English chapter maps to that volume.
+    """
+    prefixes = {"zh-Hans": "zh-hans/", "ja": "ja/", "ko": "ko/"}
+    route = page.route
+    if page.locale != "en":
+        route = route.removeprefix(prefixes[page.locale])
+    if route.startswith("zds/"):
+        return dict.fromkeys(("en", *prefixes), route)
+    if route == "404.html":
+        return {"en": "", **prefixes}
+    if route.startswith("book/"):
+        localized_route = "book/"
+        english_route = route if page.locale == "en" else "book/"
+    else:
+        localized_route = route
+        english_route = route
+    return {
+        "en": english_route,
+        **{locale: prefix + localized_route for locale, prefix in prefixes.items()},
+    }

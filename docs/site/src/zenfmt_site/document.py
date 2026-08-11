@@ -64,6 +64,13 @@ STYLE_CLASSES = {
     "text-decoration: underline": "underline",
 }
 
+PERMALINK_LABELS = {
+    "en": "Permalink to this section",
+    "zh-Hans": "此节的永久链接",
+    "ja": "このセクションへの固定リンク",
+    "ko": "이 섹션의 고정 링크",
+}
+
 
 class ContractError(Exception):
     """The exporter produced something this generator will not publish."""
@@ -96,10 +103,11 @@ class _Parser(HTMLParser):
     generator's output rather than the open web, and anything it surprises us
     with is meant to fail rather than be recovered."""
 
-    def __init__(self, *, page_id: str, strict: bool) -> None:
+    def __init__(self, *, page_id: str, strict: bool, locale: str) -> None:
         super().__init__(convert_charrefs=False)
         self.page_id = page_id
         self.strict = strict
+        self.locale = locale
         self.doc = Document()
         self._out: list[str] = []
         self._in_head = False
@@ -120,6 +128,8 @@ class _Parser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         mapping = dict(attrs)
 
+        if tag == "html":
+            return
         if tag == "head":
             self._in_head = True
             return
@@ -153,6 +163,8 @@ class _Parser(HTMLParser):
         self._out.append(self._render(tag, mapping, close=tag in VOID_ELEMENTS))
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "html":
+            return
         if tag == "head":
             self._in_head = False
             return
@@ -276,11 +288,14 @@ class _Parser(HTMLParser):
                 break
         self._out.append(
             f'<a class="permalink" href="#{slug}" '
-            f'aria-label="Permalink to this section">#</a>'
+            f'aria-label="{_escape_attr(self._permalink_label())}">#</a>'
         )
         self._out.append(f"</{tag}>")
         self._heading = None
         self._pending_heading_id = None
+
+    def _permalink_label(self) -> str:
+        return PERMALINK_LABELS.get(self.locale, PERMALINK_LABELS["en"])
 
     def _emit_figure(self) -> None:
         svg = "".join(self._svg_buffer)
@@ -342,9 +357,15 @@ def _escape_attr(value: str) -> str:
     )
 
 
-def parse(source: str, *, page_id: str, strict: bool = True) -> Document:
+def parse(
+    source: str,
+    *,
+    page_id: str,
+    strict: bool = True,
+    locale: str = "en",
+) -> Document:
     """Parses one Typst-generated page into a publishable document."""
-    parser = _Parser(page_id=page_id, strict=strict)
+    parser = _Parser(page_id=page_id, strict=strict, locale=locale)
     parser.feed(source)
     parser.close()
     parser.doc.body = "".join(parser._out).strip()

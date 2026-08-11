@@ -52,6 +52,12 @@ class TestRoutes:
 
 
 class TestStyleRemoval:
+    def test_document_wrapper_is_not_nested_inside_the_site_shell(self):
+        doc = parse(wrap("<p>Body</p>"), page_id="p")
+        assert "<html" not in doc.body
+        assert "<body" not in doc.body
+        assert doc.body == "<p>Body</p>"
+
     def test_a_known_inline_style_becomes_a_class(self):
         doc = parse(wrap('<code style="color: #d73948">x</code>'), page_id="p")
         assert 'class="tok-string"' in doc.body
@@ -88,6 +94,10 @@ class TestHeadings:
         # still land somewhere.
         assert 'data-legacy-id="loc-7"' in doc.body
         assert doc.headings == [(2, "hostile-by-default", "Hostile by default")]
+
+    def test_permalink_label_uses_the_document_language(self):
+        doc = parse(wrap("<h2>使い方</h2>"), page_id="p", locale="ja")
+        assert 'aria-label="このセクションへの固定リンク"' in doc.body
 
     def test_repeated_heading_text_still_yields_unique_anchors(self):
         doc = parse(wrap("<h2>Limits</h2><h3>Limits</h3>"), page_id="p")
@@ -182,6 +192,22 @@ class TestValidation:
             tmp_path, "index.html", self._page('<h1>x</h1><a href="gone/">g</a>')
         )
         assert any("does not resolve" in problem for problem in check(tmp_path))
+
+    def test_a_broken_fragment_is_reported(self, tmp_path):
+        self._site(
+            tmp_path,
+            "index.html",
+            self._page('<h1 id="home">x</h1><a href="#missing">section</a>'),
+        )
+        assert any("fragment #missing" in problem for problem in check(tmp_path))
+
+    def test_a_published_fragment_resolves(self, tmp_path):
+        self._site(
+            tmp_path,
+            "index.html",
+            self._page('<h1 id="home">x</h1><a href="#home">section</a>'),
+        )
+        assert check(tmp_path) == []
 
     def test_a_link_that_only_differs_in_case_is_reported(self, tmp_path):
         # A case-insensitive developer filesystem would resolve this and the

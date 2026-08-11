@@ -45,6 +45,13 @@ select = ["E", "W", "F", "I", "UP", "B", "S", "C4", "RET", "SIM", "RUF", "PT"]
     "RUF001", # multiplication sign is the intended human-facing ratio glyph
     "S608",   # f-strings render escaped HTML, never an SQL query
 ]
+"src/zenfmt_site/localized.py" = [
+    "E501",   # authored translations remain complete source-language sentences
+    "RUF001", # CJK punctuation is intentional and idiomatic
+]
+"src/zenfmt_site/shell.py" = [
+    "RUF001", # CJK punctuation is intentional and idiomatic
+]
 "../../tests/**" = ["S101"]
 "../../server/tests/**" = ["S101"]
 "../../benchmarks/browser/run.py" = [

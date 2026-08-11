@@ -16,6 +16,7 @@ STYLE_ELEMENT = re.compile(r"<style[\s>]", re.IGNORECASE)
 EVENT_HANDLER = re.compile(r"<[^>]+\son[a-z]+=", re.IGNORECASE)
 HREF = re.compile(r'(?:href|src)="([^"]+)"', re.IGNORECASE)
 H1 = re.compile(r"<h1[\s>]", re.IGNORECASE)
+ID = re.compile(r'\sid="([^"]+)"', re.IGNORECASE)
 IMG = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
 BANNED_LINK_TEXT = {"learn more", "click here", "here", "read more", "more"}
 LINK_TEXT = re.compile(r"<a\b[^>]*>(.*?)</a>", re.IGNORECASE | re.DOTALL)
@@ -31,13 +32,17 @@ def check(out: Path) -> list[str]:
         return [f"{out} contains no HTML"]
 
     present = {str(path.relative_to(out)) for path in out.rglob("*") if path.is_file()}
+    anchors = {
+        str(path.relative_to(out)): set(ID.findall(path.read_text(encoding="utf-8")))
+        for path in documents
+    }
 
     for path in documents:
         name = str(path.relative_to(out))
         text = path.read_text(encoding="utf-8")
         problems += _check_policy(name, text)
         problems += _check_structure(name, text)
-        problems += _check_links(name, text, present, out)
+        problems += _check_links(name, text, present, anchors, out)
     return problems
 
 
@@ -75,11 +80,20 @@ def _check_structure(name: str, text: str) -> list[str]:
     return problems
 
 
-def _check_links(name: str, text: str, present: set[str], out: Path) -> list[str]:
+def _check_links(
+    name: str,
+    text: str,
+    present: set[str],
+    anchors: dict[str, set[str]],
+    out: Path,
+) -> list[str]:
     problems = []
     document = out / name
     for target in HREF.findall(text):
-        if target.startswith(("http://", "https://", "mailto:", "#")):
+        if target.startswith(("http://", "https://", "mailto:")):
+            continue
+        if target.startswith("#"):
+            problems += _check_fragment(name, target[1:], name, anchors)
             continue
         if target.startswith("/"):
             # Only the not-found document may use a base-absolute URL, since
@@ -89,7 +103,7 @@ def _check_links(name: str, text: str, present: set[str], out: Path) -> list[str
                     f"{name}: {target!r} is base-absolute; use a relative link"
                 )
             continue
-        path, _, _fragment = target.partition("#")
+        path, _, fragment = target.partition("#")
         if not path:
             continue
         resolved = (document.parent / path).resolve()
@@ -110,4 +124,17 @@ def _check_links(name: str, text: str, present: set[str], out: Path) -> list[str
         # machine would hide is still a failure here.
         if relative not in present:
             problems.append(f"{name}: {target!r} does not resolve to a published file")
+        elif fragment:
+            problems += _check_fragment(name, fragment, relative, anchors)
     return problems
+
+
+def _check_fragment(
+    source: str,
+    fragment: str,
+    target: str,
+    anchors: dict[str, set[str]],
+) -> list[str]:
+    if target not in anchors or fragment in anchors[target]:
+        return []
+    return [f"{source}: fragment #{fragment} does not exist in {target}"]
