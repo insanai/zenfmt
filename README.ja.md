@@ -7,7 +7,7 @@ zenfmt は Zig で書かれたドキュメント変換ツールです。ある�
 
 [Pandoc](https://pandoc.org/) は、汎用ドキュメント変換ツールの便利さを示しました。zenfmt はその考え方を小さな Zig engine で探る試みです。Pandoc ほど幅広くはありませんが、compact な engine、明示的な conversion report、そして下記の形式に集中しています。
 
-**現在の release は 0.3.2 です。** Architecture は [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)、IR v2、facets、writer lowering は [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ) に記録されています。ZDS は設計記録なので英語のままです。
+**現在の release は 0.3.3 です。** Architecture は [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)、IR v2、facets、writer lowering は [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ) に記録されています。ZDS は設計記録なので英語のままです。
 
 ## できること
 

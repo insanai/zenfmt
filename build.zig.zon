@@ -1,6 +1,6 @@
 .{
     .name = .zenfmt,
-    .version = "0.3.2",
+    .version = "0.3.3",
     .fingerprint = 0x5a31e05440876fc1, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{

@@ -104,8 +104,8 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     wasm = page.get_by_role("link", name="Download WASM bundle")
     expect(wasm).to_have_attribute(
         "href",
-        "https://github.com/insanai/zenfmt/releases/download/v0.3.2/"
-        "zenfmt-0.3.2-wasm32-freestanding.tar.gz",
+        "https://github.com/insanai/zenfmt/releases/download/v0.3.3/"
+        "zenfmt-0.3.3-wasm32-freestanding.tar.gz",
     )
     assert page.locator(".download-button").count() >= 11
 
@@ -223,8 +223,8 @@ def test_server_and_recorded_benchmarks_are_explained(
 
     page.goto(f"{site_url}benchmark/")
     baseline = page.locator(".reference-baseline")
-    expect(baseline).to_contain_text("Current release native lens: zenfmt 0.3.2")
-    expect(baseline).to_contain_text("Current release server lens: zenfmt 0.3.2")
+    expect(baseline).to_contain_text("Earlier reference native lens: zenfmt 0.3.2")
+    expect(baseline).to_contain_text("Earlier reference server lens: zenfmt 0.3.2")
     expect(baseline).to_contain_text("Native CLI benchmark")
     expect(baseline).to_contain_text("Speed")
     expect(baseline).to_contain_text("CPU use")
