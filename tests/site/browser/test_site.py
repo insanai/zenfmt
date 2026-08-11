@@ -223,8 +223,8 @@ def test_server_and_recorded_benchmarks_are_explained(
 
     page.goto(f"{site_url}benchmark/")
     baseline = page.locator(".reference-baseline")
-    expect(baseline).to_contain_text("Earlier reference native lens: zenfmt 0.3.2")
-    expect(baseline).to_contain_text("Earlier reference server lens: zenfmt 0.3.2")
+    expect(baseline).to_contain_text("Current release native lens: zenfmt 0.3.3")
+    expect(baseline).to_contain_text("Current release server lens: zenfmt 0.3.3")
     expect(baseline).to_contain_text("Native CLI benchmark")
     expect(baseline).to_contain_text("Speed")
     expect(baseline).to_contain_text("CPU use")

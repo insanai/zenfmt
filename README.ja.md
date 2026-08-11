@@ -149,9 +149,9 @@ reference benchmark は 16 個の実在 document を変換し、speed、CPU use�
 
 | Native CLI comparison | Shared files | Speed | CPU use | Peak memory |
 |---|---:|---:|---:|---:|
-| AnyDoc / zenfmt | 14 | 7.0x | 7.9x | 10.2x |
-| Pandoc / zenfmt | 6 | 18.1x | 16.6x | 16.6x |
-| Docling parser only / zenfmt | 5 | 195.9x | 209.1x | 47.6x |
+| AnyDoc / zenfmt | 14 | 6.9x | 7.9x | 10.1x |
+| Pandoc / zenfmt | 6 | 18.2x | 16.5x | 16.6x |
+| Docling parser only / zenfmt | 5 | 190.4x | 205.5x | 47.5x |
 
 これらは 1 台の一般的な Apple Silicon machine と小さな固定 corpus から得た geometric mean です。参考値であり、quality score やすべての document への約束ではありません。Docling は model free parser のみを使い、OCR、VLM、ASR、layout model、table model、enrichment、accelerator は無効です。
 

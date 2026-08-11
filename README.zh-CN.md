@@ -151,9 +151,9 @@ reference benchmark 转换 16 个真实文档，分别报告 speed、CPU use 和
 
 | Native CLI comparison | Shared files | Speed | CPU use | Peak memory |
 |---|---:|---:|---:|---:|
-| AnyDoc / zenfmt | 14 | 7.0x | 7.9x | 10.2x |
-| Pandoc / zenfmt | 6 | 18.1x | 16.6x | 16.6x |
-| Docling parser only / zenfmt | 5 | 195.9x | 209.1x | 47.6x |
+| AnyDoc / zenfmt | 14 | 6.9x | 7.9x | 10.1x |
+| Pandoc / zenfmt | 6 | 18.2x | 16.5x | 16.6x |
+| Docling parser only / zenfmt | 5 | 190.4x | 205.5x | 47.5x |
 
 这些 geometric means 来自一台普通 Apple Silicon machine 和一个固定的小型 corpus。它们是参考值，不是质量分数，也不保证所有文档都得到相同结果。Docling 只使用 model free parser。OCR、VLM、ASR、layout model、table model、enrichment 和 accelerator 都已关闭。
 
