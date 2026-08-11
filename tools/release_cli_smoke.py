@@ -141,7 +141,8 @@ def smoke(binary_source: Path, version: str, revision: str) -> None:
             assert status == 200
             html = shell.decode("utf-8")
             assets = set(re.findall(r"/assets/[A-Za-z0-9_.-]+", html))
-            assert len(assets) == 3, assets
+            suffixes = {Path(asset).suffix for asset in assets}
+            assert suffixes == {".css", ".js", ".wasm"}, assets
             for asset in assets:
                 asset_status, asset_body, _ = request(base + asset)
                 assert asset_status == 200 and asset_body
