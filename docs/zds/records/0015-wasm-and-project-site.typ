@@ -1375,7 +1375,8 @@ screen-reader reading order are still release gates.
 
 Each ZDS PDF retains its stable URL. The homepage, help menu, book header, ZDS
 index, and download page link the book PDF. Each HTML ZDS links its own PDF and
-source. PDF download size is visible before activation.
+source. The ZDS PDFs are published through GitHub Pages and are not duplicated
+as GitHub Release assets. PDF download size is visible before activation.
 
 = Benchmark Dashboard
 
@@ -1951,9 +1952,11 @@ are rebuilt at 0.2.0 alongside:
 - `zenfmt-0.2.0-wasm32-freestanding.wasm`, byte-for-byte identical to the
   module inside that bundle and available as its own release target asset;
 - `zenfmt-book-0.2.0.pdf` plus stable Pages alias;
-- the full versioned ZDS PDF set including ZDS 0015;
 - `SHA256SUMS`, provenance attestations, SBOM/artifact manifest, and release
   notes that state browser limits and support.
+
+Each ZDS PDF remains available from its stable GitHub Pages address. Individual
+ZDS PDFs are not included in the GitHub Release asset set.
 
 The release workflow verifies the WASM archive in a clean temporary static
 server and real browsers, verifies the PyPI package after publication, verifies

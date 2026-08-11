@@ -288,7 +288,7 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: ${{ env.UV_VERSION }}
-      - name: Build the book and every record
+      - name: Build the book and validate every record
         shell: bash
         run: |
           set -eux
@@ -297,11 +297,10 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           cp docs/build/zenfmt-book.pdf "dist/zenfmt-book-$version.pdf"
-          for pdf in docs/build/zds-[0-9]*.pdf; do cp "$pdf" dist/; done
       - uses: actions/upload-artifact@v7
         with:
           name: documents
-          path: dist/*.pdf
+          path: dist/zenfmt-book-*.pdf
 
   publish-pypi:
     name: Publish Python artifacts to PyPI
@@ -432,7 +431,7 @@ jobs:
           test "$(find release -maxdepth 1 -name 'zenfmt-*.zip' | wc -l)" -eq 1
           test -f "release/zenfmt-$version-wasm32-freestanding.wasm"
           test -f "release/zenfmt-book-$version.pdf"
-          test "$(find release -maxdepth 1 -name 'zds-*.pdf' | wc -l)" -ge 15
+          test "$(find release -maxdepth 1 -name 'zds-*.pdf' | wc -l)" -eq 0
           python3 tools/release_manifest.py release \
             --version "$version" --target multi-platform \
             --out "zenfmt-$version-artifact-manifest.json"
