@@ -33,7 +33,10 @@ def test_download_is_the_markdown_artifact(browser: Browser, site_url: str) -> N
     page.goto(site_url)
     expect(page.locator("[data-status]")).to_have_text("Ready. Choose a document.")
 
-    page.locator("[data-source]").set_input_files("benchmarks/corpus/report.docx")
+    source = b"<h1>Converted heading</h1><p>Body text.</p>"
+    page.locator("[data-source]").set_input_files(
+        {"name": "report.html", "mimeType": "text/html", "buffer": source}
+    )
     expect(page.locator('[data-status][data-state="complete"]')).to_contain_text(
         "converted locally"
     )
@@ -44,6 +47,7 @@ def test_download_is_the_markdown_artifact(browser: Browser, site_url: str) -> N
 
     assert download.suggested_filename == "report.md"
     assert download.path().read_text(encoding="utf-8") == expected
+    assert download.path().read_bytes() != source
     context.close()
 
 
