@@ -7,7 +7,7 @@
 #let zds-authors = ("Vikrant Rathore", "Ronak Rathore (assistance)",)
 #let zds-category = "Implementation Specification"
 #let zds-status = "Committed"
-#let zds-last-updated = "2026-08-10"
+#let zds-last-updated = "2026-08-11"
 
 #import "../../shared/zds.typ": zds-document
 
@@ -601,7 +601,8 @@ scope, and everything in this list is testable without a network.
 = The REST and Streaming API
 
 All application routes live under `/api/v1`; the operational plane
-(`/healthz`, `/readyz`, `/metrics`) and the interface live at the root.
+(`/healthz`, `/readyz`, `/metrics`), the OpenAPI document, and the interface
+live at the root.
 Versioning is by path segment; `v1` semantics are frozen once the record
 commits, and breaking changes require `v2` alongside `v1`.
 
@@ -646,9 +647,12 @@ commits, and breaking changes require `v2` alongside `v1`.
     readiness as defined above.],
   [`GET /metrics`], [anonymous], [both], [Prometheus text exposition on the
     main listener.],
+  [`GET /openapi.json`], [anonymous], [both], [The embedded OpenAPI 3.1
+    contract. It is available without a session and describes secure mode
+    authentication where it applies.],
   [interface routes], [per page], [both], [`GET /`, `/login`, `/account`,
-    `/admin/...`, and `/assets/{name}`; asset names carry content hashes
-    and are immutable.],
+    `/docs`, `/admin/...`, and `/assets/{name}`. Asset names carry content
+    hashes and are immutable.],
 )
 
 == The conversion request
@@ -970,9 +974,10 @@ uses to serve its standard-library documentation (`zig std`; `lib/docs`
 and `lib/compiler/std-docs.zig` in the Zig distribution): a minimal
 static HTML shell, one fixed JavaScript glue file, and a WebAssembly
 module compiled from Zig. The module owns every page, every fragment of
-markup, and all interface state. The server embeds all four artifacts
-via `@embedFile` and serves them from memory at hash-suffixed immutable
-paths; nothing at request time reads a filesystem or a CDN.
+markup, and all interface state. The server embeds the shell, glue, two
+stylesheets, OpenAPI document, and WebAssembly module via `@embedFile`.
+It serves browser assets from memory at immutable paths that contain content
+hashes. Nothing at request time reads a filesystem or a CDN.
 
 #table(
   columns: (auto, auto, 1fr),
@@ -986,8 +991,13 @@ paths; nothing at request time reads a filesystem or a CDN.
     browser events in, executes the command list out. Infrastructure
     only: no markup, no route names, no form logic, no zenfmt
     knowledge.],
-  [`assets/zenfmt-ui.css`], [committed, generated offline], [The pinned
-    Tailwind 4 + daisyUI 5 build (below).],
+  [`assets/daisyui-5.0.45.css`], [committed, vendored], [The pinned daisyUI
+    component and theme foundation.],
+  [`assets/layout.css`], [committed, first party], [The Material style
+    surfaces, interaction states, responsive layout, and editorial
+    typography.],
+  [`openapi.json`], [committed, static], [The OpenAPI 3.1 contract served at
+    `/openapi.json` and linked from the interface.],
   [`zenfmt_server_ui.wasm`], [built by the graph], [Everything else:
     routes, state, rendering, validation, interaction.],
 )
@@ -1017,8 +1027,8 @@ readers; the ui module carries none).
 Inside, the module is an ordinary bounded application in the ZDS 0002
 style:
 
-- a route enum (converter, login, account, admin users, admin audit,
-  admin status) with path-based navigation: the server serves the same
+- a route enum (converter, API docs, login, account, admin users, admin audit,
+  admin status) with path based navigation: the server serves the same
   shell at every page path, the glue reports `location.pathname` at
   startup and on history traversal, and the module's `navigate` command
   pushes a new path onto the history without a reload;
@@ -1063,7 +1073,7 @@ instantiation. A mismatch is a load failure rather than a guess (the
     `action` (the `data-action` name of the clicked or submitted
     element plus its serialized form fields), `file` (name, size,
     bytes copied into module memory), `fetch_done` (request id, status,
-    body).],
+    content type, body).],
 )
 
 The network stays in the glue because a freestanding wasm module has no
@@ -1075,20 +1085,25 @@ endpoints, which keeps the API honest and the interface replaceable.
 
 == daisyUI without a framework
 
-daisyUI 5 is a CSS artifact: component classes over Tailwind utilities,
-with no JavaScript of its own. It styles wasm-rendered markup exactly
-as it styles server-rendered markup. The stylesheet does not know who
-wrote the HTML. The stylesheet remains a committed artifact generated
-offline by a pinned Tailwind 4 + daisyUI 5 standalone-CLI run
-(`server/ui/THEME.md` records the exact command, versions, and
-digests); regenerating it is a documented maintainer action, and CI
-never runs npm or a CSS toolchain. Components that need behavior map
+daisyUI 5 is a CSS artifact with no JavaScript of its own. It styles markup
+from the WebAssembly module without knowing who wrote the HTML. The vendor
+stylesheet and the first party visual system are committed separately.
+`server/ui/THEME.md` records the exact source, versions, and digests.
+Regeneration is a documented maintainer action. CI never runs npm or a CSS
+toolchain. Components that need behavior map
 to native elements plus one command each: modals are `<dialog>` driven
 by `dialog_open`/`dialog_close`, dropdowns are `<details>`, tabs are
-radio inputs, toasts are timed `patch` commands. The visual language is
-unchanged: daisyUI's semantic components (navbar, card, table, alert,
-badge, modal, stat, toast) in the daisyUI `light` and `dark` themes. A compact
-selector in the navigation offers System, Light, and Dark in that order.
+radio inputs, toasts are timed `patch` commands.
+
+The visual language combines Material style surfaces, elevation, visible
+state, and interaction sizes with bold editorial typography and generous
+spacing. Routine conversion presents one clear sequence: choose a document,
+keep the useful defaults, and convert. Detailed controls remain available
+but visually secondary. Account changes and destructive administration use
+explicit labels, consequence text, and confirmation. This keeps familiar
+work immediate while giving higher risk decisions room for deliberation.
+
+A compact selector in the navigation offers System, Light, and Dark in that order.
 System is the default and follows `prefers-color-scheme` without a reload.
 An explicit choice persists in local storage under one versioned key. The
 glue applies a validated stored choice before it loads the wasm module, which
@@ -1096,6 +1111,12 @@ prevents a flash of the wrong theme. If storage is unavailable or corrupt,
 the glue reports `system` and does not fail interface startup. One accent
 color and a small layout file complete the visual language. The result must
 feel modern and calm rather than resemble a dense monitoring dashboard.
+
+The `/docs` page is public in both modes and links the machine readable
+OpenAPI document. In secure mode, a visitor without a session may read these
+docs. A visit to a protected account or administration page goes to sign in.
+The docs explain session and bearer authentication without exposing account
+data.
 
 == JavaScript requirement
 

@@ -78,6 +78,8 @@ const mode_routes = [_]ModeRoute{
     open(.GET, "/admin/users", .anonymous, ui.shellHandler),
     open(.GET, "/admin/audit", .anonymous, ui.shellHandler),
     open(.GET, "/admin/status", .anonymous, ui.shellHandler),
+    open(.GET, "/docs", .anonymous, ui.shellHandler),
+    open(.GET, "/openapi.json", .anonymous, ui.openapiHandler),
     open(.GET, "/assets/{name}", .anonymous, ui.assetHandler),
     // Secure-only: sessions, keys, users, audit.
     secured(.POST, "/api/v1/session", .anonymous, secure.login),
@@ -650,5 +652,5 @@ test "route labels map the table" {
 }
 
 test "the route count is pinned" {
-    try testing.expectEqual(@as(usize, 26), route_count);
+    try testing.expectEqual(@as(usize, 28), route_count);
 }

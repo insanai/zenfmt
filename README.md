@@ -8,7 +8,7 @@ can be. zenfmt is a small attempt to explore that idea in Zig. It does not have
 Pandoc's breadth; it concentrates on a compact engine, explicit conversion
 reports, and the formats listed below.
 
-**Current release: 0.3.1.** The architecture is specified in
+**Current release: 0.3.2.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and the IR v2
 layer, facets, and writer lowering in
 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ); the library, CLI,
@@ -97,7 +97,7 @@ archives and the complete wheel matrix are available from
 
 ## Browser and WebAssembly
 
-Release 0.3.1 includes the self-contained `zenfmt serve` service alongside the
+Release 0.3.2 includes the self-contained `zenfmt serve` service alongside the
 first-class `wasm32-freestanding` distribution and the static project site
 specified by [ZDS 0015](docs/zds/records/0015-wasm-and-project-site.typ).
 The browser module has no host imports: document conversion runs in a dedicated
@@ -113,7 +113,7 @@ zig build site-browser-test  # real Chromium conversion and interaction suite
 
 The versioned WASM bundle, standalone module, native CLI archives, Python
 wheels, book PDF, and complete ZDS PDF set are published together on the
-0.3.1 GitHub release. The site exposes direct target downloads and keeps the
+0.3.2 GitHub release. The site exposes direct target downloads and keeps the
 Book and ZDS in the help path from every conversion state.
 
 ## Server
@@ -130,11 +130,15 @@ curl -s -T report.docx \
 zenfmt serve --secure --data-dir ./zenfmt-data
 ```
 
+Open `http://127.0.0.1:8998/docs` for the integrated API reference or fetch
+`/openapi.json` for the OpenAPI 3.1 contract. The reference remains public in
+secure mode, while account and administration pages require sign in.
+
 The released executable embeds the converter, server, database migrations,
-stylesheet, JavaScript bridge, and interface WebAssembly. It does not need an
-adjacent bundle or a Java, Python, npm, OCR, VLM, or model runtime. Open mode
-is stateless and loopback-only by default. Secure mode creates only the data
-directory selected by the operator.
+OpenAPI document, stylesheets, JavaScript bridge, HTML shell, and interface
+WebAssembly. It does not need an adjacent bundle or a Java, Python, npm, OCR,
+VLM, or model runtime. Open mode is stateless and loopback-only by default.
+Secure mode creates only the data directory selected by the operator.
 
 Five properties drive the design, argued in ZDS 0002 and ZDS 0013:
 

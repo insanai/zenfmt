@@ -1,0 +1,292 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "zenfmt server API",
+    "version": "0.3.2",
+    "description": "Document conversion, capability discovery, health, and secure mode administration. Open mode accepts conversion requests without credentials. Secure mode accepts a browser session or a bearer API key."
+  },
+  "servers": [
+    { "url": "/", "description": "This zenfmt server" }
+  ],
+  "tags": [
+    { "name": "Conversion" },
+    { "name": "Discovery" },
+    { "name": "Account" },
+    { "name": "Administration" },
+    { "name": "Operations" }
+  ],
+  "paths": {
+    "/api/v1/convert": {
+      "put": { "$ref": "#/paths/~1api~1v1~1convert/post" },
+      "post": {
+        "tags": ["Conversion"],
+        "summary": "Convert one document",
+        "description": "Send the document as the request body or as the file field of a multipart form. Accept application/json for a structured envelope or text/markdown for artifact bytes.",
+        "parameters": [
+          { "$ref": "#/components/parameters/To" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/Strict" },
+          { "$ref": "#/components/parameters/InputName" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": { "schema": { "type": "string", "format": "binary" } },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": { "file": { "type": "string", "format": "binary" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The converted artifact or structured conversion envelope.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Conversion" } },
+              "text/markdown": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Failure" },
+          "413": { "$ref": "#/components/responses/Failure" },
+          "422": { "$ref": "#/components/responses/Failure" }
+        },
+        "security": [{}, { "bearerApiKey": [] }, { "sessionCookie": [] }]
+      }
+    },
+    "/api/v1/convert/batch": {
+      "post": {
+        "tags": ["Conversion"],
+        "summary": "Convert a batch as an NDJSON stream",
+        "parameters": [
+          { "$ref": "#/components/parameters/To" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/Strict" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": { "type": "string", "format": "binary" }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One conversion envelope per line.",
+            "content": { "application/x-ndjson": { "schema": { "type": "string" } } }
+          }
+        },
+        "security": [{}, { "bearerApiKey": [] }, { "sessionCookie": [] }]
+      }
+    },
+    "/api/v1/formats": {
+      "get": {
+        "tags": ["Discovery"],
+        "summary": "List compiled formats and active limits",
+        "responses": { "200": { "description": "Capability document" } },
+        "security": [{}, { "bearerApiKey": [] }, { "sessionCookie": [] }]
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "tags": ["Discovery"],
+        "summary": "Read version, mode, uptime, and conversion capacity",
+        "responses": { "200": { "description": "Server status" } },
+        "security": [{}, { "bearerApiKey": [] }, { "sessionCookie": [] }]
+      }
+    },
+    "/api/v1/session": {
+      "get": {
+        "tags": ["Account"],
+        "summary": "Read the current browser session",
+        "responses": { "200": { "description": "Session principal and CSRF token" } },
+        "security": [{ "sessionCookie": [] }]
+      },
+      "post": {
+        "tags": ["Account"],
+        "summary": "Sign in",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "password"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "password": { "type": "string", "format": "password" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Signed in" }, "401": { "$ref": "#/components/responses/Failure" } }
+      },
+      "delete": {
+        "tags": ["Account"],
+        "summary": "Sign out",
+        "parameters": [{ "$ref": "#/components/parameters/Csrf" }],
+        "responses": { "204": { "description": "Signed out" } },
+        "security": [{ "sessionCookie": [] }]
+      }
+    },
+    "/api/v1/session/password": {
+      "post": {
+        "tags": ["Account"],
+        "summary": "Change the current account password",
+        "parameters": [{ "$ref": "#/components/parameters/Csrf" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["new_password"], "properties": { "new_password": { "type": "string", "format": "password", "minLength": 8 } } } } } },
+        "responses": { "204": { "description": "Password changed" } },
+        "security": [{ "sessionCookie": [] }]
+      }
+    },
+    "/api/v1/keys": {
+      "get": {
+        "tags": ["Account"],
+        "summary": "List API keys for the current account",
+        "responses": { "200": { "description": "API key list" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      },
+      "post": {
+        "tags": ["Account"],
+        "summary": "Create an API key",
+        "parameters": [{ "$ref": "#/components/parameters/Csrf" }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "label": { "type": "string", "maxLength": 64 } } } } } },
+        "responses": { "200": { "description": "The new secret, shown once" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      }
+    },
+    "/api/v1/keys/{id}": {
+      "delete": {
+        "tags": ["Account"],
+        "summary": "Revoke an API key",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Csrf" }
+        ],
+        "responses": { "204": { "description": "Key revoked" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      }
+    },
+    "/api/v1/users": {
+      "get": {
+        "tags": ["Administration"],
+        "summary": "List users",
+        "responses": { "200": { "description": "User list" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      },
+      "post": {
+        "tags": ["Administration"],
+        "summary": "Create a user",
+        "parameters": [{ "$ref": "#/components/parameters/Csrf" }],
+        "responses": { "200": { "description": "User and one time password" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      }
+    },
+    "/api/v1/users/{name}": {
+      "patch": {
+        "tags": ["Administration"],
+        "summary": "Update a user or reset a password",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Csrf" }
+        ],
+        "responses": { "200": { "description": "One time password created" }, "204": { "description": "User updated" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      },
+      "delete": {
+        "tags": ["Administration"],
+        "summary": "Delete a user",
+        "parameters": [
+          { "name": "name", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Csrf" }
+        ],
+        "responses": { "204": { "description": "User deleted" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      }
+    },
+    "/api/v1/audit": {
+      "get": {
+        "tags": ["Administration"],
+        "summary": "Read the bounded audit log",
+        "responses": { "200": { "description": "Audit records" } },
+        "security": [{ "sessionCookie": [] }, { "bearerApiKey": [] }]
+      }
+    },
+    "/healthz": {
+      "get": { "tags": ["Operations"], "summary": "Liveness probe", "responses": { "200": { "description": "Process is live" } } }
+    },
+    "/readyz": {
+      "get": { "tags": ["Operations"], "summary": "Readiness probe", "responses": { "200": { "description": "Server is ready" }, "503": { "description": "Server is not ready" } } }
+    },
+    "/metrics": {
+      "get": { "tags": ["Operations"], "summary": "Prometheus metrics", "responses": { "200": { "description": "Prometheus text exposition" } } }
+    },
+    "/openapi.json": {
+      "get": { "tags": ["Discovery"], "summary": "Download this OpenAPI document", "responses": { "200": { "description": "OpenAPI 3.1 document" } } }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerApiKey": { "type": "http", "scheme": "bearer", "description": "A key in zfk_<id>.<secret> form." },
+      "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "zenfmt_session" }
+    },
+    "parameters": {
+      "To": { "name": "to", "in": "query", "schema": { "type": "string", "default": "markdown" }, "description": "Output format." },
+      "From": { "name": "from", "in": "query", "schema": { "type": "string" }, "description": "Optional input format override." },
+      "Strict": { "name": "strict", "in": "query", "schema": { "type": "string", "enum": ["content", "structure", "exact"] }, "description": "Optional strictness grade." },
+      "InputName": { "name": "X-Zenfmt-Name", "in": "header", "schema": { "type": "string" }, "description": "Input name when the body is not multipart." },
+      "Csrf": { "name": "X-Zenfmt-CSRF", "in": "header", "schema": { "type": "string" }, "description": "Required for state changes authenticated by a browser session. Bearer requests do not use it." }
+    },
+    "responses": {
+      "Failure": {
+        "description": "Structured Elm style diagnostic.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConversionFailure" } } }
+      }
+    },
+    "schemas": {
+      "Conversion": {
+        "type": "object",
+        "required": ["status", "artifact", "artifact_name", "reports", "exit_class"],
+        "properties": {
+          "status": { "const": "success" },
+          "artifact": { "type": "string" },
+          "artifact_name": { "type": "string" },
+          "resources": { "type": "array", "items": { "type": "object" } },
+          "manifest": {},
+          "reports": { "type": "array", "items": { "$ref": "#/components/schemas/Report" } },
+          "exit_class": { "type": "string" },
+          "source_format": { "type": ["string", "null"] },
+          "output_format": { "type": "string" }
+        }
+      },
+      "ConversionFailure": {
+        "type": "object",
+        "required": ["status", "reports", "exit_class"],
+        "properties": {
+          "status": { "const": "failed" },
+          "reports": { "type": "array", "items": { "$ref": "#/components/schemas/Report" } },
+          "exit_class": { "type": "string" }
+        }
+      },
+      "Report": {
+        "type": "object",
+        "required": ["severity", "code", "title", "problem", "consequence", "directions"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["error", "warning", "note"] },
+          "code": { "type": "string" },
+          "title": { "type": "string" },
+          "problem": { "type": "string" },
+          "consequence": { "type": "string" },
+          "directions": { "type": "array", "items": { "type": "object" } }
+        }
+      }
+    }
+  }
+}

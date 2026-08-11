@@ -1,11 +1,10 @@
 //! The embedded web interface (ZDS 0016, The Web Interface).
 //!
-//! Four artifacts, embedded at compile time and served from memory: the
-//! static shell, the fixed glue, the generated stylesheet, and the ui
-//! module compiled to WebAssembly. Asset names carry content hashes and
-//! are immutable; the shell is rendered once at startup with those names
-//! resolved. Nothing at request time reads a filesystem, so path
-//! traversal has no target.
+//! The shell, fixed glue, vendor and first party stylesheets, OpenAPI
+//! document, and ui WebAssembly module are embedded at compile time and
+//! served from memory. Asset names carry content hashes and are immutable.
+//! The shell is rendered once at startup with those names resolved. Nothing
+//! at request time reads a filesystem, so path traversal has no target.
 
 const std = @import("std");
 const assert = std.debug.assert;
@@ -19,8 +18,10 @@ const HandlerError = zenserve.HandlerError;
 
 const shell_template = @embedFile("ui_shell");
 const glue_js = @embedFile("ui_glue");
+const vendor_stylesheet = @embedFile("ui_css_vendor");
 const stylesheet = @embedFile("ui_css");
 const ui_wasm = @embedFile("ui_wasm");
+const openapi_json = @embedFile("openapi_json");
 
 /// The record's exact content security policy: `'wasm-unsafe-eval'` is the
 /// price of instantiating WebAssembly and permits no JavaScript eval.
@@ -44,6 +45,7 @@ const AssetName = struct {
 /// startup.
 pub const Assets = struct {
     shell_html: []const u8,
+    vendor_css_name: AssetName,
     css_name: AssetName,
     js_name: AssetName,
     wasm_name: AssetName,
@@ -51,6 +53,7 @@ pub const Assets = struct {
     pub fn init(gpa: std.mem.Allocator) !Assets {
         var assets: Assets = .{
             .shell_html = &.{},
+            .vendor_css_name = assetName("daisyui-", ".css", vendor_stylesheet),
             .css_name = assetName("zenfmt-ui-", ".css", stylesheet),
             .js_name = assetName("zenfmt-ui-", ".js", glue_js),
             .wasm_name = assetName("zenfmt-ui-", ".wasm", ui_wasm),
@@ -69,6 +72,9 @@ pub const Assets = struct {
         bytes: []const u8,
         content_type: []const u8,
     } {
+        if (std.mem.eql(u8, name, assets.vendor_css_name.slice())) {
+            return .{ .bytes = vendor_stylesheet, .content_type = "text/css; charset=utf-8" };
+        }
         if (std.mem.eql(u8, name, assets.css_name.slice())) {
             return .{ .bytes = stylesheet, .content_type = "text/css; charset=utf-8" };
         }
@@ -112,7 +118,9 @@ fn renderShell(gpa: std.mem.Allocator, assets: *const Assets) ![]const u8 {
         try out.writer.writeAll(rest[0..start]);
         const end = std.mem.indexOf(u8, rest[start..], "}}") orelse return error.BadShell;
         const key = rest[start + 2 .. start + end];
-        const name = if (std.mem.eql(u8, key, "CSS"))
+        const name = if (std.mem.eql(u8, key, "CSS_VENDOR"))
+            assets.vendor_css_name.slice()
+        else if (std.mem.eql(u8, key, "CSS"))
             assets.css_name.slice()
         else if (std.mem.eql(u8, key, "JS"))
             assets.js_name.slice()
@@ -159,24 +167,41 @@ pub fn assetHandler(ctx: *Context) HandlerError!void {
     }, asset.bytes);
 }
 
+pub fn openapiHandler(ctx: *Context) HandlerError!void {
+    const app = ctx.appAs(app_mod.App);
+    if (!app.options.ui) {
+        return app_mod.respondEntry(ctx, reports.unknown_route, &.{});
+    }
+    try ctx.respondBytes(.ok, &.{
+        .{ .name = "content-type", .value = "application/json; charset=utf-8" },
+        .{ .name = "cache-control", .value = "public, max-age=3600" },
+    }, openapi_json);
+}
+
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
 
-test "the embedded stylesheet matches the manifest digest" {
-    // MANIFEST.md pins this digest; a stylesheet regeneration is a
-    // reviewed diff of file plus digest, never a silent swap.
+fn expectDigest(bytes: []const u8, expected: []const u8) !void {
     var digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash(stylesheet, &digest, .{});
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
     var hex: [64]u8 = undefined;
     for (digest, 0..) |byte, i| {
         const alphabet = "0123456789abcdef";
         hex[i * 2] = alphabet[byte >> 4];
         hex[i * 2 + 1] = alphabet[byte & 0xf];
     }
-    try testing.expectEqualStrings(
-        "3366788f1976e8060c5265354411022ed073d77ebe374edf303cb8c3becccf20",
-        &hex,
+    try testing.expectEqualStrings(expected, &hex);
+}
+
+test "the embedded stylesheets match the manifest digests" {
+    try expectDigest(
+        vendor_stylesheet,
+        "33503bcb77d31db9600a0acadf428eaa4817e9a17be359ad2b6e031b6f83d92e",
+    );
+    try expectDigest(
+        stylesheet,
+        "153513d57d0d2bf02713928ae89fd02b272f72781d440235d51e8058fa6a69a9",
     );
 }
 
@@ -198,6 +223,7 @@ test "the rendered shell references every asset and keeps the noscript page" {
     defer assets.deinit(testing.allocator);
     const html = assets.shell_html;
     try testing.expect(std.mem.indexOf(u8, html, "{{") == null);
+    try testing.expect(std.mem.indexOf(u8, html, assets.vendor_css_name.slice()) != null);
     try testing.expect(std.mem.indexOf(u8, html, assets.css_name.slice()) != null);
     try testing.expect(std.mem.indexOf(u8, html, assets.js_name.slice()) != null);
     try testing.expect(std.mem.indexOf(u8, html, assets.wasm_name.slice()) != null);
@@ -205,9 +231,10 @@ test "the rendered shell references every asset and keeps the noscript page" {
     try testing.expect(std.mem.indexOf(u8, html, "curl -s -T") != null);
 }
 
-test "lookup answers exactly the three assets" {
+test "lookup answers exactly the four assets" {
     var assets = try Assets.init(testing.allocator);
     defer assets.deinit(testing.allocator);
+    try testing.expect(assets.lookup(assets.vendor_css_name.slice()) != null);
     try testing.expect(assets.lookup(assets.css_name.slice()) != null);
     try testing.expect(assets.lookup(assets.wasm_name.slice()) != null);
     try testing.expect(assets.lookup("nope.css") == null);
@@ -215,4 +242,18 @@ test "lookup answers exactly the three assets" {
         "application/wasm",
         assets.lookup(assets.wasm_name.slice()).?.content_type,
     );
+}
+
+test "the OpenAPI document is valid JSON and names the conversion route" {
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        testing.allocator,
+        openapi_json,
+        .{},
+    );
+    defer parsed.deinit();
+    const root = parsed.value.object;
+    try testing.expectEqualStrings("3.1.0", root.get("openapi").?.string);
+    const paths = root.get("paths").?.object;
+    try testing.expect(paths.contains("/api/v1/convert"));
 }

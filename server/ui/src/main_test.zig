@@ -189,3 +189,44 @@ test "hostile strings in the envelope are escaped by construction" {
     try testing.expect(std.mem.indexOf(u8, commands, "<script>") == null);
     try testing.expect(std.mem.indexOf(u8, commands, "&lt;script&gt;") != null);
 }
+
+test "a successful artifact response remains usable without an envelope" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var state = testState(arena);
+    _ = try initOpen(arena, &state);
+    _ = try main.handleEvent(arena, &state,
+        \\{"event":"file","name":"brief.pdf","size":4096}
+    );
+    _ = try main.handleEvent(arena, &state,
+        \\{"event":"action","name":"convert","fields":{"to":"markdown"}}
+    );
+
+    const commands = try main.handleEvent(arena, &state,
+        \\{"event":"fetch_done","id":2,"status":200,
+        \\ "content_type":"text/markdown; charset=utf-8","body":"# Brief"}
+    );
+    try testing.expect(state.result != null);
+    try testing.expectEqualStrings("brief.md", state.result.?.artifact_name);
+    try testing.expectEqualStrings("# Brief", state.result.?.artifact);
+    try testing.expect(std.mem.indexOf(u8, commands, "brief.md") != null);
+}
+
+test "API docs stay public when secure mode has no session" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var state = testState(arena);
+
+    _ = try main.handleEvent(arena, &state,
+        \\{"event":"init","path":"/docs","stored_theme":"system",
+        \\ "system_scheme":"light"}
+    );
+    const commands = try main.handleEvent(arena, &state,
+        \\{"event":"fetch_done","id":3,"status":401,"body":""}
+    );
+    try testing.expectEqualStrings("/docs", state.path);
+    try testing.expect(std.mem.indexOf(u8, commands, "API reference") != null);
+    try testing.expect(std.mem.indexOf(u8, commands, "navigate") == null);
+}

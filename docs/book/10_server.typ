@@ -74,6 +74,11 @@ writers, extensions, and the limits this deployment actually enforces.
 `GET /api/v1/status` returns the version, mode, uptime, and bounded
 counters.
 
+`GET /openapi.json` returns the embedded OpenAPI 3.1 contract. The web
+interface presents its practical entry points at `/docs`, which remains
+available without a session in both modes. Protected account and
+administration pages still require sign in.
+
 The operational plane is unauthenticated in both modes and exposes no
 data beyond check names: `GET /healthz` is liveness, `GET /readyz` is
 readiness (the worker pool and, in secure mode, a store ping), and
@@ -120,13 +125,21 @@ that renders every page. The module owns all interface state and markup;
 the glue holds no product logic, only the browser bridge. Styling is
 vendored daisyUI 5 over Tailwind 4 — a committed stylesheet, generated
 offline, with no CDN, no npm build at CI time, and no third-party
-runtime code. A System / Light / Dark theme selector follows the
-operating system by default and remembers an explicit choice.
+runtime code. Material style surfaces, elevation, visible state, and large
+interaction targets provide the component language. Bold editorial
+typography and generous spacing keep the page easy to scan. Routine
+conversion has one clear path from document selection to the Convert
+button. Detailed controls remain visually secondary, while account changes
+and destructive administration ask for deliberate confirmation. A System /
+Light / Dark theme selector follows the operating system by default and
+remembers an explicit choice.
 
 The interface is the first client of the public REST API: it calls
 exactly the documented routes, with no private endpoints. It requires
 JavaScript and WebAssembly; the `<noscript>` page shows the copy-pasteable
 `curl` line, because the API, not the interface, is the no-script path.
+The OpenAPI document, vendor styles, first party styles, JavaScript bridge,
+HTML shell, and interface WebAssembly are embedded in the same executable.
 
 == Deployment
 

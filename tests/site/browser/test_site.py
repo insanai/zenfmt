@@ -27,6 +27,26 @@ def test_worker_conversion_is_local(browser: Browser, site_url: str) -> None:
     context.close()
 
 
+def test_download_is_the_markdown_artifact(browser: Browser, site_url: str) -> None:
+    context = browser.new_context(accept_downloads=True)
+    page = context.new_page()
+    page.goto(site_url)
+    expect(page.locator("[data-status]")).to_have_text("Ready. Choose a document.")
+
+    page.locator("[data-source]").set_input_files("benchmarks/corpus/report.docx")
+    expect(page.locator('[data-status][data-state="complete"]')).to_contain_text(
+        "converted locally"
+    )
+    expected = page.locator("[data-output]").text_content()
+    with page.expect_download() as event:
+        page.locator("[data-download]").click()
+    download = event.value
+
+    assert download.suggested_filename == "report.md"
+    assert download.path().read_text(encoding="utf-8") == expected
+    context.close()
+
+
 def test_workspace_keeps_markdown_readable(browser: Browser, site_url: str) -> None:
     context = browser.new_context(viewport={"width": 1440, "height": 1000})
     page = context.new_page()
@@ -80,8 +100,8 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     wasm = page.get_by_role("link", name="Download WASM bundle")
     expect(wasm).to_have_attribute(
         "href",
-        "https://github.com/insanai/zenfmt/releases/download/v0.3.1/"
-        "zenfmt-0.3.1-wasm32-freestanding.tar.gz",
+        "https://github.com/insanai/zenfmt/releases/download/v0.3.2/"
+        "zenfmt-0.3.2-wasm32-freestanding.tar.gz",
     )
     assert page.locator(".download-button").count() >= 11
 
@@ -154,8 +174,8 @@ def test_server_and_recorded_benchmarks_are_explained(
 
     page.goto(f"{site_url}benchmark/")
     baseline = page.locator(".reference-baseline")
-    expect(baseline).to_contain_text("Current release native lens: zenfmt 0.3.1")
-    expect(baseline).to_contain_text("Current release server lens: zenfmt 0.3.1")
+    expect(baseline).to_contain_text("Current release native lens: zenfmt 0.3.2")
+    expect(baseline).to_contain_text("Current release server lens: zenfmt 0.3.2")
     expect(baseline).to_contain_text("Native CLI benchmark")
     expect(baseline).to_contain_text("Speed")
     expect(baseline).to_contain_text("CPU use")

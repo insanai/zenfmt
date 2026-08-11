@@ -98,11 +98,17 @@ pub fn create(
     server.addAnonymousImport("ui_glue", .{
         .root_source_file = b.path("server/ui/glue/ui.js"),
     });
+    server.addAnonymousImport("ui_css_vendor", .{
+        .root_source_file = b.path("server/ui/assets/daisyui-5.0.45.css"),
+    });
     server.addAnonymousImport("ui_css", .{
-        .root_source_file = b.path("server/ui/assets/zenfmt-ui.css"),
+        .root_source_file = b.path("server/ui/assets/layout.css"),
     });
     server.addAnonymousImport("ui_wasm", .{
         .root_source_file = ui_wasm.getEmittedBin(),
+    });
+    server.addAnonymousImport("openapi_json", .{
+        .root_source_file = b.path("server/openapi.json"),
     });
 
     return .{ .zenserve = zenserve, .server = server, .ui_wasm = ui_wasm };

@@ -35,29 +35,30 @@ def server_url() -> Iterator[str]:
     if not SERVER_BINARY.exists():
         pytest.fail(f"{SERVER_BINARY} is not built; run `zig build` first")
     port = _free_port()
-    process = subprocess.Popen(
-        [str(SERVER_BINARY), "serve", "--port", str(port)],
-        cwd=REPO_ROOT,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    url = f"http://127.0.0.1:{port}"
-    try:
-        deadline = time.monotonic() + 10
-        while True:
-            try:
-                with urllib.request.urlopen(f"{url}/readyz", timeout=1) as response:
-                    if response.status == 200:
-                        break
-            except OSError:
-                pass
-            if time.monotonic() > deadline:
-                pytest.fail("the server did not become ready within 10 seconds")
-            time.sleep(0.1)
-        yield url
-    finally:
-        process.terminate()
-        process.wait(timeout=10)
+    with tempfile.TemporaryDirectory(prefix="zenfmt-open-ui-") as work_dir:
+        process = subprocess.Popen(
+            [str(SERVER_BINARY), "serve", "--port", str(port)],
+            cwd=work_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        url = f"http://127.0.0.1:{port}"
+        try:
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    with urllib.request.urlopen(f"{url}/readyz", timeout=1) as response:
+                        if response.status == 200:
+                            break
+                except OSError:
+                    pass
+                if time.monotonic() > deadline:
+                    pytest.fail("the server did not become ready within 10 seconds")
+                time.sleep(0.1)
+            yield url
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
 
 
 @pytest.fixture(scope="session")
@@ -103,7 +104,7 @@ def secure_server() -> Iterator[SecureServer]:
                 "--data-dir",
                 data_dir,
             ],
-            cwd=REPO_ROOT,
+            cwd=data_dir,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,

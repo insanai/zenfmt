@@ -200,9 +200,11 @@ async function initConverter() {
     const anchor = document.createElement('a');
     anchor.href = url;
     anchor.download = safeFilename(current.artifactName ?? 'document.md');
+    document.body.append(anchor);
     anchor.click();
-    // Revoked promptly: a blob URL left alive is a handle to the document.
-    URL.revokeObjectURL(url);
+    anchor.remove();
+    // Let the browser begin reading the URL before its document handle goes.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   });
 
   resetButton.addEventListener('click', () => {
@@ -248,6 +250,7 @@ async function initConverter() {
     reportsPanel.hidden = true;
     try {
       current = await converter.convert(file, {
+        artifactName: markdownFilename(file.name),
         strict: strict.value,
         preserveFacets: facets.checked,
         signal: activeController.signal,
@@ -360,4 +363,12 @@ function safeFilename(name) {
     .replace(/[\x00-\x1f\x7f‪-‮]/g, '')
     .replace(/[/\\]/g, '-')
     .slice(0, 200) || 'document.md';
+}
+
+/// Mirrors the CLI and server convention: `report.docx` becomes `report.md`.
+function markdownFilename(name) {
+  const basename = name.split(/[/\\]/).at(-1) ?? '';
+  const extension = basename.lastIndexOf('.');
+  const stem = extension > 0 ? basename.slice(0, extension) : basename;
+  return safeFilename(`${stem || 'document'}.md`);
 }

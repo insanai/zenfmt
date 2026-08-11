@@ -138,6 +138,7 @@ const Event = struct {
     fields: ?std.json.Value = null,
     id: ?u32 = null,
     status: ?u16 = null,
+    content_type: ?[]const u8 = null,
     body: ?[]const u8 = null,
     message: ?[]const u8 = null,
 };
@@ -251,6 +252,7 @@ fn handleConversionAction(
             try renderPage(arena, state, commands);
             return true;
         }
+        clearResult(state);
         state.busy = true;
         state.failure_html = null;
         try renderPage(arena, state, commands);
@@ -273,6 +275,14 @@ fn handleConversionAction(
         }
     } else return false;
     return true;
+}
+
+fn clearResult(state: *State) void {
+    const result = state.result orelse return;
+    if (result.artifact.len > 0) state.gpa.free(result.artifact);
+    if (result.artifact_name.len > 0) state.gpa.free(result.artifact_name);
+    if (result.reports_html.len > 0) state.gpa.free(result.reports_html);
+    state.result = null;
 }
 
 fn handleSessionAction(
@@ -517,7 +527,7 @@ fn handleFetchDone(
             state.formats_loaded = true;
             try renderPage(arena, state, commands);
         },
-        fetch_convert_id => try handleConvertDone(arena, state, body, commands),
+        fetch_convert_id => try handleConvertDone(arena, state, event, commands),
         fetch_users_id => try handleUsersDone(arena, state, body, commands),
         fetch_create_user_id => try handleCreateUserDone(
             arena,
@@ -579,7 +589,7 @@ fn handleSessionProbe(
         state.mode = .open;
         state.authenticated = true;
         state.role = .user;
-        if (!std.mem.eql(u8, state.path, "/")) {
+        if (!isPublicPath(state.path)) {
             try rememberPath(state, "/");
             try commands.navigate("/");
         }
@@ -592,7 +602,9 @@ fn handleSessionProbe(
         state.authenticated = false;
         state.role = .anonymous;
         state.csrf = "";
-        if (!std.mem.eql(u8, state.path, "/login")) {
+        if (!std.mem.eql(u8, state.path, "/docs") and
+            !std.mem.eql(u8, state.path, "/login"))
+        {
             try rememberPath(state, "/login");
             try commands.navigate("/login");
         }
@@ -679,14 +691,28 @@ fn handleLogoutDone(
 fn handleConvertDone(
     arena: std.mem.Allocator,
     state: *State,
-    body: []const u8,
+    event: Event,
     commands: *Commands,
 ) !void {
     state.busy = false;
+    const body = event.body orelse "";
     const outcome = render.parseEnvelope(state.gpa, body) catch {
+        if (isSuccessfulArtifact(event.status, event.content_type, body)) {
+            state.result = .{
+                .ok = true,
+                .artifact = try state.gpa.dupe(u8, body),
+                .artifact_name = try derivedArtifactName(state.gpa, state),
+                .report_count = 0,
+                .reports_html = "",
+            };
+            state.failure_html = null;
+            try renderPage(arena, state, commands);
+            return;
+        }
         state.failure_html = try render.transportFailure(
             state.gpa,
-            "the server's answer could not be read",
+            "The server returned a response the interface could not read. " ++
+                "Open API docs for the request and response contract.",
         );
         try renderPage(arena, state, commands);
         return;
@@ -694,6 +720,29 @@ fn handleConvertDone(
     state.result = outcome.result;
     state.failure_html = outcome.failure_html;
     try renderPage(arena, state, commands);
+}
+
+fn isSuccessfulArtifact(
+    status: ?u16,
+    content_type: ?[]const u8,
+    body: []const u8,
+) bool {
+    const code = status orelse return false;
+    if (code < 200 or code >= 300 or body.len == 0) return false;
+    const media = content_type orelse return true;
+    return std.ascii.indexOfIgnoreCase(media, "application/json") == null;
+}
+
+fn derivedArtifactName(gpa: std.mem.Allocator, state: *const State) ![]const u8 {
+    const source = state.fileName() orelse "converted";
+    const base = std.fs.path.basename(source);
+    const dot = std.mem.lastIndexOfScalar(u8, base, '.') orelse base.len;
+    const stem = if (dot == 0) "converted" else base[0..dot];
+    const extension = if (std.mem.eql(u8, state.selected_to, "markdown"))
+        "md"
+    else
+        state.selected_to;
+    return std.fmt.allocPrint(gpa, "{s}.{s}", .{ stem, extension });
 }
 
 fn handleUsersDone(
@@ -845,6 +894,7 @@ fn fieldString(fields: std.json.Value, name: []const u8) ?[]const u8 {
 }
 
 fn pathAllowed(state: *const State, path: []const u8) bool {
+    if (std.mem.eql(u8, path, "/docs")) return true;
     if (std.mem.eql(u8, path, "/login")) return state.mode != .open;
     if (std.mem.eql(u8, path, "/")) return state.authenticated;
     if (std.mem.eql(u8, path, "/account")) return state.authenticated and state.mode == .secure;
@@ -922,6 +972,11 @@ fn renderPage(
 
 fn rememberPath(state: *State, path: []const u8) !void {
     state.path = try state.gpa.dupe(u8, path);
+}
+
+fn isPublicPath(path: []const u8) bool {
+    return std.mem.eql(u8, path, "/") or
+        std.mem.eql(u8, path, "/docs");
 }
 
 fn parseTheme(text: []const u8) Theme {

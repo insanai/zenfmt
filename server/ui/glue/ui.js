@@ -129,7 +129,13 @@ async function doFetch(command) {
   try {
     const response = await fetch(command.path, options);
     const body = await response.text();
-    send({ event: "fetch_done", id: command.id, status: response.status, body });
+    send({
+      event: "fetch_done",
+      id: command.id,
+      status: response.status,
+      content_type: response.headers.get("content-type") || "",
+      body,
+    });
   } catch (error) {
     send({ event: "fetch_error", id: command.id, message: String(error) });
   }

@@ -8,11 +8,13 @@ selector including persistence across a reload.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from playwright.sync_api import Page, expect
 
 FIXTURE_NAME = "note.md"
 FIXTURE_BYTES = b"# Smoke\n\nA **bold** word.\n\n- one\n- two\n"
+PDF_FIXTURE = Path(__file__).parents[3] / "python/tests/integration/fixtures/min.pdf"
 
 
 def test_converter_renders_from_wasm(page: Page) -> None:
@@ -61,7 +63,7 @@ def test_failure_reports_render_verbatim(page: Page) -> None:
 def test_theme_choice_applies_and_persists(page: Page) -> None:
     html = page.locator("html")
     expect(page.locator("button[data-action='theme_system']")).to_have_class(
-        re.compile("btn-active")
+        re.compile("zf-theme-active")
     )
     assert page.evaluate("localStorage.getItem('zenfmt-theme-v1')") is None
     page.click("button[data-action='theme_light']")
@@ -71,7 +73,7 @@ def test_theme_choice_applies_and_persists(page: Page) -> None:
     page.reload()
     expect(html).to_have_attribute("data-theme", "dark")
     expect(page.locator("button[data-action='theme_dark']")).to_have_class(
-        re.compile("btn-active")
+        re.compile("zf-theme-active")
     )
     page.click("button[data-action='theme_system']")
     page.emulate_media(color_scheme="dark")
@@ -87,8 +89,37 @@ def test_noscript_page_serves_the_api_path(page: Page, server_url: str) -> None:
     assert "wasm-unsafe-eval" in response.headers["content-security-policy"]
 
 
+def test_pdf_conversion_and_upload_layout(page: Page) -> None:
+    page.set_input_files("#file-input", PDF_FIXTURE)
+    expect(page.locator("[data-drop]")).to_contain_text("min.pdf")
+    widths = page.locator(".zf-upload-card").evaluate(
+        "card => { const drop = card.querySelector('[data-drop]'); "
+        "return [card.getBoundingClientRect().width, "
+        "drop.getBoundingClientRect().width]; }"
+    )
+    assert widths[1] >= widths[0] - 80
+    page.click("button[data-action='convert']")
+    expect(page.locator(".zf-preview")).to_be_visible()
+    expect(page.locator(".card-title").last).to_contain_text("min.md")
+
+
+def test_public_api_docs_and_openapi(page: Page, server_url: str) -> None:
+    page.click("button[data-action='nav:/docs']")
+    expect(page).to_have_url(re.compile(r"/docs$"))
+    expect(page.get_by_role("heading", name="API reference")).to_be_visible()
+    response = page.request.get(server_url + "/openapi.json")
+    assert response.status == 200
+    document = response.json()
+    assert document["openapi"] == "3.1.0"
+    assert "/api/v1/convert" in document["paths"]
+
+
 def test_secure_login_and_user_management(secure_page: Page, secure_server) -> None:
     page = secure_page
+    page.goto(secure_server.url + "/docs")
+    expect(page.get_by_role("heading", name="API reference")).to_be_visible()
+    assert page.request.get(secure_server.url + "/openapi.json").status == 200
+    page.goto(secure_server.url + "/")
     expect(page).to_have_url(re.compile(r"/login$"))
     expect(page.get_by_role("heading", name="Sign in")).to_be_visible()
     page.locator("input[name='name']").fill("admin")
