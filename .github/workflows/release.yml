@@ -349,6 +349,7 @@ jobs:
           user: __token__
           password: ${{ secrets.PYPI_API_TOKEN }}
           attestations: true
+          skip-existing: true
 
   post-publish-install:
     name: Verify the published PyPI wheel
@@ -489,7 +490,7 @@ jobs:
           set -eux
           version="${GITHUB_REF_NAME#v}"
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            published="$(npm view "@insnai/zenfmt@$version" version \
+            published="$(npm view "@insanai/zenfmt@$version" version \
               2>/dev/null || true)"
             if test "$published" = "$version"; then
               exit 0
@@ -677,4 +678,4 @@ jobs:
             SHA256SUMS; do
             curl --fail --location --retry 5 --output /dev/null "$base/$asset"
           done
-          test "$(npm view "@insnai/zenfmt@$version" version)" = "$version"
+          test "$(npm view "@insanai/zenfmt@$version" version)" = "$version"
