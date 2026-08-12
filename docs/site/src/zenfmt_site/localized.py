@@ -540,7 +540,7 @@ def download_page(words: Words, capabilities: dict, version: str) -> Page:
 <section class="target target-featured"><h2>{words.browser_title}</h2><p>{words.browser_body}</p>
 <p class="download-actions">{asset(f"zenfmt-{version}-wasm32-freestanding.tar.gz", words.wasm_bundle)}
 {asset(f"zenfmt-{version}-wasm32-freestanding.wasm", words.module_only)}
-<a href="https://www.npmjs.com/package/@insnai/zenfmt/v/{_e(version)}">{npm_label}</a></p></section>
+<a href="https://www.npmjs.com/package/@insanai/zenfmt/v/{_e(version)}">{npm_label}</a></p></section>
 <section class="target"><h2>macOS</h2><p>{words.mac_body}</p><p class="download-actions">
 {asset(f"zenfmt-{version}-aarch64-macos.tar.gz", "Apple Silicon")}
 {asset(f"zenfmt-{version}-x86_64-macos.tar.gz", "Intel")}

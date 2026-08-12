@@ -197,7 +197,7 @@ conversion = zenfmt.convert(
 
 release 中的 `wasm32-freestanding` bundle 包含 module、ES module adapter、worker 和 TypeScript declaration。adapter 返回 artifact ensemble，不会回退到远程 server。调用方应从静态 origin 以正确的 `application/wasm` type 提供文件，并设置自己的 UI timeout 与 size policy。
 
-Web application 也可以通过 `npm install @insnai/zenfmt` 获取相同的 dependency free browser distribution。npm package 包含经过检查的 module、adapter、worker、declarations 和 capability contract。原生 CLI 与 server 仍然不需要 Node 或 npm。
+Web application 也可以通过 `npm install @insanai/zenfmt` 获取相同的 dependency free browser distribution。npm package 包含经过检查的 module、adapter、worker、declarations 和 capability contract。原生 CLI 与 server 仍然不需要 Node 或 npm。
 
 = CLI 参考
 

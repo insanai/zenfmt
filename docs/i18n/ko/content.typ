@@ -197,7 +197,7 @@ conversion = zenfmt.convert(
 
 release의 `wasm32-freestanding` bundle에는 module, ES module adapter, worker, TypeScript declaration이 들어 있습니다. adapter는 artifact ensemble을 반환하며 remote server로 fallback하지 않습니다. static origin에서 올바른 `application/wasm` type으로 제공하고 UI에도 timeout과 size policy를 두세요.
 
-Web application은 `npm install @insnai/zenfmt`으로 같은 dependency free browser distribution을 설치할 수도 있습니다. npm package에는 검사한 module, adapter, worker, declarations, capability contract가 들어 있습니다. native CLI와 server에는 Node나 npm이 필요하지 않습니다.
+Web application은 `npm install @insanai/zenfmt`으로 같은 dependency free browser distribution을 설치할 수도 있습니다. npm package에는 검사한 module, adapter, worker, declarations, capability contract가 들어 있습니다. native CLI와 server에는 Node나 npm이 필요하지 않습니다.
 
 = CLI 참고 <cli-reference>
 

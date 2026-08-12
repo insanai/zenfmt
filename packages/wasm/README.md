@@ -1,11 +1,11 @@
-# @insnai/zenfmt
+# @insanai/zenfmt
 
 This package contains zenfmt's dependency-free browser distribution. Document
 conversion runs in WebAssembly on the caller's machine. The adapter does not
 upload documents or fall back to a remote conversion service.
 
 ```sh
-npm install @insnai/zenfmt
+npm install @insanai/zenfmt
 ```
 
 Use a dedicated worker for browser applications:
@@ -15,7 +15,7 @@ import {
   createWorkerConverter,
   wasmUrl,
   workerUrl,
-} from '@insnai/zenfmt';
+} from '@insanai/zenfmt';
 
 const converter = await createWorkerConverter({
   moduleUrl: wasmUrl,
@@ -28,8 +28,8 @@ converter.dispose();
 ```
 
 Some bundlers require an asset rule for `.wasm` files. The package also
-exports `@insnai/zenfmt/zenfmt.wasm`, `@insnai/zenfmt/worker`, and
-`@insnai/zenfmt/capabilities.json` for callers that manage URLs explicitly.
+exports `@insanai/zenfmt/zenfmt.wasm`, `@insanai/zenfmt/worker`, and
+`@insanai/zenfmt/capabilities.json` for callers that manage URLs explicitly.
 
 The module has no host imports. It accepts inputs up to 32 MiB and caps linear
 memory at 1 GiB. The npm package contains the same module, adapter, worker,

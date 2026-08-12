@@ -202,12 +202,12 @@ consequence, and a concrete next action under `What you can do:`.
 == Browser: the same engine as a WebAssembly package
 
 The tagged browser distribution is also published as the dependency-free npm
-package `@insnai/zenfmt`. The package contains the audited WebAssembly module,
+package `@insanai/zenfmt`. The package contains the audited WebAssembly module,
 ES module adapter, dedicated worker, TypeScript declarations, and generated
 capability contract.
 
 ```console
-$ npm install @insnai/zenfmt
+$ npm install @insanai/zenfmt
 ```
 
 ```js
@@ -215,7 +215,7 @@ import {
   createWorkerConverter,
   wasmUrl,
   workerUrl,
-} from '@insnai/zenfmt';
+} from '@insanai/zenfmt';
 
 const converter = await createWorkerConverter({ moduleUrl: wasmUrl, workerUrl });
 const result = await converter.convert(file, { timeoutMs: 30_000 });

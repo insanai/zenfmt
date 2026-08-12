@@ -109,7 +109,7 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     )
     assert page.locator(".download-button").count() >= 11
     expect(page.get_by_role("link", name="Open npm")).to_have_attribute(
-        "href", "https://www.npmjs.com/package/@insnai/zenfmt/v/0.3.5"
+        "href", "https://www.npmjs.com/package/@insanai/zenfmt/v/0.3.5"
     )
     expect(page.get_by_role("link", name="Install with Homebrew")).to_be_visible()
 

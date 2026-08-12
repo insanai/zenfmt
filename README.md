@@ -124,7 +124,7 @@ always lets the reader choose explicitly, and that choice is remembered.
 The same browser distribution is available as a dependency-free npm package:
 
 ```sh
-npm install @insnai/zenfmt
+npm install @insanai/zenfmt
 ```
 
 It contains the audited module, ES module adapter, worker, TypeScript

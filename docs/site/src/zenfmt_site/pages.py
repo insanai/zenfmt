@@ -460,7 +460,7 @@ def download_page(capabilities: dict, version: str) -> Page:
   <p class="download-actions">
     {asset(f"zenfmt-{version}-wasm32-freestanding.tar.gz", "Download WASM bundle")}
     {asset(f"zenfmt-{version}-wasm32-freestanding.wasm", "Download module only")}
-    <a href="https://www.npmjs.com/package/@insnai/zenfmt/v/{_escape(version)}">Open npm</a>
+    <a href="https://www.npmjs.com/package/@insanai/zenfmt/v/{_escape(version)}">Open npm</a>
   </p>
 </section>
 

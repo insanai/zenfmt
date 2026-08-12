@@ -893,7 +893,7 @@ from any static origin with `application/wasm` for the module and import the ES
 adapter.
 
 Release 0.3.5 amends this decision by publishing the same browser distribution
-as the public npm package `@insnai/zenfmt`. The package adds only metadata and
+as the public npm package `@insanai/zenfmt`. The package adds only metadata and
 an entry module that exports package relative URLs for the module and worker.
 It has no dependencies, no generated bundle, and no remote conversion
 fallback. npm publication consumes the browser archive after its existing
@@ -2005,7 +2005,7 @@ ZDS PDFs are not included in the GitHub Release asset set.
 
 The release workflow verifies the WASM archive in a clean temporary static
 server and real browsers, verifies the PyPI package after publication, verifies
-CLI archives, publishes and verifies `@insnai/zenfmt`, then creates the GitHub
+CLI archives, publishes and verifies `@insanai/zenfmt`, then creates the GitHub
 release. The npm package version must equal the tag and the native package
 version. Pages deployment follows a
 successful release and references its URL. Partial publication stops further

@@ -466,10 +466,10 @@ jobs:
         run: |
           set -eux
           version="${GITHUB_REF_NAME#v}"
-          published="$(npm view "@insnai/zenfmt@$version" version \
+          published="$(npm view "@insanai/zenfmt@$version" version \
             2>/dev/null || true)"
           if test "$published" = "$version"; then
-            echo "@insnai/zenfmt@$version is already published"
+            echo "@insanai/zenfmt@$version is already published"
           else
             npm publish "$RUNNER_TEMP/npm-package" --access public --provenance
           fi

@@ -91,7 +91,7 @@ zig build site-browser-test
 Web application은 같은 browser distribution을 npm으로 설치할 수 있습니다.
 
 ```sh
-npm install @insnai/zenfmt
+npm install @insanai/zenfmt
 ```
 
 이 dependency free package에는 검사한 WASM module, ES module adapter, worker, TypeScript declarations, capability contract가 들어 있습니다. npm은 browser distribution을 받는 한 가지 방법일 뿐이며 native CLI와 server에는 Node나 npm이 필요하지 않습니다.
