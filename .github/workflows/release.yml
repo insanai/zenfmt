@@ -38,6 +38,9 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
           zon_version="$(sed -n 's/^ *\.version = "\(.*\)",$/\1/p' build.zig.zon)"
           test "$tag" = "$zon_version"
+          package_version="$(node -p \
+            "require('./packages/wasm/package.json').version")"
+          test "$tag" = "$package_version"
           zig build -Doptimize=ReleaseSafe
           test "$(./zig-out/bin/zenfmt --version)" = "zenfmt $zon_version"
       - name: Record the released implementation revision
@@ -401,6 +404,100 @@ jobs:
             console.log('archive converts docx ->', r.outputFormat, r.artifact.length, 'bytes');
           "
 
+  publish-npm:
+    name: Publish the WebAssembly package to npm
+    if: ${{ !contains(github.ref_name, '-') }}
+    needs:
+      - verify-version
+      - verify-wasm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          name: wasm
+          path: dist
+      - name: Assemble and exercise the npm package
+        shell: bash
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          archive="dist/zenfmt-$version-wasm32-freestanding.tar.gz"
+          tar -xzf "$archive" -C dist
+          source="dist/zenfmt-$version-wasm32-freestanding"
+          package="$RUNNER_TEMP/npm-package"
+          mkdir -p "$package"
+          cp packages/wasm/package.json packages/wasm/index.js \
+            packages/wasm/index.d.ts packages/wasm/README.md "$package/"
+          cp "$source/zenfmt.wasm" "$source/zenfmt.js" \
+            "$source/zenfmt.worker.js" "$source/zenfmt.d.ts" \
+            "$source/capabilities.json" LICENSE "$package/"
+          chmod 0644 "$package"/*
+          test "$(node -p \
+            "require('$package/package.json').version")" = "$version"
+          node --input-type=module - "$package" <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import { pathToFileURL } from 'node:url';
+
+          const directory = process.argv[2];
+          const api = await import(pathToFileURL(`${directory}/index.js`));
+          const module = await WebAssembly.compile(
+            await readFile(`${directory}/zenfmt.wasm`),
+          );
+          const converter = new api.Converter(module);
+          await converter.ready();
+          if (api.wasmUrl.protocol !== 'file:' || converter.version !== api.version) {
+            throw new Error('the package entry and WebAssembly module disagree');
+          }
+          converter.dispose();
+          NODE
+          npm pack "$package" --dry-run
+      - name: Publish the public package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_API_TOKEN }}
+        shell: bash
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          published="$(npm view "@insnai/zenfmt@$version" version \
+            2>/dev/null || true)"
+          if test "$published" = "$version"; then
+            echo "@insnai/zenfmt@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/npm-package" --access public --provenance
+          fi
+
+  verify-published-npm:
+    name: Verify the published npm package
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - name: Resolve the exact public package version
+        shell: bash
+        run: |
+          set -eux
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            published="$(npm view "@insnai/zenfmt@$version" version \
+              2>/dev/null || true)"
+            if test "$published" = "$version"; then
+              exit 0
+            fi
+            test "$attempt" -lt 10
+            sleep 30
+          done
+
   github-release:
     name: Publish GitHub release
     needs:
@@ -410,6 +507,8 @@ jobs:
       - build-wasm
       - build-docs
       - verify-wasm
+      - publish-npm
+      - verify-published-npm
       - publish-pypi
       - post-publish-install
     runs-on: ubuntu-latest
@@ -523,6 +622,9 @@ jobs:
     name: Deploy the tagged Pages site
     needs: build-release-site
     runs-on: ubuntu-latest
+    concurrency:
+      group: github-pages-production
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write
@@ -539,6 +641,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: ${{ env.UV_VERSION }}
@@ -571,3 +677,4 @@ jobs:
             SHA256SUMS; do
             curl --fail --location --retry 5 --output /dev/null "$base/$asset"
           done
+          test "$(npm view "@insnai/zenfmt@$version" version)" = "$version"

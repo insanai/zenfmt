@@ -890,7 +890,18 @@ low-level consumers. The archive contains:
 
 The archive has no package-manager assumption. A caller can serve its files
 from any static origin with `application/wasm` for the module and import the ES
-adapter. npm publication, if desired, requires another record or an amendment.
+adapter.
+
+Release 0.3.5 amends this decision by publishing the same browser distribution
+as the public npm package `@insnai/zenfmt`. The package adds only metadata and
+an entry module that exports package relative URLs for the module and worker.
+It has no dependencies, no generated bundle, and no remote conversion
+fallback. npm publication consumes the browser archive after its existing
+audit and conversion smoke test. It does not compile a second module.
+
+This amendment does not change native distribution. The CLI and server remain
+one self contained executable and do not require Node or npm. The GitHub
+release archive remains the package manager independent browser distribution.
 The GitHub Pages site copies these same files from the release build output and
 adds content hashes to deployed filenames; it does not compile a second WASM
 variant. CI extracts the archive and proves that its module digest equals the
@@ -1721,15 +1732,14 @@ records.
 - Small browser ES modules and CSS are checked-in runtime assets. They use web
   standards directly and require no transpiler, bundler, or package-manager
   lock.
-- The exclusion of Node and npm is an exclusion of adopting a JavaScript
-  package manager, build system, or shipped runtime dependency. It is not a
-  claim that no such runtime exists anywhere in development: test tools
-  distributed as locked Python wheels may embed their own private runtimes, and
-  npm may be used to fetch a pinned third-party benchmark competitor into a
-  gitignored directory. The binding rules are that the repository contains no
-  `package.json`, lockfile, or `node_modules`; that no build, generation, or
-  release step depends on one; and that nothing of the sort is served to a
-  visitor.
+- Node and npm are not a JavaScript build system or a shipped runtime
+  dependency. The repository contains one authored `package.json` under
+  `packages/wasm` as publication metadata. There is no lockfile,
+  `node_modules`, transpilation, bundling, or generation step. The release
+  workflow uses npm only to inspect and publish the already tested browser
+  files. Test tools distributed as locked Python wheels may embed their own
+  private runtimes, and npm may fetch a pinned benchmark competitor into a
+  gitignored directory.
 - Ruby is not part of authoring, generation, testing, serving, benchmarking,
   release, or deployment.
 
@@ -1995,7 +2005,9 @@ ZDS PDFs are not included in the GitHub Release asset set.
 
 The release workflow verifies the WASM archive in a clean temporary static
 server and real browsers, verifies the PyPI package after publication, verifies
-CLI archives, then creates the GitHub release. Pages deployment follows a
+CLI archives, publishes and verifies `@insnai/zenfmt`, then creates the GitHub
+release. The npm package version must equal the tag and the native package
+version. Pages deployment follows a
 successful release and references its URL. Partial publication stops further
 steps and is repaired by completing the same version; immutable PyPI or GitHub
 assets are never silently overwritten.

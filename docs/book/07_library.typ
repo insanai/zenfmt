@@ -199,6 +199,35 @@ Applications branch on `error.code`, retain structured reports, and show
 `TypeError` or `ValueError`, but their messages still state the problem,
 consequence, and a concrete next action under `What you can do:`.
 
+== Browser: the same engine as a WebAssembly package
+
+The tagged browser distribution is also published as the dependency-free npm
+package `@insnai/zenfmt`. The package contains the audited WebAssembly module,
+ES module adapter, dedicated worker, TypeScript declarations, and generated
+capability contract.
+
+```console
+$ npm install @insnai/zenfmt
+```
+
+```js
+import {
+  createWorkerConverter,
+  wasmUrl,
+  workerUrl,
+} from '@insnai/zenfmt';
+
+const converter = await createWorkerConverter({ moduleUrl: wasmUrl, workerUrl });
+const result = await converter.convert(file, { timeoutMs: 30_000 });
+console.log(result.text);
+converter.dispose();
+```
+
+The package does not add a network conversion fallback. The module has no
+host imports, and conversion remains on the caller's machine. npm is only a
+distribution option for browser applications. The native CLI and server stay
+self-contained and do not require Node or npm.
+
 #warning([A wheel is not a sandbox], [
   The bundled native engine executes inside the Python process with that
   process's authority. Limits bound input, expansion, structure, resources,

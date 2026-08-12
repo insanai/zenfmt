@@ -1,0 +1,53 @@
+{
+  "name": "@insnai/zenfmt",
+  "version": "0.3.5",
+  "description": "Dependency-free WebAssembly document conversion with zenfmt",
+  "type": "module",
+  "main": "./index.js",
+  "module": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    },
+    "./zenfmt.wasm": "./zenfmt.wasm",
+    "./worker": "./zenfmt.worker.js",
+    "./capabilities.json": "./capabilities.json"
+  },
+  "files": [
+    "index.d.ts",
+    "index.js",
+    "zenfmt.d.ts",
+    "zenfmt.js",
+    "zenfmt.wasm",
+    "zenfmt.worker.js",
+    "capabilities.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": [
+    "./zenfmt.worker.js"
+  ],
+  "license": "MIT",
+  "author": "Vikrant Rathore",
+  "keywords": [
+    "document",
+    "conversion",
+    "markdown",
+    "webassembly",
+    "wasm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/insanai/zenfmt.git",
+    "directory": "packages/wasm"
+  },
+  "homepage": "https://insanai.github.io/zenfmt/",
+  "bugs": "https://github.com/insanai/zenfmt/issues",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

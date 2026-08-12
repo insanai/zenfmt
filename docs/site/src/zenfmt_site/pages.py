@@ -446,8 +446,8 @@ def download_page(capabilities: dict, version: str) -> Page:
   <h2>Browser · WebAssembly</h2>
   <p>
     The complete engine as a WebAssembly module plus a standards-based
-    JavaScript adapter and a worker. Serve the files from any static origin;
-    there is no package manager assumption and no build step.
+    JavaScript adapter and a worker. Serve the files from any static origin or
+    install the same dependency-free distribution from npm.
   </p>
   <p>
     Requires a browser with WebAssembly, modules, workers, and the file APIs.
@@ -460,6 +460,7 @@ def download_page(capabilities: dict, version: str) -> Page:
   <p class="download-actions">
     {asset(f"zenfmt-{version}-wasm32-freestanding.tar.gz", "Download WASM bundle")}
     {asset(f"zenfmt-{version}-wasm32-freestanding.wasm", "Download module only")}
+    <a href="https://www.npmjs.com/package/@insnai/zenfmt/v/{_escape(version)}">Open npm</a>
   </p>
 </section>
 
@@ -472,6 +473,7 @@ def download_page(capabilities: dict, version: str) -> Page:
   <p class="download-actions">
     {asset(f"zenfmt-{version}-aarch64-macos.tar.gz", "Apple Silicon")}
     {asset(f"zenfmt-{version}-x86_64-macos.tar.gz", "Intel")}
+    <a href="https://github.com/insanai/zenfmt/tree/main/packaging/homebrew">Install with Homebrew</a>
   </p>
 </section>
 
@@ -530,7 +532,7 @@ def download_page(capabilities: dict, version: str) -> Page:
         title=f"Download zenfmt {version}",
         description=(
             "Download zenfmt as a browser WebAssembly module, a native "
-            "command-line tool, a Python package, or source."
+            "command-line tool, an npm or Python package, or source."
         ),
         body=body,
         stylesheets=["assets/css/site.css"],

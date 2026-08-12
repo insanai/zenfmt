@@ -16,7 +16,7 @@
 // `bytes()`, and it is called immediately before each read or write.
 
 const ABI_VERSION = 0x0001_0000;
-const PACKAGE_VERSION = '0.3.3';
+const PACKAGE_VERSION = '0.3.5';
 
 const STATUS_SUCCESS = 0;
 const STATUS_FAILED = 1;

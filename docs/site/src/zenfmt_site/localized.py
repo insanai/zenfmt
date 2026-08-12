@@ -400,6 +400,12 @@ HELP_ANCHORS = {
     "ko": ("section-2", "data"),
 }
 
+PACKAGE_LINKS = {
+    "zh-Hans": ("打开 npm", "使用 Homebrew 安装"),
+    "ja": ("npm を開く", "Homebrew でインストール"),
+    "ko": ("npm 열기", "Homebrew로 설치"),
+}
+
 
 def _e(value: object) -> str:
     return html.escape(str(value), quote=True)
@@ -519,6 +525,7 @@ def security_page(words: Words) -> Page:
 def download_page(words: Words, capabilities: dict, version: str) -> Page:
     count = sum(1 for entry in capabilities["formats"] if entry["read"])
     release = f"https://github.com/insanai/zenfmt/releases/download/v{version}"
+    npm_label, homebrew_label = PACKAGE_LINKS[words.code]
 
     def asset(name: str, label: str) -> str:
         return f'<a class="download-button" href="{release}/{name}">{label}</a>'
@@ -532,10 +539,12 @@ def download_page(words: Words, capabilities: dict, version: str) -> Page:
 <div class="targets">
 <section class="target target-featured"><h2>{words.browser_title}</h2><p>{words.browser_body}</p>
 <p class="download-actions">{asset(f"zenfmt-{version}-wasm32-freestanding.tar.gz", words.wasm_bundle)}
-{asset(f"zenfmt-{version}-wasm32-freestanding.wasm", words.module_only)}</p></section>
+{asset(f"zenfmt-{version}-wasm32-freestanding.wasm", words.module_only)}
+<a href="https://www.npmjs.com/package/@insnai/zenfmt/v/{_e(version)}">{npm_label}</a></p></section>
 <section class="target"><h2>macOS</h2><p>{words.mac_body}</p><p class="download-actions">
 {asset(f"zenfmt-{version}-aarch64-macos.tar.gz", "Apple Silicon")}
-{asset(f"zenfmt-{version}-x86_64-macos.tar.gz", "Intel")}</p></section>
+{asset(f"zenfmt-{version}-x86_64-macos.tar.gz", "Intel")}
+<a href="https://github.com/insanai/zenfmt/tree/main/packaging/homebrew">{homebrew_label}</a></p></section>
 <section class="target"><h2>Linux</h2><p>{words.linux_body}</p><p class="download-actions">
 {asset(f"zenfmt-{version}-x86_64-linux-gnu.tar.gz", "x86-64 · glibc")}
 {asset(f"zenfmt-{version}-aarch64-linux-gnu.tar.gz", "ARM64 · glibc")}

@@ -18,6 +18,13 @@ zenfmt には全体を通した 3 つの約束があります。
 
 GitHub Releases から利用する platform の native archive を取得し、展開した実行ファイルをそのまま使えます。この 1 file に CLI と server が含まれ、Java、Python、npm、OCR、VLM、model file は必要ありません。Python から使う場合は `zenfmt` wheel も利用できます。
 
+macOS では repository の Homebrew cask も利用できます。Apple Silicon または Intel に合う同じ self contained archive を GitHub Releases から直接取得します。
+
+```sh
+brew install --cask \
+  https://raw.githubusercontent.com/insanai/zenfmt/main/packaging/homebrew/Casks/zenfmt.rb
+```
+
 ```sh
 zenfmt report.docx
 ```
@@ -189,6 +196,8 @@ conversion = zenfmt.convert(
 == Browser API
 
 release の `wasm32-freestanding` bundle は module、ES module adapter、worker、TypeScript declaration を含みます。adapter は artifact ensemble を返し、remote server に fallback しません。static origin から正しい `application/wasm` type で配信し、UI 側にも timeout と size policy を設けてください。
+
+Web application は `npm install @insnai/zenfmt` でも同じ dependency free browser distribution を導入できます。npm package には検査済みの module、adapter、worker、declarations、capability contract が含まれます。native CLI と server に Node や npm は必要ありません。
 
 = CLI リファレンス
 

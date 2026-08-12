@@ -7,7 +7,7 @@ zenfmt 是一个用 Zig 编写的文档转换器。它读取一种格式的文�
 
 [Pandoc](https://pandoc.org/) 让我们看到通用文档转换器有多实用。zenfmt 是一次较小的探索。它没有 Pandoc 那么广的覆盖范围，而是专注于紧凑的引擎、明确的转换报告，以及下面列出的格式。
 
-**当前版本：0.3.3。** 架构记录在 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)，IR v2、facets 和 writer lowering 记录在 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)。ZDS 是设计记录，因此保持英文。
+**当前版本：0.3.5。** 架构记录在 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)，IR v2、facets 和 writer lowering 记录在 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)。ZDS 是设计记录，因此保持英文。
 
 ## 功能概览
 
@@ -69,6 +69,13 @@ conversion = zenfmt.convert(
 pip install zenfmt
 ```
 
+macOS 用户也可以使用仓库提供的 Homebrew cask。它会直接从 GitHub Releases 下载与当前架构匹配的自包含 CLI 和 server：
+
+```sh
+brew install --cask \
+  https://raw.githubusercontent.com/insanai/zenfmt/main/packaging/homebrew/Casks/zenfmt.rb
+```
+
 ## 浏览器与 WebAssembly
 
 项目提供 first class `wasm32-freestanding` distribution 和静态网站。browser module 没有 host import。转换在访问者设备上的 dedicated worker 中运行，不上传文件，也不会回退到 network service。
@@ -82,6 +89,14 @@ zig build site-browser-test
 ```
 
 可以直接在 [项目网站](https://insanai.github.io/zenfmt/zh-hans/) 中转换文档。网站会根据 browser language 在 English、简体中文、日本語和 한국어之间选择默认界面，也可以随时手动更改。系统 theme 是默认值，同时提供浅色与深色选项。
+
+Web 应用也可以安装同一份 browser distribution：
+
+```sh
+npm install @insnai/zenfmt
+```
+
+这个 dependency free package 包含经过检查的 WASM module、ES module adapter、worker、TypeScript declarations 和 capability contract。npm 只是 browser distribution 的一种获取方式，原生 CLI 与 server 不需要 Node 或 npm。
 
 ## Server
 
@@ -118,6 +133,8 @@ src/                 默认 zenfmt bundle
 cli/                 自包含命令行程序与 serve subcommand
 server/              HTTP API、secure store 与内嵌 web UI
 bindings/            Python 与 WebAssembly ABI
+packages/wasm/       npm package metadata 与 entry point
+packaging/homebrew/  可独立迁移的 Homebrew tap 与 cask
 examples/filters/    在应用中编译 filter 的示例
 benchmarks/          语料库、runner 与记录结果
 tests/               conversion、round trip、fuzz 与 adversarial tests

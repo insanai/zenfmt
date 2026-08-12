@@ -11,7 +11,7 @@ can be. zenfmt is a small attempt to explore that idea in Zig. It does not have
 Pandoc's breadth; it concentrates on a compact engine, explicit conversion
 reports, and the formats listed below.
 
-**Current release: 0.3.3.** The architecture is specified in
+**Current release: 0.3.5.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and the IR v2
 layer, facets, and writer lowering in
 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ); the library, CLI,
@@ -98,9 +98,17 @@ Install the library with `pip install zenfmt`. Prebuilt standalone CLI
 archives and the complete wheel matrix are available from
 [GitHub Releases](https://github.com/insanai/zenfmt/releases).
 
+On macOS, the repository also provides a Homebrew cask that downloads the
+matching self-contained archive directly from GitHub Releases:
+
+```sh
+brew install --cask \
+  https://raw.githubusercontent.com/insanai/zenfmt/main/packaging/homebrew/Casks/zenfmt.rb
+```
+
 ## Browser and WebAssembly
 
-Release 0.3.3 includes the self-contained `zenfmt serve` service alongside the
+Release 0.3.5 includes the self-contained `zenfmt serve` service alongside the
 first-class `wasm32-freestanding` distribution and the static project site
 specified by [ZDS 0015](docs/zds/records/0015-wasm-and-project-site.typ).
 The browser module has no host imports: document conversion runs in a dedicated
@@ -113,6 +121,16 @@ The public site and practical book are available in English,
 browser language when a translation exists. The visible language selector
 always lets the reader choose explicitly, and that choice is remembered.
 
+The same browser distribution is available as a dependency-free npm package:
+
+```sh
+npm install @insnai/zenfmt
+```
+
+It contains the audited module, ES module adapter, worker, TypeScript
+declarations, and capability contract. npm is a distribution option for web
+applications. The native CLI and server do not require Node or npm.
+
 ```sh
 zig build wasm          # module, adapter, worker, and declarations
 zig build wasm-check    # ABI, import/export, memory, and size audit
@@ -122,8 +140,9 @@ zig build site-browser-test  # real Chromium conversion and interaction suite
 ```
 
 The versioned WASM bundle, standalone module, native CLI archives, Python
-wheels, and book PDFs are published together on the 0.3.3 GitHub release. The
-release includes English, Simplified Chinese, Japanese, and Korean book PDFs.
+wheels, npm package, and book PDFs are published together for release 0.3.5.
+The release includes English, Simplified Chinese, Japanese, and Korean book
+PDFs.
 Individual ZDS PDFs remain available from GitHub Pages rather than being
 duplicated as release assets. The site keeps the Book and ZDS in the help path
 from every conversion state.
@@ -195,6 +214,10 @@ formats/             one library per format: docx, doc, odt, rtf, xlsx, xls,
                      markdown, asciidoc, rst, text
 src/                 the umbrella `zenfmt` library and its default bundle
 cli/                 the command-line tool; imports only the umbrella
+server/              HTTP API, secure store, and embedded web interface
+bindings/            Python and WebAssembly ABIs
+packages/wasm/       npm package metadata and browser entry point
+packaging/homebrew/  standalone Homebrew tap layout and cask
 examples/filters/    a user project with its own filters compiled in
 benchmarks/          the conversion benchmark and its corpus fetcher
 tests/               cross-format, round-trip, fuzz, and adversarial suites

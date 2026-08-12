@@ -86,7 +86,7 @@ def test_public_adapter_inputs_results_and_errors(
             "readSource",
             "version",
         ],
-        "version": "0.3.3",
+        "version": "0.3.5",
         "abi": 0x0001_0000,
         "allText": True,
         "conversionClass": True,

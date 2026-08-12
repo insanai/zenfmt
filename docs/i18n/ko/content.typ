@@ -18,6 +18,13 @@ zenfmt에는 전체 설계를 이끄는 세 가지 약속이 있습니다.
 
 GitHub Releases에서 platform에 맞는 native archive를 내려받아 압축을 풀면 바로 실행할 수 있습니다. 이 실행 파일 하나에 CLI와 server가 함께 들어 있으며 Java, Python, npm, OCR, VLM, model file이 필요하지 않습니다. Python에서는 `zenfmt` wheel을 사용할 수도 있습니다.
 
+macOS에서는 repository의 Homebrew cask도 사용할 수 있습니다. Apple Silicon이나 Intel에 맞는 같은 self contained archive를 GitHub Releases에서 직접 받습니다.
+
+```sh
+brew install --cask \
+  https://raw.githubusercontent.com/insanai/zenfmt/main/packaging/homebrew/Casks/zenfmt.rb
+```
+
 ```sh
 zenfmt report.docx
 ```
@@ -189,6 +196,8 @@ conversion = zenfmt.convert(
 == Browser API
 
 release의 `wasm32-freestanding` bundle에는 module, ES module adapter, worker, TypeScript declaration이 들어 있습니다. adapter는 artifact ensemble을 반환하며 remote server로 fallback하지 않습니다. static origin에서 올바른 `application/wasm` type으로 제공하고 UI에도 timeout과 size policy를 두세요.
+
+Web application은 `npm install @insnai/zenfmt`으로 같은 dependency free browser distribution을 설치할 수도 있습니다. npm package에는 검사한 module, adapter, worker, declarations, capability contract가 들어 있습니다. native CLI와 server에는 Node나 npm이 필요하지 않습니다.
 
 = CLI 참고 <cli-reference>
 

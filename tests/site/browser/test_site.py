@@ -104,10 +104,14 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     wasm = page.get_by_role("link", name="Download WASM bundle")
     expect(wasm).to_have_attribute(
         "href",
-        "https://github.com/insanai/zenfmt/releases/download/v0.3.3/"
-        "zenfmt-0.3.3-wasm32-freestanding.tar.gz",
+        "https://github.com/insanai/zenfmt/releases/download/v0.3.5/"
+        "zenfmt-0.3.5-wasm32-freestanding.tar.gz",
     )
     assert page.locator(".download-button").count() >= 11
+    expect(page.get_by_role("link", name="Open npm")).to_have_attribute(
+        "href", "https://www.npmjs.com/package/@insnai/zenfmt/v/0.3.5"
+    )
+    expect(page.get_by_role("link", name="Install with Homebrew")).to_be_visible()
 
     page.goto(f"{site_url}book/tour/")
     expect(page.locator(".docs-nav")).to_contain_text("The zenfmt book")
@@ -213,8 +217,8 @@ def test_server_and_recorded_benchmarks_are_explained(
     expect(server).to_contain_text("7 targets")
 
     summary = page.locator(".benchmark-summary")
-    expect(summary).to_contain_text("complete release benchmark is recorded")
-    expect(summary).to_contain_text("Recorded for this release")
+    expect(summary).to_contain_text("full release benchmark is incomplete")
+    expect(summary).to_contain_text("Earlier reference run")
     expect(summary).to_contain_text("Native CLI")
     expect(summary).to_contain_text("Speed ratio")
     expect(summary).to_contain_text("CPU ratio")
@@ -223,8 +227,8 @@ def test_server_and_recorded_benchmarks_are_explained(
 
     page.goto(f"{site_url}benchmark/")
     baseline = page.locator(".reference-baseline")
-    expect(baseline).to_contain_text("Current release native lens: zenfmt 0.3.3")
-    expect(baseline).to_contain_text("Current release server lens: zenfmt 0.3.3")
+    expect(baseline).to_contain_text("Earlier reference native lens: zenfmt 0.3.3")
+    expect(baseline).to_contain_text("Earlier reference server lens: zenfmt 0.3.3")
     expect(baseline).to_contain_text("Native CLI benchmark")
     expect(baseline).to_contain_text("Speed")
     expect(baseline).to_contain_text("CPU use")

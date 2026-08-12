@@ -29,6 +29,18 @@
 
 == A file arrives
 
+Download the archive for your platform from GitHub Releases and unpack the
+single executable. On macOS, the repository also provides a Homebrew cask
+that downloads the Apple Silicon or Intel archive directly from the same
+release:
+
+```console
+$ brew install --cask https://raw.githubusercontent.com/insanai/zenfmt/main/packaging/homebrew/Casks/zenfmt.rb
+```
+
+The executable contains both the CLI and server. It does not need a Java,
+Python, Node, npm, OCR, VLM, or model runtime.
+
 A report lands in your inbox. It is `report.docx`. It was written in
 Microsoft Word by someone who cared about headings and tables. You need
 it as Markdown, perhaps for a static site, a search index, or a language

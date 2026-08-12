@@ -7,7 +7,7 @@ zenfmt는 Zig로 작성한 문서 변환기입니다. 한 형식의 문서를 �
 
 [Pandoc](https://pandoc.org/)은 범용 문서 변환기가 얼마나 유용한지 보여 주었습니다. zenfmt는 그 아이디어를 작은 Zig engine으로 살펴보는 시도입니다. Pandoc만큼 넓은 범위를 제공하지는 않으며 compact한 engine, 명확한 conversion report, 아래에 적은 형식에 집중합니다.
 
-**현재 release는 0.3.3입니다.** Architecture는 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ), IR v2와 facets, writer lowering은 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)에 기록되어 있습니다. ZDS는 설계 기록이므로 영어로 유지합니다.
+**현재 release는 0.3.5입니다.** Architecture는 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ), IR v2와 facets, writer lowering은 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)에 기록되어 있습니다. ZDS는 설계 기록이므로 영어로 유지합니다.
 
 ## 주요 기능
 
@@ -67,6 +67,13 @@ conversion = zenfmt.convert(
 pip install zenfmt
 ```
 
+macOS에서는 repository가 제공하는 Homebrew cask도 사용할 수 있습니다. 현재 architecture에 맞는 self contained CLI와 server archive를 GitHub Releases에서 직접 받습니다.
+
+```sh
+brew install --cask \
+  https://raw.githubusercontent.com/insanai/zenfmt/main/packaging/homebrew/Casks/zenfmt.rb
+```
+
 ## 브라우저와 WebAssembly
 
 first class `wasm32-freestanding` distribution과 정적 project site를 제공합니다. browser module에는 host import가 없습니다. 변환은 방문자의 기기에 있는 dedicated worker에서 실행되고 파일을 upload하거나 network service로 fallback하지 않습니다.
@@ -80,6 +87,14 @@ zig build site-browser-test
 ```
 
 [한국어 project site](https://insanai.github.io/zenfmt/ko/)에서 바로 변환할 수 있습니다. 첫 방문에는 browser language에 따라 English, 简体中文, 日本語, 한국어 중 기본 interface를 고릅니다. header의 language selector에서 언제든 바꿀 수 있으며 명시적으로 고른 언어가 browser 설정보다 우선합니다. theme 기본값은 system이고 Light와 Dark도 선택할 수 있습니다.
+
+Web application은 같은 browser distribution을 npm으로 설치할 수 있습니다.
+
+```sh
+npm install @insnai/zenfmt
+```
+
+이 dependency free package에는 검사한 WASM module, ES module adapter, worker, TypeScript declarations, capability contract가 들어 있습니다. npm은 browser distribution을 받는 한 가지 방법일 뿐이며 native CLI와 server에는 Node나 npm이 필요하지 않습니다.
 
 ## Server
 
@@ -116,6 +131,8 @@ src/                 기본 zenfmt bundle
 cli/                 self contained CLI와 serve subcommand
 server/              HTTP API, secure store, embedded web UI
 bindings/            Python과 WebAssembly ABI
+packages/wasm/       npm package metadata와 entry point
+packaging/homebrew/  따로 옮길 수 있는 Homebrew tap과 cask
 examples/filters/    application에 filter를 compile하는 예제
 benchmarks/          corpus, runner, 기록된 결과
 tests/               conversion, round trip, fuzz, adversarial tests

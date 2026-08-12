@@ -91,6 +91,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: github-pages-production
+      cancel-in-progress: false
     # The only job that holds deployment authority.
     permissions:
       pages: write

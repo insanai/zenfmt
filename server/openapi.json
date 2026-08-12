@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "zenfmt server API",
-    "version": "0.3.3",
+    "version": "0.3.5",
     "description": "Document conversion, capability discovery, health, and secure mode administration. Open mode accepts conversion requests without credentials. Secure mode accepts a browser session or a bearer API key."
   },
   "servers": [

@@ -4,6 +4,10 @@ This directory is the versioned browser distribution for zenfmt. It contains a
 `wasm32-freestanding` engine with no host imports, a standards-based ES module,
 an optional dedicated-worker adapter, and declarations.
 
+The same files are published as `@insnai/zenfmt` for applications that prefer
+npm. The tagged archive remains usable without a package manager or build
+step, and the native CLI and server do not require Node or npm.
+
 Serve every file from the same origin. The project site uses the worker-backed
 API so synchronous document parsing never blocks the page:
 

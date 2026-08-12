@@ -117,7 +117,7 @@ export declare class Converter {
 }
 
 export declare function createConverter(options: {
-  readonly moduleUrl: string;
+  readonly moduleUrl: string | URL;
   readonly signal?: AbortSignal;
 }): Promise<Converter>;
 
@@ -135,8 +135,8 @@ export declare class WorkerConverter {
 }
 
 export declare function createWorkerConverter(options: {
-  readonly moduleUrl: string;
-  readonly workerUrl: string;
+  readonly moduleUrl: string | URL;
+  readonly workerUrl: string | URL;
   readonly signal?: AbortSignal;
 }): Promise<WorkerConverter>;
 

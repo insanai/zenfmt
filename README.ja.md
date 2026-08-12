@@ -7,7 +7,7 @@ zenfmt は Zig で書かれたドキュメント変換ツールです。ある�
 
 [Pandoc](https://pandoc.org/) は、汎用ドキュメント変換ツールの便利さを示しました。zenfmt はその考え方を小さな Zig engine で探る試みです。Pandoc ほど幅広くはありませんが、compact な engine、明示的な conversion report、そして下記の形式に集中しています。
 
-**現在の release は 0.3.3 です。** Architecture は [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)、IR v2、facets、writer lowering は [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ) に記録されています。ZDS は設計記録なので英語のままです。
+**現在の release は 0.3.5 です。** Architecture は [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)、IR v2、facets、writer lowering は [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ) に記録されています。ZDS は設計記録なので英語のままです。
 
 ## できること
 
@@ -67,6 +67,13 @@ conversion = zenfmt.convert(
 pip install zenfmt
 ```
 
+macOS では repository の Homebrew cask も利用できます。利用中の architecture に合う self contained CLI と server の archive を GitHub Releases から直接取得します。
+
+```sh
+brew install --cask \
+  https://raw.githubusercontent.com/insanai/zenfmt/main/packaging/homebrew/Casks/zenfmt.rb
+```
+
 ## Browser と WebAssembly
 
 first class の `wasm32-freestanding` distribution と静的 project site を提供します。browser module には host import がありません。変換は訪問者の端末にある dedicated worker で動き、file を upload せず、network service に fallback しません。
@@ -80,6 +87,14 @@ zig build site-browser-test
 ```
 
 [日本語 project site](https://insanai.github.io/zenfmt/ja/) で直接変換できます。初回は browser language に応じて English、简体中文、日本語、한국어から interface を選びます。header の language selector でいつでも変更でき、明示した選択が browser 設定より優先されます。theme の既定値は system で、Light と Dark も選べます。
+
+Web application では同じ browser distribution を npm から導入できます。
+
+```sh
+npm install @insnai/zenfmt
+```
+
+この dependency free package には、検査済みの WASM module、ES module adapter、worker、TypeScript declarations、capability contract が含まれます。npm は browser distribution の入手方法の 1 つであり、native CLI と server に Node や npm は不要です。
 
 ## Server
 
@@ -116,6 +131,8 @@ src/                 標準 zenfmt bundle
 cli/                 self contained CLI と serve subcommand
 server/              HTTP API、secure store、embedded web UI
 bindings/            Python と WebAssembly ABI
+packages/wasm/       npm package metadata と entry point
+packaging/homebrew/  独立して移動できる Homebrew tap と cask
 examples/filters/    application に filter を組み込む例
 benchmarks/          corpus、runner、記録済み結果
 tests/               conversion、round trip、fuzz、adversarial tests
