@@ -5,6 +5,7 @@
 const std = @import("std");
 const testing = std.testing;
 const zenfmt = @import("zenfmt");
+const ooxml = @import("zenfmt_ooxml");
 
 const test_dir = ".zig-cache/zenfmt-e2e";
 
@@ -33,6 +34,62 @@ test "bytes to stream: text becomes markdown with a manifest value" {
     try testing.expect(std.mem.indexOf(u8, manifest_json, &digest) != null);
     try testing.expect(std.mem.indexOf(u8, manifest_json, "\"format\":\"markdown\"") != null);
     try testing.expect(std.mem.indexOf(u8, manifest_json, "\"format\":\"text\"") != null);
+}
+
+test "xlsx custom date columns render as dates in markdown" {
+    const workbook =
+        \\<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        \\  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        \\<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>
+        \\</workbook>
+    ;
+    const rels =
+        \\<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        \\<Relationship Id="rId1"
+        \\  Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+        \\  Target="worksheets/sheet1.xml"/>
+        \\</Relationships>
+    ;
+    const styles =
+        \\<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        \\<numFmts count="2">
+        \\<numFmt numFmtId="164" formatCode="yyyy-mm-dd"/>
+        \\<numFmt numFmtId="165" formatCode="0.00%"/>
+        \\</numFmts>
+        \\<cellXfs count="3">
+        \\<xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="165"/>
+        \\</cellXfs>
+        \\</styleSheet>
+    ;
+    const sheet =
+        \\<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        \\<sheetData>
+        \\<row r="1"><c r="A1" t="inlineStr"><is><t>Date</t></is></c>
+        \\<c r="B1" t="inlineStr"><is><t>Rate</t></is></c></row>
+        \\<row r="2"><c r="A2" s="1"><v>45306</v></c>
+        \\<c r="B2" s="2"><v>0.125</v></c></row>
+        \\</sheetData>
+        \\</worksheet>
+    ;
+    const bytes = try ooxml.zip.buildStoredArchive(testing.allocator, &.{
+        .{ .name = "xl/workbook.xml", .data = workbook },
+        .{ .name = "xl/_rels/workbook.xml.rels", .data = rels },
+        .{ .name = "xl/styles.xml", .data = styles },
+        .{ .name = "xl/worksheets/sheet1.xml", .data = sheet },
+    });
+    defer testing.allocator.free(bytes);
+
+    var buffer: [4096]u8 = undefined;
+    var out = std.Io.Writer.fixed(&buffer);
+    var conversion = zenfmt.convert(testing.allocator, testing.io, .{
+        .input = .{ .bytes = .{ .name = "dates.xlsx", .data = bytes } },
+        .output = .{ .writer = &out },
+    });
+    defer conversion.deinit(testing.allocator);
+
+    try testing.expectEqual(zenfmt.Status.success, conversion.status);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| 2024-01-15 | 12.5% |") != null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| 45306 |") == null);
 }
 
 test "an unknown explicit format fails with a usage-class report" {

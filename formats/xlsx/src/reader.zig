@@ -155,6 +155,8 @@ fn parseCellFormats(
     limits: core.Limits,
 ) ![]const NumberKind {
     var kinds: std.ArrayList(NumberKind) = .empty;
+    var custom: std.AutoHashMapUnmanaged(u32, NumberKind) = .empty;
+    defer custom.deinit(arena);
     var parser = xml.Parser.init(arena, bytes, limits.max_xml_depth);
     defer parser.deinit();
 
@@ -163,14 +165,27 @@ fn parseCellFormats(
         switch (try parser.next()) {
             .done => break,
             .element_start => |element| {
-                if (element.name.is(main_ns, "cellXfs")) {
+                if (element.name.is(main_ns, "numFmt")) {
+                    var id: ?u32 = null;
+                    var format: ?[]const u8 = null;
+                    for (element.attributes) |attribute| {
+                        if (std.mem.eql(u8, attribute.name.local, "numFmtId")) {
+                            id = std.fmt.parseInt(u32, attribute.value, 10) catch null;
+                        } else if (std.mem.eql(u8, attribute.name.local, "formatCode")) {
+                            format = attribute.value;
+                        }
+                    }
+                    if (id != null and format != null) {
+                        try custom.put(arena, id.?, kindFromFormat(format.?));
+                    }
+                } else if (element.name.is(main_ns, "cellXfs")) {
                     in_cell_xfs = true;
                 } else if (in_cell_xfs and element.name.is(main_ns, "xf")) {
                     var kind: NumberKind = .general;
                     for (element.attributes) |attribute| {
                         if (std.mem.eql(u8, attribute.name.local, "numFmtId")) {
                             const id = std.fmt.parseInt(u32, attribute.value, 10) catch 0;
-                            kind = builtinNumberKind(id);
+                            kind = custom.get(id) orelse builtinNumberKind(id);
                         }
                     }
                     try kinds.append(arena, kind);
@@ -191,6 +206,46 @@ fn builtinNumberKind(id: u32) NumberKind {
         9, 10 => .percent,
         else => .general,
     };
+}
+
+fn kindFromFormat(format: []const u8) NumberKind {
+    var index: usize = 0;
+    while (index < format.len) {
+        const byte = format[index];
+        switch (byte) {
+            // Quoted and escaped characters are display literals, not
+            // number-format tokens. Ignoring them prevents formats such as
+            // `[Red]0` or `0 "days"` from being mistaken for dates.
+            '"' => {
+                index += 1;
+                while (index < format.len and format[index] != '"') : (index += 1) {}
+                if (index < format.len) index += 1;
+            },
+            '\\', '_', '*' => index = @min(index + 2, format.len),
+            '[' => {
+                const close = std.mem.indexOfScalarPos(u8, format, index + 1, ']') orelse {
+                    index += 1;
+                    continue;
+                };
+                if (isElapsedTimeToken(format[index + 1 .. close])) return .date;
+                index = close + 1;
+            },
+            '%' => return .percent,
+            'y', 'Y', 'd', 'D', 'h', 'H', 'm', 'M', 's', 'S' => return .date,
+            else => index += 1,
+        }
+    }
+    return .general;
+}
+
+fn isElapsedTimeToken(token: []const u8) bool {
+    if (token.len == 0) return false;
+    const first = std.ascii.toLower(token[0]);
+    if (first != 'h' and first != 'm' and first != 's') return false;
+    for (token[1..]) |byte| {
+        if (std.ascii.toLower(byte) != first) return false;
+    }
+    return true;
 }
 
 // -------------------------------------------------------------- sheets
@@ -703,4 +758,92 @@ test "column references and serial dates" {
     const arena = arena_state.allocator();
     try testing.expectEqualStrings("2024-01-15", try formatSerialDate(arena, 45306));
     try testing.expectEqualStrings("1970-01-01", try formatSerialDate(arena, 25569));
+}
+
+test "custom number format classification ignores display literals" {
+    try testing.expectEqual(NumberKind.date, kindFromFormat("yyyy-mm-dd"));
+    try testing.expectEqual(NumberKind.date, kindFromFormat("[h]:mm"));
+    try testing.expectEqual(NumberKind.percent, kindFromFormat("0.00%"));
+    try testing.expectEqual(NumberKind.general, kindFromFormat("[Red]0.00"));
+    try testing.expectEqual(NumberKind.general, kindFromFormat("0 \"days\""));
+    try testing.expectEqual(NumberKind.general, kindFromFormat("0\\d"));
+}
+
+test "custom date formats render dates instead of serial numbers" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const workbook =
+        \\<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        \\  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        \\<sheets><sheet name="Data" sheetId="1" r:id="rId1"/></sheets>
+        \\</workbook>
+    ;
+    const rels =
+        \\<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        \\<Relationship Id="rId1"
+        \\  Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+        \\  Target="worksheets/sheet1.xml"/>
+        \\</Relationships>
+    ;
+    const styles =
+        \\<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        \\<numFmts count="2">
+        \\<numFmt numFmtId="164" formatCode="yyyy-mm-dd"/>
+        \\<numFmt numFmtId="165" formatCode="0.00%"/>
+        \\</numFmts>
+        \\<cellXfs count="3">
+        \\<xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="165"/>
+        \\</cellXfs>
+        \\</styleSheet>
+    ;
+    const sheet =
+        \\<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+        \\<sheetData>
+        \\<row r="1"><c r="A1" t="inlineStr"><is><t>Date</t></is></c>
+        \\<c r="B1" t="inlineStr"><is><t>Rate</t></is></c></row>
+        \\<row r="2"><c r="A2" s="1"><v>45306</v></c>
+        \\<c r="B2" s="2"><v>0.125</v></c></row>
+        \\</sheetData>
+        \\</worksheet>
+    ;
+    const bytes = try ooxml.zip.buildStoredArchive(arena, &.{
+        .{ .name = "xl/workbook.xml", .data = workbook },
+        .{ .name = "xl/_rels/workbook.xml.rels", .data = rels },
+        .{ .name = "xl/styles.xml", .data = styles },
+        .{ .name = "xl/worksheets/sheet1.xml", .data = sheet },
+    });
+
+    const store = try arena.create(core.ast.Store);
+    store.* = .{};
+    var b = core.builder.Builder.init(arena, store, .{});
+    const reports = try arena.create(core.Reports);
+    reports.* = core.Reports.init(arena, .{});
+    var ctx: core.ReadContext = .{
+        .gpa = arena,
+        .out = .{ .builder = &b },
+        .input = .{ .bytes = bytes },
+        .input_name = "dates.xlsx",
+        .reports = reports,
+        .limits = .{},
+    };
+    try read(&ctx);
+    const doc = try b.finish();
+    try core.ast.validate(&doc, .{});
+
+    try testing.expect(hasInlineText(doc, "2024-01-15"));
+    try testing.expect(!hasInlineText(doc, "45306"));
+    try testing.expect(hasInlineText(doc, "12.5%"));
+    try testing.expectEqual(core.facets.ValueType.date, store.grid_facets.items[2].value_type);
+    try testing.expectEqualStrings("45306", store.textSlice(store.grid_facets.items[2].cached));
+}
+
+fn hasInlineText(doc: core.ast.Document, expected: []const u8) bool {
+    const store = doc.store;
+    for (store.inlines.items(.tag), store.inlines.items(.payload)) |tag, payload| {
+        if (tag != .text) continue;
+        if (std.mem.eql(u8, store.textSlice(store.spans.items[payload]), expected)) return true;
+    }
+    return false;
 }

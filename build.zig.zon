@@ -1,12 +1,12 @@
 .{
     .name = .zenfmt,
-    .version = "0.3.5",
+    .version = "0.3.6",
     .fingerprint = 0x5a31e05440876fc1, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .zaxonlite = .{
-            .url = "https://github.com/insanai/zaxonlite/archive/refs/tags/v0.3.0.tar.gz",
-            .hash = "zaxonlite-0.3.0-o9bF7DQ3GACwStLf4At3Tv1XR1mSP3o7BICWEdKRTNNV",
+            .url = "https://github.com/insanai/zaxonlite/archive/refs/tags/v0.6.0.tar.gz",
+            .hash = "zaxonlite-0.6.0-o9bF7Dq-GgB7Om9QDMglwd6amKHErcxCbcOamgPCDZy0",
         },
     },
     .paths = .{
