@@ -145,10 +145,10 @@ fn parseSharedStrings(
 
 // ------------------------------------------------------- number formats
 
-const NumberKind = enum { general, date, percent };
+const NumberKind = enum { general, date, date_time, time, elapsed_time, percent };
 
 /// Per cell-format index (the `s` attribute), whether its number format is
-/// a date or a percentage — the two families where the raw number lies.
+/// temporal or a percentage — the two families where the raw number lies.
 fn parseCellFormats(
     arena: std.mem.Allocator,
     bytes: []const u8,
@@ -202,7 +202,10 @@ fn parseCellFormats(
 
 fn builtinNumberKind(id: u32) NumberKind {
     return switch (id) {
-        14...22, 45...47 => .date,
+        14...17 => .date,
+        18...21, 45, 47 => .time,
+        46 => .elapsed_time,
+        22 => .date_time,
         9, 10 => .percent,
         else => .general,
     };
@@ -210,6 +213,10 @@ fn builtinNumberKind(id: u32) NumberKind {
 
 fn kindFromFormat(format: []const u8) NumberKind {
     var index: usize = 0;
+    var has_date = false;
+    var has_time = false;
+    var has_elapsed_time = false;
+    var has_month = false;
     while (index < format.len) {
         const byte = format[index];
         switch (byte) {
@@ -227,14 +234,34 @@ fn kindFromFormat(format: []const u8) NumberKind {
                     index += 1;
                     continue;
                 };
-                if (isElapsedTimeToken(format[index + 1 .. close])) return .date;
+                if (isElapsedTimeToken(format[index + 1 .. close])) {
+                    has_elapsed_time = true;
+                }
                 index = close + 1;
             },
             '%' => return .percent,
-            'y', 'Y', 'd', 'D', 'h', 'H', 'm', 'M', 's', 'S' => return .date,
+            'y', 'Y', 'd', 'D' => {
+                has_date = true;
+                index += 1;
+            },
+            'h', 'H', 's', 'S' => {
+                has_time = true;
+                index += 1;
+            },
+            // `m` means month in a date and minutes next to an hour or
+            // second token. Defer that ambiguous case until the other
+            // tokens have been inspected.
+            'm', 'M' => {
+                has_month = true;
+                index += 1;
+            },
             else => index += 1,
         }
     }
+    if (has_date and has_time) return .date_time;
+    if (has_elapsed_time) return .elapsed_time;
+    if (has_time) return .time;
+    if (has_date or has_month) return .date;
     return .general;
 }
 
@@ -496,7 +523,7 @@ fn gridValueType(
         .number => if (raw.len == 0)
             .empty
         else switch (kind) {
-            .date => .date,
+            .date, .date_time, .time, .elapsed_time => .date,
             .percent, .general => .number,
         },
     };
@@ -525,6 +552,18 @@ fn cellText(
                     const serial = std.fmt.parseFloat(f64, raw) catch return raw;
                     return formatSerialDate(arena, serial) catch raw;
                 },
+                .date_time => {
+                    const serial = std.fmt.parseFloat(f64, raw) catch return raw;
+                    return formatSerialDateTime(arena, serial) catch raw;
+                },
+                .time => {
+                    const serial = std.fmt.parseFloat(f64, raw) catch return raw;
+                    return formatSerialTime(arena, serial) catch raw;
+                },
+                .elapsed_time => {
+                    const serial = std.fmt.parseFloat(f64, raw) catch return raw;
+                    return formatSerialElapsedTime(arena, serial) catch raw;
+                },
                 .percent => {
                     const value = std.fmt.parseFloat(f64, raw) catch return raw;
                     return std.fmt.allocPrint(arena, "{d}%", .{value * 100});
@@ -535,13 +574,81 @@ fn cellText(
     }
 }
 
+const CivilDate = struct { year: u32, month: u64, day: u64 };
+const ClockTime = struct { day_serial: i64, hour: u32, minute: u32, second: u32 };
+
 /// Excel serial dates count days from the 1900 epoch; serial 25569 is
 /// 1970-01-01. The conversion is Hinnant's civil-from-days. Serials below
 /// 60 inherit Excel's fictional 1900-02-29 and land one day early; dates
 /// that old do not appear in real spreadsheets.
 fn formatSerialDate(arena: std.mem.Allocator, serial: f64) ![]const u8 {
-    if (serial < 1 or serial > 2958465) return error.OutOfRange;
-    const days = @as(i64, @intFromFloat(serial)) - 25569;
+    if (!std.math.isFinite(serial) or serial < 1 or serial >= 2958466) {
+        return error.OutOfRange;
+    }
+    const date = try civilDateFromSerialDay(@intFromFloat(@floor(serial)));
+    return std.fmt.allocPrint(
+        arena,
+        "{d:0>4}-{d:0>2}-{d:0>2}",
+        .{ date.year, date.month, date.day },
+    );
+}
+
+fn formatSerialDateTime(arena: std.mem.Allocator, serial: f64) ![]const u8 {
+    const clock = try clockFromSerial(serial);
+    if (clock.day_serial < 1 or clock.day_serial > 2958465) return error.OutOfRange;
+    const date = try civilDateFromSerialDay(clock.day_serial);
+    return std.fmt.allocPrint(
+        arena,
+        "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}",
+        .{ date.year, date.month, date.day, clock.hour, clock.minute, clock.second },
+    );
+}
+
+fn formatSerialTime(arena: std.mem.Allocator, serial: f64) ![]const u8 {
+    const clock = try clockFromSerial(serial);
+    return std.fmt.allocPrint(
+        arena,
+        "{d:0>2}:{d:0>2}:{d:0>2}",
+        .{ clock.hour, clock.minute, clock.second },
+    );
+}
+
+fn formatSerialElapsedTime(arena: std.mem.Allocator, serial: f64) ![]const u8 {
+    if (!std.math.isFinite(serial) or serial < 0 or serial >= 2958466) {
+        return error.OutOfRange;
+    }
+    const total_seconds: i64 = @intFromFloat(@round(serial * 24 * 60 * 60));
+    return std.fmt.allocPrint(
+        arena,
+        "{d:0>2}:{d:0>2}:{d:0>2}",
+        .{
+            @as(u64, @intCast(@divFloor(total_seconds, 60 * 60))),
+            @as(u32, @intCast(@divFloor(@mod(total_seconds, 60 * 60), 60))),
+            @as(u32, @intCast(@mod(total_seconds, 60))),
+        },
+    );
+}
+
+fn clockFromSerial(serial: f64) !ClockTime {
+    if (!std.math.isFinite(serial) or serial < 0 or serial >= 2958466) {
+        return error.OutOfRange;
+    }
+    const seconds_per_day: i64 = 24 * 60 * 60;
+    const total_seconds: i64 = @intFromFloat(@round(
+        serial * @as(f64, @floatFromInt(seconds_per_day)),
+    ));
+    const second_of_day = @mod(total_seconds, seconds_per_day);
+    return .{
+        .day_serial = @divFloor(total_seconds, seconds_per_day),
+        .hour = @intCast(@divFloor(second_of_day, 60 * 60)),
+        .minute = @intCast(@divFloor(@mod(second_of_day, 60 * 60), 60)),
+        .second = @intCast(@mod(second_of_day, 60)),
+    };
+}
+
+fn civilDateFromSerialDay(serial_day: i64) !CivilDate {
+    if (serial_day < 1 or serial_day > 2958465) return error.OutOfRange;
+    const days = serial_day - 25569;
     const z = days + 719468;
     const era = @divFloor(z, 146097);
     const day_of_era: u64 = @intCast(z - era * 146097);
@@ -553,7 +660,7 @@ fn formatSerialDate(arena: std.mem.Allocator, serial: f64) ![]const u8 {
     const day = day_of_year - (153 * month_prime + 2) / 5 + 1;
     const month = if (month_prime < 10) month_prime + 3 else month_prime - 9;
     const civil_year: u32 = @intCast(if (month <= 2) year + 1 else year);
-    return std.fmt.allocPrint(arena, "{d:0>4}-{d:0>2}-{d:0>2}", .{ civil_year, month, day });
+    return .{ .year = civil_year, .month = month, .day = day };
 }
 
 fn columnOf(reference: []const u8) u32 {
@@ -758,11 +865,24 @@ test "column references and serial dates" {
     const arena = arena_state.allocator();
     try testing.expectEqualStrings("2024-01-15", try formatSerialDate(arena, 45306));
     try testing.expectEqualStrings("1970-01-01", try formatSerialDate(arena, 25569));
+    try testing.expectEqualStrings(
+        "2026-07-09 14:30:15",
+        try formatSerialDateTime(arena, 46212.60434027778),
+    );
+    try testing.expectEqualStrings("14:30:00", try formatSerialTime(arena, 0.6041666666666666));
+    try testing.expectEqualStrings("36:00:00", try formatSerialElapsedTime(arena, 1.5));
 }
 
 test "custom number format classification ignores display literals" {
     try testing.expectEqual(NumberKind.date, kindFromFormat("yyyy-mm-dd"));
-    try testing.expectEqual(NumberKind.date, kindFromFormat("[h]:mm"));
+    try testing.expectEqual(NumberKind.date_time, kindFromFormat("yyyy-mm-dd hh:mm"));
+    try testing.expectEqual(NumberKind.time, kindFromFormat("hh:mm"));
+    try testing.expectEqual(NumberKind.time, kindFromFormat("mm:ss"));
+    try testing.expectEqual(NumberKind.elapsed_time, kindFromFormat("[h]:mm"));
+    try testing.expectEqual(NumberKind.date, builtinNumberKind(14));
+    try testing.expectEqual(NumberKind.time, builtinNumberKind(20));
+    try testing.expectEqual(NumberKind.date_time, builtinNumberKind(22));
+    try testing.expectEqual(NumberKind.elapsed_time, builtinNumberKind(46));
     try testing.expectEqual(NumberKind.percent, kindFromFormat("0.00%"));
     try testing.expectEqual(NumberKind.general, kindFromFormat("[Red]0.00"));
     try testing.expectEqual(NumberKind.general, kindFromFormat("0 \"days\""));

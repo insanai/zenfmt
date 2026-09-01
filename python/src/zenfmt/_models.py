@@ -253,13 +253,13 @@ class Manifest:
         return tuple(copy.deepcopy(value))
 
     @property
-    def facets(self) -> tuple[dict[str, Any], ...]:
-        value = self._load().get("facets", [])
-        if not isinstance(value, list) or not all(
-            isinstance(entry, dict) for entry in value
+    def facets(self) -> dict[str, dict[str, Any]]:
+        value = self._load().get("facets", {})
+        if not isinstance(value, dict) or not all(
+            isinstance(entry, dict) for entry in value.values()
         ):
-            raise corrupt_result("the manifest facets field is not an object array")
-        return tuple(copy.deepcopy(value))
+            raise corrupt_result("the manifest facets field is not an object")
+        return copy.deepcopy(value)
 
     def to_dict(self) -> dict[str, Any]:
         return copy.deepcopy(self._load())

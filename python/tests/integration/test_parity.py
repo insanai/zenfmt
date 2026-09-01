@@ -46,3 +46,14 @@ def test_docx_fixture_converts_with_manifest_digests(tmp_path: Path) -> None:
     assert len(conversion.manifest.source.digest) == 64
     assert (tmp_path / "d.md").is_file()
     assert (tmp_path / "d.md.zenfmt.json").is_file()
+
+
+def test_xlsx_manifest_facets_are_accessible_with_and_without_rows() -> None:
+    fixture = FIXTURES / "min.xlsx"
+    summary = zenfmt.convert(fixture).manifest.facets
+    preserved = zenfmt.convert(fixture, preserve_facets=True).manifest.facets
+
+    assert summary["grid"]["count"] == 1
+    assert "rows" not in summary["grid"]
+    assert preserved["grid"]["count"] == 1
+    assert preserved["grid"]["rows"][0]["sheet"] == "S1"
