@@ -11,7 +11,7 @@ can be. zenfmt is a small attempt to explore that idea in Zig. It does not have
 Pandoc's breadth; it concentrates on a compact engine, explicit conversion
 reports, and the formats listed below.
 
-**Current release: 0.3.6.** The architecture is specified in
+**Current release: 0.3.7.** The architecture is specified in
 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ) and the IR v2
 layer, facets, and writer lowering in
 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ); the library, CLI,
@@ -108,7 +108,7 @@ brew install --cask \
 
 ## Browser and WebAssembly
 
-Release 0.3.6 includes the self-contained `zenfmt serve` service alongside the
+Release 0.3.7 includes the self-contained `zenfmt serve` service alongside the
 first-class `wasm32-freestanding` distribution and the static project site
 specified by [ZDS 0015](docs/zds/records/0015-wasm-and-project-site.typ).
 The browser module has no host imports: document conversion runs in a dedicated
@@ -140,7 +140,7 @@ zig build site-browser-test  # real Chromium conversion and interaction suite
 ```
 
 The versioned WASM bundle, standalone module, native CLI archives, Python
-wheels, npm package, and book PDFs are published together for release 0.3.6.
+wheels, npm package, and book PDFs are published together for release 0.3.7.
 The release includes English, Simplified Chinese, Japanese, and Korean book
 PDFs.
 Individual ZDS PDFs remain available from GitHub Pages rather than being

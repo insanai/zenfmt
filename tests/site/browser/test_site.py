@@ -104,12 +104,12 @@ def test_theme_search_help_and_downloads(browser: Browser, site_url: str) -> Non
     wasm = page.get_by_role("link", name="Download WASM bundle")
     expect(wasm).to_have_attribute(
         "href",
-        "https://github.com/insanai/zenfmt/releases/download/v0.3.6/"
-        "zenfmt-0.3.6-wasm32-freestanding.tar.gz",
+        "https://github.com/insanai/zenfmt/releases/download/v0.3.7/"
+        "zenfmt-0.3.7-wasm32-freestanding.tar.gz",
     )
     assert page.locator(".download-button").count() >= 11
     expect(page.get_by_role("link", name="Open npm")).to_have_attribute(
-        "href", "https://www.npmjs.com/package/@insanai/zenfmt/v/0.3.6"
+        "href", "https://www.npmjs.com/package/@insanai/zenfmt/v/0.3.7"
     )
     expect(page.get_by_role("link", name="Install with Homebrew")).to_be_visible()
 

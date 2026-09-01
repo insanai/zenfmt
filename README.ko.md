@@ -7,7 +7,7 @@ zenfmt는 Zig로 작성한 문서 변환기입니다. 한 형식의 문서를 �
 
 [Pandoc](https://pandoc.org/)은 범용 문서 변환기가 얼마나 유용한지 보여 주었습니다. zenfmt는 그 아이디어를 작은 Zig engine으로 살펴보는 시도입니다. Pandoc만큼 넓은 범위를 제공하지는 않으며 compact한 engine, 명확한 conversion report, 아래에 적은 형식에 집중합니다.
 
-**현재 release는 0.3.6입니다.** Architecture는 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ), IR v2와 facets, writer lowering은 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)에 기록되어 있습니다. ZDS는 설계 기록이므로 영어로 유지합니다.
+**현재 release는 0.3.7입니다.** Architecture는 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ), IR v2와 facets, writer lowering은 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)에 기록되어 있습니다. ZDS는 설계 기록이므로 영어로 유지합니다.
 
 ## 주요 기능
 

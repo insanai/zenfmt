@@ -1,6 +1,6 @@
 {
   "name": "@insanai/zenfmt",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "Dependency-free WebAssembly document conversion with zenfmt",
   "type": "module",
   "main": "./index.js",

@@ -7,7 +7,7 @@ zenfmt 是一个用 Zig 编写的文档转换器。它读取一种格式的文�
 
 [Pandoc](https://pandoc.org/) 让我们看到通用文档转换器有多实用。zenfmt 是一次较小的探索。它没有 Pandoc 那么广的覆盖范围，而是专注于紧凑的引擎、明确的转换报告，以及下面列出的格式。
 
-**当前版本：0.3.6。** 架构记录在 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)，IR v2、facets 和 writer lowering 记录在 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)。ZDS 是设计记录，因此保持英文。
+**当前版本：0.3.7。** 架构记录在 [ZDS 0002](docs/zds/records/0002-zenfmt-architecture.typ)，IR v2、facets 和 writer lowering 记录在 [ZDS 0013](docs/zds/records/0013-layered-document-ir.typ)。ZDS 是设计记录，因此保持英文。
 
 ## 功能概览
 
