@@ -30,13 +30,21 @@ def test_manifest_raw_is_exact_and_never_reencoded() -> None:
 
 
 def test_manifest_typed_access() -> None:
-    manifest = zenfmt.Manifest(manifest_payload())
+    facets = {
+        "grid": {
+            "count": 1,
+            "digest": {"algorithm": "blake3-256", "value": "ef" * 32},
+            "unused": True,
+        }
+    }
+    manifest = zenfmt.Manifest(manifest_payload(facets=facets))
     assert manifest.schema == "ai.insan.zenfmt.artifact-manifest"
     assert manifest.schema_version == 2
     assert manifest.source.name == "note.md"
     assert manifest.artifact.plugin_id == "ai.insan.zenfmt.markdown"
     assert manifest.artifact.digest == "ab" * 32
     assert manifest.reports == ()
+    assert manifest.facets == facets
 
 
 def test_manifest_to_dict_is_defensive() -> None:
@@ -44,6 +52,15 @@ def test_manifest_to_dict_is_defensive() -> None:
     copy_one = manifest.to_dict()
     copy_one["artifact"]["name"] = "tampered"
     assert manifest.to_dict()["artifact"]["name"] == "note.md"
+
+
+def test_manifest_facets_are_defensive() -> None:
+    manifest = zenfmt.Manifest(
+        manifest_payload(facets={"grid": {"count": 1, "unused": True}})
+    )
+    copy_one = manifest.facets
+    copy_one["grid"]["count"] = 7
+    assert manifest.facets["grid"]["count"] == 1
 
 
 def test_manifest_is_immutable() -> None:
@@ -66,7 +83,8 @@ def test_invalid_manifest_is_a_native_library_error() -> None:
         ({"document_metadata": []}, "document_metadata"),
         ({"plugins": []}, "plugins"),
         ({"media": {}}, "media"),
-        ({"facets": {}}, "facets"),
+        ({"facets": []}, "facets"),
+        ({"facets": {"grid": []}}, "facets"),
     ],
 )
 def test_malformed_manifest_fields_raise_native_library_error(

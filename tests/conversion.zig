@@ -36,7 +36,7 @@ test "bytes to stream: text becomes markdown with a manifest value" {
     try testing.expect(std.mem.indexOf(u8, manifest_json, "\"format\":\"text\"") != null);
 }
 
-test "xlsx custom date columns render as dates in markdown" {
+test "xlsx custom date and time columns render as temporal values in markdown" {
     const workbook =
         \\<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
         \\  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
@@ -52,22 +52,34 @@ test "xlsx custom date columns render as dates in markdown" {
     ;
     const styles =
         \\<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-        \\<numFmts count="2">
+        \\<numFmts count="5">
         \\<numFmt numFmtId="164" formatCode="yyyy-mm-dd"/>
-        \\<numFmt numFmtId="165" formatCode="0.00%"/>
+        \\<numFmt numFmtId="165" formatCode="yyyy-mm-dd hh:mm"/>
+        \\<numFmt numFmtId="166" formatCode="yyyy-mm-dd hh:mm:ss"/>
+        \\<numFmt numFmtId="167" formatCode="hh:mm"/>
+        \\<numFmt numFmtId="168" formatCode="0.00%"/>
         \\</numFmts>
-        \\<cellXfs count="3">
+        \\<cellXfs count="6">
         \\<xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="165"/>
+        \\<xf numFmtId="166"/><xf numFmtId="167"/><xf numFmtId="168"/>
         \\</cellXfs>
         \\</styleSheet>
     ;
     const sheet =
         \\<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
         \\<sheetData>
-        \\<row r="1"><c r="A1" t="inlineStr"><is><t>Date</t></is></c>
-        \\<c r="B1" t="inlineStr"><is><t>Rate</t></is></c></row>
-        \\<row r="2"><c r="A2" s="1"><v>45306</v></c>
-        \\<c r="B2" s="2"><v>0.125</v></c></row>
+        \\<row r="1"><c r="A1" t="inlineStr"><is><t>Case</t></is></c>
+        \\<c r="B1" t="inlineStr"><is><t>Value</t></is></c></row>
+        \\<row r="2"><c r="A2" t="inlineStr"><is><t>Date only</t></is></c>
+        \\<c r="B2" s="1"><v>46212</v></c></row>
+        \\<row r="3"><c r="A3" t="inlineStr"><is><t>Date and time</t></is></c>
+        \\<c r="B3" s="2"><v>46212.60416666666</v></c></row>
+        \\<row r="4"><c r="A4" t="inlineStr"><is><t>Date and seconds</t></is></c>
+        \\<c r="B4" s="3"><v>46212.60434027778</v></c></row>
+        \\<row r="5"><c r="A5" t="inlineStr"><is><t>Time only</t></is></c>
+        \\<c r="B5" s="4"><v>0.6041666666666666</v></c></row>
+        \\<row r="6"><c r="A6" t="inlineStr"><is><t>Rate</t></is></c>
+        \\<c r="B6" s="5"><v>0.125</v></c></row>
         \\</sheetData>
         \\</worksheet>
     ;
@@ -88,8 +100,12 @@ test "xlsx custom date columns render as dates in markdown" {
     defer conversion.deinit(testing.allocator);
 
     try testing.expectEqual(zenfmt.Status.success, conversion.status);
-    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| 2024-01-15 | 12.5% |") != null);
-    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| 45306 |") == null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| Date only        | 2026-07-09          |") != null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| Date and time    | 2026-07-09 14:30:00 |") != null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| Date and seconds | 2026-07-09 14:30:15 |") != null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| Time only        | 14:30:00            |") != null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "| Rate             | 12.5%               |") != null);
+    try testing.expect(std.mem.indexOf(u8, out.buffered(), "46212.604") == null);
 }
 
 test "an unknown explicit format fails with a usage-class report" {

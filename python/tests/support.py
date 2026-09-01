@@ -62,6 +62,7 @@ def manifest_payload(
     *,
     artifact_name: str = "note.md",
     output_format: str = "markdown",
+    facets: dict[str, dict] | None = None,
     media: list[dict] | None = None,
     reports: list[dict] | None = None,
 ) -> bytes:
@@ -87,6 +88,8 @@ def manifest_payload(
         # An unknown preservation field that must survive .raw untouched.
         "x-unknown-extension": {"kept": True},
     }
+    if facets is not None:
+        document["facets"] = facets
     if media is not None:
         document["media"] = media
     return json.dumps(document, sort_keys=True).encode()
